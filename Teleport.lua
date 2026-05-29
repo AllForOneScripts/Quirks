@@ -1,20 +1,32 @@
-local tpMouse = lplr:GetMouse()
-local tpInputConn = nil
- 
-local function tpStop()
-    if tpInputConn then tpInputConn:Disconnect(); tpInputConn = nil end
-end
- 
-local function tpStart()
-    tpStop()
-    tpInputConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe or not teleportEnabled then return end
-        if input.KeyCode == Keys.Teleport then
-            local char = lplr.Character
+local M = {}
+local UserInputService = game:GetService("UserInputService")
+local _conn = nil
+local _lplr = nil
+local _keys = nil
+
+function M.Start(Keys, lplr)
+    _keys = Keys
+    _lplr = lplr
+    if _conn then _conn:Disconnect() end
+    local mouse = lplr:GetMouse()
+    _conn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == _keys.Teleport then
+            local char = _lplr.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp and tpMouse.Target then
-                hrp.CFrame = CFrame.new(tpMouse.Hit.Position + Vector3.new(0, 5, 0))
+            if hrp and mouse.Target then
+                hrp.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 5, 0))
             end
         end
     end)
 end
+
+function M.Stop()
+    if _conn then _conn:Disconnect(); _conn = nil end
+end
+
+function M.SetKey(kc)
+    if _keys then _keys.Teleport = kc end
+end
+
+return M
