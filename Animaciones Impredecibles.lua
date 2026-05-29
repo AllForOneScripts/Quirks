@@ -1,67 +1,36 @@
-local animImpredHistory     = {}
-local animImpredActiveTrack = nil
-local animImpredRunning     = false
-local animImpredLoop        = nil
-local animImpredAnimatorConn = nil
- 
-local function animImpredStop()
-    animImpredRunning = false
- 
-    if animImpredLoop then
-        task.cancel(animImpredLoop)
-        animImpredLoop = nil
-    end
- 
-    if animImpredAnimatorConn then
-        pcall(function() animImpredAnimatorConn:Disconnect() end)
-        animImpredAnimatorConn = nil
-    end
- 
-    if animImpredActiveTrack then
-        pcall(function() animImpredActiveTrack:Stop(0.3) end)
-        animImpredActiveTrack = nil
-    end
- 
-    animImpredHistory = {}
-end
- 
-local function animImpredStart(char)
-    animImpredStop()
- 
+local M = {}
+local _running = false
+local _loop = nil
+local _animConn = nil
+local _activeTrack = nil
+local _history = {}
+
+function M.Start(char)
+    M.Stop()
     if not char then return end
-    animImpredRunning = true
- 
+    _running = true
+
     local humanoid = char:WaitForChild("Humanoid")
-    local animator  = humanoid:WaitForChild("Animator")
- 
-    animImpredAnimatorConn = animator.AnimationPlayed:Connect(function(track)
+    local animator = humanoid:WaitForChild("Animator")
+
+    _animConn = animator.AnimationPlayed:Connect(function(track)
         if track:GetAttribute("EsLag") then return end
-        if track.Animation and track.Animation.AnimationId and track.Animation.AnimationId ~= "" then
-            local id = track.Animation.AnimationId
-            if not table.find(animImpredHistory, id) then
-                table.insert(animImpredHistory, id)
-                if #animImpredHistory > 20 then table.remove(animImpredHistory, 1) end
-            end
+        local id = track.Animation and track.Animation.AnimationId
+        if id and id ~= "" and not table.find(_history, id) then
+            table.insert(_history, id)
+            if #_history > 20 then table.remove(_history, 1) end
         end
     end)
- 
-    animImpredLoop = task.spawn(function()
-        while animImpredRunning and char and char.Parent do
+
+    _loop = task.spawn(function()
+        while _running and char and char.Parent do
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hum or hum.Health <= 0 then break end
- 
-            if #animImpredHistory > 0 then
-                local index
-                if math.random(1, 100) <= 70 then
-                    index = #animImpredHistory
-                else
-                    index = math.random(1, #animImpredHistory)
-                end
- 
-                local nextId = animImpredHistory[index]
- 
+            if #_history > 0 then
+                local index = math.random(1,100) <= 70 and #_history or math.random(1, #_history)
+                local nextId = _history[index]
                 local newTrack
-                local loadOk = pcall(function()
+                local ok = pcall(function()
                     local anim = Instance.new("Animation")
                     anim.AnimationId = nextId
                     newTrack = animator:LoadAnimation(anim)
@@ -69,27 +38,29 @@ local function animImpredStart(char)
                     newTrack.Priority = Enum.AnimationPriority.Action4
                     newTrack:Play(0.3)
                 end)
- 
-                if loadOk and newTrack then
-                    local prevTrack = animImpredActiveTrack
-                    animImpredActiveTrack = newTrack
-                    if prevTrack then
-                        pcall(function() prevTrack:Stop(0.3) end)
-                        task.delay(0.5, function()
-                            pcall(function() prevTrack:Destroy() end)
-                        end)
+                if ok and newTrack then
+                    local prev = _activeTrack
+                    _activeTrack = newTrack
+                    if prev then
+                        pcall(function() prev:Stop(0.3) end)
+                        task.delay(0.5, function() pcall(function() prev:Destroy() end) end)
                     end
                 end
- 
                 task.wait(0.5)
             else
                 task.wait(0.1)
             end
         end
- 
-        if animImpredActiveTrack then
-            pcall(function() animImpredActiveTrack:Stop(0.3) end)
-            animImpredActiveTrack = nil
-        end
+        if _activeTrack then pcall(function() _activeTrack:Stop(0.3) end); _activeTrack = nil end
     end)
 end
+
+function M.Stop()
+    _running = false
+    if _loop then task.cancel(_loop); _loop = nil end
+    if _animConn then pcall(function() _animConn:Disconnect() end); _animConn = nil end
+    if _activeTrack then pcall(function() _activeTrack:Stop(0.3) end); _activeTrack = nil end
+    _history = {}
+end
+
+return M
