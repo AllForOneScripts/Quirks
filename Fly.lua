@@ -1,4 +1,4 @@
-print("version 1.20 fly")
+print("version 1.21 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -152,6 +152,39 @@ local LOCK_ROTATION_SMOOTH = 0.8
 
 -- Límite de coordenadas para detectar teletransporte anómalo
 local COORD_SANITY_LIMIT = 50000
+
+-- ============================================================
+-- SISTEMA DE ACCIÓN NO ANÓMALA (TrustedAction)
+-- Ventana retroactiva: cubre DESDE _trustedFrom HASTA _trustedUntil.
+-- Así funciona aunque el TP ocurra ligeramente antes de la llamada.
+-- ============================================================
+local _trustedFrom   = 0   -- tick() desde el que la ventana es válida (retroactivo)
+local _trustedUntil  = 0   -- tick() hasta el que los guards están suspendidos
+local _trustedReason = ""
+
+local TRUSTED_LOOKBACK = 0.15  -- ventana retroactiva en segundos
+
+local function isTrustedAction()
+    local now = tick()
+    return now >= _trustedFrom and now < _trustedUntil
+end
+
+-- Fuerza actualización de las posiciones seguras con la posición actual.
+-- Se llama desde TrustedAction para que los guards no reviertan el TP.
+local function _flushSafePos()
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local pos = root.Position
+    -- Sólo actualizar si la posición no es absurda
+    if math.abs(pos.X) < COORD_SANITY_LIMIT
+    and math.abs(pos.Y) < COORD_SANITY_LIMIT
+    and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+        flyanim.lastSafePos  = pos
+        flyanim.lastSafeTime = tick()
+        flyanim.lastKnownPos = pos
+    end
+end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -465,6 +498,13 @@ local function startTeleportGuard()
 
         local pos = root.Position
 
+        -- Si hay una acción marcada como legítima, actualizar posición segura sin corregir
+        if isTrustedAction() then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+            return
+        end
+
         -- Detectar coordenadas absolutamente absurdas (caída al void, etc.)
         local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
                       or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
@@ -476,11 +516,22 @@ local function startTeleportGuard()
             -- Recuperar a última posición segura
             local safePos = flyanim.lastSafePos
             if safePos then
+                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
                 pcall(function()
-                    root.CFrame = CFrame.new(safePos + Vector3.new(0, 5, 0))
+                    root.CFrame = targetCF
                     root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                     root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end)
+                -- Anclar cámara brevemente para evitar parpadeo
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local camCF = cam.CFrame
+                    task.defer(function()
+                        if cam and cam.Parent then
+                            cam.CFrame = camCF
+                        end
+                    end)
+                end
                 -- Resetear dash para que no siga empujando
                 flyanim.dashTimer = 0
                 flyanim.dashVel   = Vector3.new(0, 0, 0)
@@ -514,11 +565,20 @@ local function startTeleportGuard()
                 )
                 if not isFalling and impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
                     -- Teletransporte forzado detectado - devolver a posición segura
+                    local recovCF = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
+                    local cam = workspace.CurrentCamera
+                    local camCF = cam and cam.CFrame
                     pcall(function()
-                        root.CFrame = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
+                        root.CFrame = recovCF
                         root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                         root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end)
+                    -- Restaurar cámara en el mismo frame para que no salte
+                    if cam and camCF then
+                        task.defer(function()
+                            if cam and cam.Parent then cam.CFrame = camCF end
+                        end)
+                    end
                     if not root:FindFirstChildOfClass("BodyGyro") then
                         pcall(_flyMakeMotors)
                     end
@@ -1761,6 +1821,12 @@ local function startAnomalyProtection()
         local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
 
+        -- Si hay una acción marcada como legítima, actualizar lastKnownPos sin corregir
+        if isTrustedAction() then
+            flyanim.lastKnownPos = root.Position
+            return
+        end
+
         -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
@@ -1814,6 +1880,10 @@ local function startAnomalyProtection()
             lastAnomalyFix = now
             flyanim.ragdollDetected = true
 
+            -- Capturar posición de cámara ANTES de mover el personaje
+            local cam = workspace.CurrentCamera
+            local camCF = cam and cam.CFrame
+
             -- Si la posición actual es absurda y hay lastKnownPos, volver ahí
             local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
 
@@ -1822,6 +1892,13 @@ local function startAnomalyProtection()
 
             if recoverPos then
                 pcall(function() root.CFrame = CFrame.new(recoverPos) end)
+            end
+
+            -- Restaurar cámara en el siguiente frame para evitar parpadeo/salto
+            if cam and camCF then
+                task.defer(function()
+                    if cam and cam.Parent then cam.CFrame = camCF end
+                end)
             end
 
             flyanim.dashTimer = 0
@@ -4617,5 +4694,48 @@ end
 function M.GetFlyKey()  return flyanim.flyKey  end
 function M.GetLockKey() return flyanim.lockKey end
 function M.IsEnabled()  return flyanim.enabled end
+
+-- ============================================================
+-- TrustedAction / Bypass
+-- Marca una ventana de tiempo como "acción legítima" para que
+-- los sistemas anti-anomalía y anti-teleport no interfieran.
+--
+-- Sin argumentos → bypass inmediato de 0.5s (caso más común).
+-- Con duración   → bypass de N segundos.
+--
+-- La ventana es RETROACTIVA: cubre los últimos 150ms antes de la
+-- llamada, por lo que funciona aunque el TP ya haya ocurrido.
+--
+-- ── EJEMPLOS ──────────────────────────────────────────────
+--
+-- Desde el hub (F + Click Derecho → salto 1500 studs):
+--   Fly.Bypass()          -- llamar lo antes posible tras detectar el input
+--   root.CFrame = ...     -- el TP puede ocurrir antes o después, da igual
+--
+-- Teleport a coordenadas lejanas:
+--   Fly.Bypass(2)         -- 2 s de gracia si el TP tarda
+--   root.CFrame = CFrame.new(destino)
+--
+-- Alias más descriptivos disponibles:
+--   Fly.TrustedAction()   -- igual que Bypass()
+--   Fly.NotifyTeleport()  -- igual que Bypass()
+-- ============================================================
+function M.Bypass(duration, reason)
+    duration = tonumber(duration) or 0.5
+    duration = math.clamp(duration, 0.05, 30)
+    local now = tick()
+    _trustedFrom   = now - TRUSTED_LOOKBACK  -- retroactivo 150ms
+    _trustedUntil  = now + duration
+    _trustedReason = reason or "bypass"
+    -- Flush inmediato: actualizar safe pos con la posición actual
+    -- para que los guards no reviertan nada mientras la ventana está activa.
+    _flushSafePos()
+    -- Segundo flush diferido: captura la posición DESPUÉS del TP
+    task.defer(_flushSafePos)
+    task.delay(duration * 0.5, _flushSafePos)
+end
+
+M.TrustedAction  = M.Bypass
+M.NotifyTeleport = M.Bypass
 
 return M
