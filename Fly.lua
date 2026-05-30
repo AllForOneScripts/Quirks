@@ -152,6 +152,7 @@ local flyanim = {
     enabled     = false,
     speed       = BASE_SPEED,
     flyKey      = Enum.KeyCode.C,
+    lockKey     = Enum.KeyCode.X,
     bg          = nil,
     bv          = nil,
     bf          = nil,
@@ -3351,7 +3352,7 @@ end
 local function startLockSystem()
     local lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() then return end
-        if input.KeyCode == Enum.KeyCode.X then toggleLock() end
+        if input.KeyCode == flyanim.lockKey then toggleLock() end   -- <-- CAMBIO
     end)
     local lockRenderConn = RunService.RenderStepped:Connect(function()
         updateLockInfoGui()
@@ -3482,19 +3483,28 @@ local function _flyBuildGui()
         return f
     end
 
-    local lockSec = makeSection(30); lockSec.Parent=expandZone
+     local lockSec = makeSection(30); lockSec.Parent=expandZone
     local lockIconImg = Instance.new("TextLabel", lockSec)
     lockIconImg.Size=UDim2.new(0,24,0,24); lockIconImg.Position=UDim2.new(0,6,0.5,-12)
     lockIconImg.BackgroundTransparency=1; lockIconImg.Font=Enum.Font.GothamBold
     lockIconImg.TextSize=16; lockIconImg.TextColor3=Color3.fromRGB(255,220,80); lockIconImg.Text="🎯"
+    
     local lockLabel = Instance.new("TextLabel", lockSec)
-    lockLabel.Size=UDim2.new(0,60,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
+    lockLabel.Size=UDim2.new(0,80,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
     lockLabel.BackgroundTransparency=1; lockLabel.Font=Enum.Font.GothamBold
-    lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT; lockLabel.Text="LOCK [X]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT
+    lockLabel.Text = "LOCK [" .. flyanim.lockKey.Name .. "]"
+    lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    
     local lockHint = Instance.new("TextLabel", lockSec)
     lockHint.Size=UDim2.new(1,-100,1,0); lockHint.Position=UDim2.new(0,95,0,0)
     lockHint.BackgroundTransparency=1; lockHint.Font=Enum.Font.Gotham
-    lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200); lockHint.Text="Apuntar + X"; lockHint.TextXAlignment=Enum.TextXAlignment.Right
+    lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200)
+    lockHint.Text = "Apuntar + " .. flyanim.lockKey.Name
+    lockHint.TextXAlignment=Enum.TextXAlignment.Right
+
+    -- Guardar referencias para actualizar después si cambia la tecla
+    flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
     local noclipSec = makeSection(58); noclipSec.Parent=expandZone
     local noclipTitle = Instance.new("TextLabel", noclipSec)
@@ -4294,6 +4304,108 @@ local function _disconnectGlobal()
 end
 
 -- ============================================================
+-- FUNCIONES PARA REINICIAR SISTEMAS EN CALIENTE (cambio de teclas)
+-- ============================================================
+
+-- Actualizar la GUI de lock con la tecla actual
+local function updateLockKeyDisplay()
+    if flyanim.lockLabels then
+        local keyName = flyanim.lockKey.Name
+        flyanim.lockLabels.label.Text = "LOCK [" .. keyName .. "]"
+        flyanim.lockLabels.hint.Text = "Apuntar + " .. keyName
+    end
+end
+
+-- Reiniciar el sistema de lock (para que tome la nueva tecla)
+local function restartLockSystem()
+    if flyanim.lockConn then
+        flyanim.lockConn:Disconnect()
+        flyanim.lockConn = nil
+    end
+    if flyanim.lockRenderConn then
+        flyanim.lockRenderConn:Disconnect()
+        flyanim.lockRenderConn = nil
+    end
+    if flyanim.enabled then
+        startLockSystem()
+    end
+    updateLockKeyDisplay()  -- actualiza la GUI por si cambió la tecla
+end
+
+-- Reiniciar el InputBegan principal (para que tome la nueva tecla de vuelo)
+local function restartInputSystem()
+    -- Desconectar las conexiones globales actuales
+    if _inputConn then
+        _inputConn:Disconnect()
+        _inputConn = nil
+    end
+    if _inputConn_End then
+        _inputConn_End:Disconnect()
+        _inputConn_End = nil
+    end
+    -- Si el vuelo está activo, reconectar
+    if flyanim.enabled then
+        -- Crear nuevas conexiones con las teclas actualizadas
+        _inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if isTyping() then return end
+
+            if input.KeyCode == flyanim.flyKey then
+                if flyanim.enabled then _flyOff() else _flyOn() end
+                return
+            end
+
+            if input.KeyCode == Enum.KeyCode.Q then handleQPress() end
+
+            if input.KeyCode == Enum.KeyCode.F and flyanim.enabled then
+                flyanim.fKeyHeld = true
+                if not flyanim.blockCancelledByCombo then
+                    if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
+                        startBlocking()
+                    end
+                end
+                return
+            end
+
+            if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled and flyanim.mode == "normal" then
+                if not flyanim.comboPlaying and not flyanim.turboPreImpulsoActivo then
+                    manejarEspacioPresionadoNormal()
+                end
+            end
+
+            if flyanim.enabled and flyanim.mode == "normal" then
+                if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+            end
+        end)
+
+        _inputConn_End = UserInputService.InputEnded:Connect(function(input, gpe)
+            if gpe then return end
+
+            if input.KeyCode == Enum.KeyCode.F then
+                flyanim.fKeyHeld = false
+                flyanim.blockCancelledByCombo = false
+                if flyanim.enabled then stopBlocking() end
+                return
+            end
+
+            if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled then
+                manejarEspacioSoltadoNormal()
+            end
+
+            if flyanim.enabled and flyanim.mode == "normal" then
+                if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+                if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+            end
+        end)
+    end
+end
+
+-- ============================================================
 -- EXPORTACIÓN DEL MÓDULO
 -- ============================================================
 local M = {}
@@ -4313,11 +4425,29 @@ function M.Toggle(state)
     end
 end
 
+-- Cambiar tecla de vuelo (actualiza GUI y reinicia input en caliente)
 function M.SetKey(keyCode)
     flyanim.flyKey = keyCode
     if flyanim.updateLbl then
         pcall(function() flyanim.updateLbl(keyCode.Name) end)
     end
+    restartInputSystem()   -- para que la nueva tecla se use inmediatamente
+end
+
+-- Cambiar tecla de lock (reinicia el sistema y actualiza la GUI)
+function M.SetLockKey(keyCode)
+    flyanim.lockKey = keyCode
+    restartLockSystem()    -- reinicia el sistema de lock y actualiza la GUI
+end
+
+-- Obtener tecla de vuelo actual
+function M.GetFlyKey()
+    return flyanim.flyKey
+end
+
+-- Obtener tecla de lock actual
+function M.GetLockKey()
+    return flyanim.lockKey
 end
 
 function M.IsEnabled()
