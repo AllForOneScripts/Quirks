@@ -1,4 +1,4 @@
-print("version 1.4 fly")
+print("version 1.5 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -312,7 +312,6 @@ local flyanim = {
     teleportGuardConn = nil,
     isTeleportGuardActive = false,
 }
-
 -- ============================================================
 -- SISTEMA DE COMPENSACIÓN DE ALTURA ROBUSTO
 -- Mantiene un loop dedicado que corrige el C0 cada frame
@@ -366,7 +365,34 @@ local function aplicarC0Robusto(cf)
 end
 
 -- ============================================================
--- SISTEMA ANTI-TELETRANSPORTE FORZADO
+-- LIMPIEZA COMPLETA DE COMPENSACIÓN DE ALTURA (NUEVA)
+-- ============================================================
+local function limpiarCompensacionAltura()
+    flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
+    if flyanim.c0HeightConn then
+        flyanim.c0HeightConn:Disconnect()
+        flyanim.c0HeightConn = nil
+    end
+    if flyanim.turboRenderConn then
+        flyanim.turboRenderConn:Disconnect()
+        flyanim.turboRenderConn = nil
+    end
+    if flyanim.megaRenderConn then
+        flyanim.megaRenderConn:Disconnect()
+        flyanim.megaRenderConn = nil
+    end
+    clearC0Desired()
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    flyanim.turboPreImpulsoActivo = false
+    flyanim.turboTransitioning = false
+    flyanim.turboPreImpulsoToken = (flyanim.turboPreImpulsoToken or 0) + 1
+    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+end
+
+-- ============================================================
+-- SISTEMA ANTI-TELETRANSPORTE FORZADO (CORREGIDO)
 -- ============================================================
 
 local function startTeleportGuard()
@@ -424,8 +450,6 @@ local function startTeleportGuard()
             local delta    = pos - flyanim.lastSafePos
             local elapsed  = now - flyanim.lastSafeTime
             if elapsed > 0 then
-                -- Solo medir desplazamiento HORIZONTAL para detectar TP forzado.
-                -- El desplazamiento vertical (caída libre) nunca debe contar.
                 local horizDelta   = Vector3.new(delta.X, 0, delta.Z).Magnitude
                 local impliedSpeed = horizDelta / elapsed
                 local maxLegit = math.max(
@@ -434,7 +458,10 @@ local function startTeleportGuard()
                     flyanim.TURBO_DASH_SPEED * 2,
                     flyanim.BACK_DASH_SPEED * 2
                 )
-                if impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
+                -- Ignorar si el jugador está cayendo (vel.Y negativa alta)
+                local velY = root.AssemblyLinearVelocity.Y
+                local isFalling = velY < -10
+                if not isFalling and impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
                     pcall(function()
                         root.CFrame = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
                         root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
@@ -564,7 +591,7 @@ local function normStopSafe(track, fade)
 end
 
 -- ============================================================
--- SISTEMA DE COMPENSACIÓN DE ALTURA ROBUSTO
+-- SISTEMA DE COMPENSACIÓN DE ALTURA ROBUSTO (CORREGIDO)
 -- ============================================================
 
 local function iniciarWatchdogAltura(expectedCF, modeTag)
@@ -603,19 +630,8 @@ local function iniciarWatchdogAltura(expectedCF, modeTag)
     end)
 end
 
--- ============================================================
--- FIX BUG 1: detenerWatchdogAltura ahora invalida el token
--- Y desconecta la conexión de forma garantizada.
--- ============================================================
 local function detenerWatchdogAltura()
-    -- Bump token primero para que cualquier callback en vuelo se cancele
-    flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
-    if flyanim.c0HeightConn then
-        flyanim.c0HeightConn:Disconnect()
-        flyanim.c0HeightConn = nil
-    end
-    -- Limpiar también el CFrame deseado para no acumular estado
-    clearC0Desired()
+    limpiarCompensacionAltura()
 end
 
 local function actualizarPosicionNormal(offsetY, velocidad)
@@ -629,6 +645,33 @@ local function actualizarPosicionNormal(offsetY, velocidad)
     TweenService:Create(flyanim.rootJoint,
         TweenInfo.new(velocidad or ANIM_NORMAL.TRANSICION_POS, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
         {C0 = targetCF}):Play()
+end
+
+-- ============================================================
+-- REINICIO DE ESTADO DE ANIMACIONES (NUEVO)
+-- ============================================================
+local function resetearEstadoAnimaciones()
+    for _, t in pairs(flyanim.tracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0) end end)
+    end
+    for _, t in pairs(flyanim.normalTracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0) end end)
+    end
+    flyanim.comboPlaying = false
+    flyanim.isBlocking = false
+    flyanim.isSpaceAdv = false
+    flyanim.turboPreImpulsoActivo = false
+    flyanim.lateralKilled = true
+    flyanim.atrasKilled = true
+    flyanim.currentLateralId = (flyanim.currentLateralId or 0) + 1
+    flyanim.currentAtrasId = (flyanim.currentAtrasId or 0) + 1
+    if flyanim.idleAnimConn then
+        flyanim.idleAnimConn:Disconnect()
+        flyanim.idleAnimConn = nil
+    end
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
 end
 
 local function detenerNormalTracks(fade)
@@ -738,6 +781,9 @@ local function stopBlocking()
     flyanim.isBlocking = false
     if flyanim.blockRenderConn then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn = nil end
     if flyanim.blockTrack then pcall(function() flyanim.blockTrack:Stop(0) end) end
+    if flyanim.enabled and flyanim.mode == "normal" then
+        evaluarMovimientoNormal()
+    end
 end
 
 local function obtenerPiernaS()
@@ -1066,7 +1112,11 @@ local function manejarEspacioSoltadoNormal()
         flyanim.spaceHoldTimerAdv = nil
     end
     detenerEspacioAvanzado()
-    evaluarMovimientoDebounced()
+    if flyanim.enabled and flyanim.mode == "normal" then
+        evaluarMovimientoNormal()
+    else
+        evaluarMovimientoDebounced()
+    end
 end
 
 iniciarCicloNormal = function(thisPlay)
@@ -1501,6 +1551,7 @@ local function detenerPoseMega()
     detenerWatchdogAltura()
     restaurarC0Inmediato()
 end
+
 -- ============================================================
 -- MOVIMIENTO
 -- ============================================================
@@ -1526,9 +1577,7 @@ local function updateAnimForMovement()
     if flyanim.isBlocking   then return end
 
     if mode == "normal" then
-        -- Siempre delegar a evaluarMovimientoNormal para que
-        -- los tracks de W/A/S/D se actualicen correctamente
-        if not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
+        if not flyanim.turboPreImpulsoActivo then
             evaluarMovimientoNormal()
         end
     elseif mode == "fast" then
@@ -1680,34 +1729,37 @@ local function startAnomalyProtection()
         )
 
         local isAnomaly = false
-
-        -- Solo velocidad horizontal excesiva cuenta como anomalía.
-        -- Ignorar vel.Y negativa (caída libre) completamente.
         local horizSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
-        if horizSpeed > ANOMALY_SPEED_THRESHOLD and horizSpeed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
+        local isFalling = vel.Y < -10
+
+        -- Si está cayendo, ignorar velocidad horizontal a menos que sea extremadamente alta
+        if isFalling then
+            if horizSpeed > ANOMALY_SPEED_THRESHOLD * 2 and horizSpeed > maxLegitSpeed * 3 and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+                isAnomaly = true
+            end
+        else
+            if horizSpeed > ANOMALY_SPEED_THRESHOLD and horizSpeed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+                isAnomaly = true
+            end
         end
 
-        -- Solo impulso hacia ARRIBA anómalo (vel.Y positiva y alta).
-        -- vel.Y negativa = caída libre normal, NUNCA es anomalía.
+        -- Solo impulso vertical hacia arriba (positivo) puede ser anomalía; caída nunca lo es
         if not flyanim.megaTurboUpActive and vel.Y > ANOMALY_VERT_THRESHOLD and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
+            if vel.Y > 0 then isAnomaly = true end
         end
 
-        -- Teletransporte horizontal: solo medir desplazamiento en XZ,
-        -- ignorar que el personaje caiga rápido en Y.
+        -- Teletransporte horizontal (ignorar caída)
         if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            local delta     = root.Position - flyanim.lastKnownPos
+            local delta = root.Position - flyanim.lastKnownPos
             local horizDelta = Vector3.new(delta.X, 0, delta.Z).Magnitude
             local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
             if horizDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
-                if flyanim.dashTimer <= 0 then
+                if flyanim.dashTimer <= 0 and not isFalling then
                     isAnomaly = true
                 end
             end
         end
 
-        -- Ragdoll forzado por el juego
         if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
         end
