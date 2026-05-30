@@ -1,4 +1,4 @@
-print("version 1.8 flyfin")
+print("version 1.9 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -311,7 +311,6 @@ local flyanim = {
     lastSafeTime     = 0,
     teleportGuardConn = nil,
     isTeleportGuardActive = false,
-    flyOffTimestamp  = 0,  -- tiempo al que se desactivó el vuelo (para validar caída real)
 }
 
 -- ============================================================
@@ -367,8 +366,7 @@ local function aplicarC0Robusto(cf)
 end
 
 -- ============================================================
--- LIMPIEZA COMPLETA DE COMPENSACIÓN DE ALTURA
--- Detiene TODOS los render loops que modifican C0, igual que Fly(2)
+-- LIMPIEZA COMPLETA DE COMPENSACIÓN DE ALTURA (NUEVA)
 -- ============================================================
 local function limpiarCompensacionAltura()
     flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
@@ -683,6 +681,33 @@ local function detenerNormalTracks(fade)
     flyanim.idleTimerAnim  = 0
 end
 
+-- ============================================================
+-- REINICIO DE ESTADO DE ANIMACIONES (NUEVO)
+-- ============================================================
+local function resetearEstadoAnimaciones()
+    for _, t in pairs(flyanim.tracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0) end end)
+    end
+    for _, t in pairs(flyanim.normalTracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0) end end)
+    end
+    flyanim.comboPlaying = false
+    flyanim.isBlocking = false
+    flyanim.isSpaceAdv = false
+    flyanim.turboPreImpulsoActivo = false
+    flyanim.lateralKilled = true
+    flyanim.atrasKilled = true
+    flyanim.currentLateralId = (flyanim.currentLateralId or 0) + 1
+    flyanim.currentAtrasId = (flyanim.currentAtrasId or 0) + 1
+    if flyanim.idleAnimConn then
+        flyanim.idleAnimConn:Disconnect()
+        flyanim.idleAnimConn = nil
+    end
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+end
+
 local function detenerNormalExceptoBase(fade)
     fade = fade or 0
     local nt       = flyanim.normalTracks
@@ -778,6 +803,9 @@ local function stopBlocking()
     flyanim.isBlocking = false
     if flyanim.blockRenderConn then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn = nil end
     if flyanim.blockTrack then pcall(function() flyanim.blockTrack:Stop(0) end) end
+    if flyanim.enabled and flyanim.mode == "normal" then
+        evaluarMovimientoNormal()
+    end
 end
 
 local function obtenerPiernaS()
@@ -1573,13 +1601,8 @@ local function updateAnimForMovement()
     if flyanim.isBlocking   then return end
 
     if mode == "normal" then
-        local nt = flyanim.normalTracks
-        if not nt.mov_forward then
-            if not moving then playAnim(ANIM.idle, true)
-            elseif dir == "right" then playAnim(ANIM.right, true)
-            elseif dir == "left"  then playAnim(ANIM.left, true)
-            elseif dir == "back"  then playAnim(ANIM.back, true)
-            else playAnim(ANIM.forward, true) end
+        if not flyanim.turboPreImpulsoActivo then
+            evaluarMovimientoNormal()
         end
     elseif mode == "fast" then
         if flyanim.turboRenderConn then return end
@@ -2035,11 +2058,7 @@ local function createParticle(isMega)
     if flyanim.aDown then moveDir = moveDir - rightH end
     if flyanim.dDown then moveDir = moveDir + rightH end
     if moveDir.Magnitude < 0.01 then moveDir = lookH else moveDir = moveDir.Unit end
-    -- Posición en los pies: HipHeight da la distancia HRP→suelo
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local hipH = (hum and hum.HipHeight) or 2.3
-    local feetPos = Vector3.new(root.Position.X, root.Position.Y - hipH - 0.2, root.Position.Z)
-    local spawnPos = feetPos + (-moveDir * 5)
+    local spawnPos = root.Position + (-moveDir * 5)
     local awayDir  = -moveDir
     local part = Instance.new("Part")
     part.Anchored = true; part.CanCollide = false; part.CastShadow = false
@@ -3405,7 +3424,7 @@ end
 local function startLockSystem()
     local lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() then return end
-        if input.KeyCode == Enum.KeyCode.X then toggleLock() end
+        if input.KeyCode == flyanim.lockKey then toggleLock() end
     end)
     local lockRenderConn = RunService.RenderStepped:Connect(function()
         updateLockInfoGui()
@@ -3436,7 +3455,6 @@ local function _flyDestroyGui()
     flyanim.expanded = false; flyanim.updateLbl = nil; flyanim.updateMode = nil
     if flyanim.gui then pcall(function() flyanim.gui:Destroy() end); flyanim.gui = nil end
     flyanim.lockInfoGui = nil
-    flyanim.lockLabels  = nil
 end
 
 local function createToggle(parent, xPos, yPos, initialState, onChange)
@@ -3543,16 +3561,19 @@ local function _flyBuildGui()
     lockIconImg.BackgroundTransparency=1; lockIconImg.Font=Enum.Font.GothamBold
     lockIconImg.TextSize=16; lockIconImg.TextColor3=Color3.fromRGB(255,220,80); lockIconImg.Text="🎯"
     local lockLabel = Instance.new("TextLabel", lockSec)
-    lockLabel.Size=UDim2.new(0,60,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
+    lockLabel.Size=UDim2.new(0,80,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
     lockLabel.BackgroundTransparency=1; lockLabel.Font=Enum.Font.GothamBold
     lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT
-    lockLabel.Text="LOCK ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    lockLabel.Text = "LOCK [" .. flyanim.lockKey.Name .. "]"
+    lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+
     local lockHint = Instance.new("TextLabel", lockSec)
     lockHint.Size=UDim2.new(1,-100,1,0); lockHint.Position=UDim2.new(0,95,0,0)
     lockHint.BackgroundTransparency=1; lockHint.Font=Enum.Font.Gotham
     lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200)
-    lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
-    -- Guardar referencias para actualización dinámica de tecla
+    lockHint.Text = "Apuntar + " .. flyanim.lockKey.Name
+    lockHint.TextXAlignment=Enum.TextXAlignment.Right
+
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
     local noclipSec = makeSection(58); noclipSec.Parent=expandZone
@@ -3726,6 +3747,17 @@ local function _flyOn()
     flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
     flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick()
+
+    -- Limpiar completamente el estado de altura antes de configurar el nuevo vuelo,
+    -- para que no haya acumulación de offsets de sesiones anteriores.
+    flyanim.c0ControlToken = 0
+    flyanim.c0HeightToken  = 0
+    if flyanim.c0HeightConn then
+        flyanim.c0HeightConn:Disconnect()
+        flyanim.c0HeightConn = nil
+    end
+    clearC0Desired()
+
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
     if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
@@ -3907,7 +3939,7 @@ local function _flyOn()
             end
         end
 
-        -- Actualizar animaciones cada frame (igual que Fly(2))
+        -- Actualizar animaciones de movimiento cada frame para modo normal
         if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
         and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
             evaluarMovimientoNormal()
@@ -4224,16 +4256,16 @@ if dDown and not sDown and not aDown then
 end
 
 -- ============================================================
--- CONEXIONES GLOBALES (módulo)
+-- CONEXIONES GLOBALES DEL MÓDULO (se gestionan en Start/Stop)
 -- ============================================================
-
 local _inputConn     = nil
 local _inputConn_End = nil
 local _charConn      = nil
 
 local function _connectGlobal()
-    if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
+    if _inputConn     then _inputConn:Disconnect();     _inputConn     = nil end
     if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
+    if _charConn      then _charConn:Disconnect();      _charConn      = nil end
 
     _inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
@@ -4292,7 +4324,6 @@ local function _connectGlobal()
         end
     end)
 
-    if _charConn then _charConn:Disconnect(); _charConn = nil end
     _charConn = lplr.CharacterAdded:Connect(function(newChar)
         if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
         destroyWhiteFlash()
@@ -4321,7 +4352,6 @@ local function _connectGlobal()
         flyanim.lastSafePos = nil
         flyanim.lastSafeTime = tick()
         flyanim.isTeleportGuardActive = false
-        flyanim.flyOffTimestamp = 0
         if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
         flyanim.lateralKilled=true; flyanim.atrasKilled=true
         if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv=nil end
@@ -4372,7 +4402,7 @@ local function updateLockKeyDisplay()
     if flyanim.lockLabels then
         local keyName = flyanim.lockKey.Name
         flyanim.lockLabels.label.Text = "LOCK [" .. keyName .. "]"
-        flyanim.lockLabels.hint.Text = "Apuntar + " .. keyName
+        flyanim.lockLabels.hint.Text  = "Apuntar + " .. keyName
     end
 end
 
@@ -4392,66 +4422,71 @@ local function restartLockSystem()
 end
 
 local function restartInputSystem()
-    if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
-    if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
-    if flyanim.enabled then
-        _inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
-            if gpe then return end
-            if isTyping() then return end
-
-            if input.KeyCode == flyanim.flyKey then
-                if flyanim.enabled then _flyOff() else _flyOn() end
-                return
-            end
-
-            if input.KeyCode == Enum.KeyCode.Q then handleQPress() end
-
-            if input.KeyCode == Enum.KeyCode.F and flyanim.enabled then
-                flyanim.fKeyHeld = true
-                if not flyanim.blockCancelledByCombo then
-                    if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
-                        startBlocking()
-                    end
-                end
-                return
-            end
-
-            if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled and flyanim.mode == "normal" then
-                if not flyanim.comboPlaying and not flyanim.turboPreImpulsoActivo then
-                    manejarEspacioPresionadoNormal()
-                end
-            end
-
-            if flyanim.enabled and flyanim.mode == "normal" then
-                if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
-            end
-        end)
-
-        _inputConn_End = UserInputService.InputEnded:Connect(function(input, gpe)
-            if gpe then return end
-
-            if input.KeyCode == Enum.KeyCode.F then
-                flyanim.fKeyHeld = false
-                flyanim.blockCancelledByCombo = false
-                if flyanim.enabled then stopBlocking() end
-                return
-            end
-
-            if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled then
-                manejarEspacioSoltadoNormal()
-            end
-
-            if flyanim.enabled and flyanim.mode == "normal" then
-                if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
-                if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
-            end
-        end)
+    if _inputConn then
+        _inputConn:Disconnect()
+        _inputConn = nil
     end
+    if _inputConn_End then
+        _inputConn_End:Disconnect()
+        _inputConn_End = nil
+    end
+    -- Reconectar con las teclas actualizadas
+    _inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if isTyping() then return end
+
+        if input.KeyCode == flyanim.flyKey then
+            if flyanim.enabled then _flyOff() else _flyOn() end
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Q then handleQPress() end
+
+        if input.KeyCode == Enum.KeyCode.F and flyanim.enabled then
+            flyanim.fKeyHeld = true
+            if not flyanim.blockCancelledByCombo then
+                if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
+                    startBlocking()
+                end
+            end
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled and flyanim.mode == "normal" then
+            if not flyanim.comboPlaying and not flyanim.turboPreImpulsoActivo then
+                manejarEspacioPresionadoNormal()
+            end
+        end
+
+        if flyanim.enabled and flyanim.mode == "normal" then
+            if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+        end
+    end)
+
+    _inputConn_End = UserInputService.InputEnded:Connect(function(input, gpe)
+        if gpe then return end
+
+        if input.KeyCode == Enum.KeyCode.F then
+            flyanim.fKeyHeld = false
+            flyanim.blockCancelledByCombo = false
+            if flyanim.enabled then stopBlocking() end
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled then
+            manejarEspacioSoltadoNormal()
+        end
+
+        if flyanim.enabled and flyanim.mode == "normal" then
+            if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+            if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+        end
+    end)
 end
 
 -- ============================================================
