@@ -1,4 +1,4 @@
-print("version 1.10 fly")
+print("version 1.11 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -320,6 +320,8 @@ local flyanim = {
 -- ============================================================
 
 local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
+-- Token para cancelar tweens de compensación de altura en vuelo
+local heightTweenToken = 0
 
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
@@ -330,6 +332,8 @@ local function clearC0Desired()
 end
 
 local function restaurarC0Inmediato()
+    -- Cancela cualquier tween de compensación de altura en curso
+    heightTweenToken = heightTweenToken + 1
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
@@ -635,15 +639,33 @@ end
 
 local function actualizarPosicionNormal(offsetY, velocidad)
     if not flyanim.rootJoint or not flyanim.originalC0 then return end
+    -- Incrementar token para invalidar cualquier tween anterior en curso
+    heightTweenToken = heightTweenToken + 1
+    local myToken = heightTweenToken
     local targetCF
     if offsetY == 0 then
         targetCF = flyanim.originalC0
     else
         targetCF = flyanim.originalC0 + Vector3.new(0, offsetY, 0)
     end
-    TweenService:Create(flyanim.rootJoint,
-        TweenInfo.new(velocidad or ANIM_NORMAL.TRANSICION_POS, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-        {C0 = targetCF}):Play()
+    -- Usar interpolación manual con token para poder cancelarla
+    local rj = flyanim.rootJoint
+    local dur = velocidad or ANIM_NORMAL.TRANSICION_POS
+    local startCF = rj.C0
+    local startT  = tick()
+    task.spawn(function()
+        while true do
+            task.wait()
+            if heightTweenToken ~= myToken then return end
+            if not flyanim.enabled then return end
+            local elapsed = tick() - startT
+            local t = math.clamp(elapsed / dur, 0, 1)
+            -- Ease InOut Sine
+            local ease = -(math.cos(math.pi * t) - 1) / 2
+            pcall(function() rj.C0 = startCF:Lerp(targetCF, ease) end)
+            if t >= 1 then return end
+        end
+    end)
 end
 
 local function detenerNormalTracks(fade)
@@ -1175,7 +1197,7 @@ local function iniciarPoseTurbo()
 
     if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
 
-    local char = lplr.Character
+    local char = lplr and lplr.Character
     if not char then flyanim.turboPreImpulsoActivo = false; return end
     local rootJoint  = flyanim.rootJoint
     local originalC0 = flyanim.originalC0
@@ -1557,6 +1579,7 @@ local function updateAnimForMovement()
             else playAnim(ANIM.forward, true) end
         end
     elseif mode == "fast" then
+        -- No tocar animaciones durante pre-impulso turbo
         if flyanim.turboRenderConn then return end
         local enterFast = flyanim.tracks[ANIM.fast_enter]
         if enterFast and enterFast.IsPlaying then return end
@@ -3682,15 +3705,20 @@ end
 
 local function _flyOn()
     local char = lplr.Character; if not char then return end
+    -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
     if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
-    flyanim.waitingLand = false; flyanim.enabled = true
+    flyanim.waitingLand = false
+    flyanim.landingHeight = nil
+    flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
+    -- Cancelar cualquier tween de compensación de altura en curso
+    heightTweenToken = heightTweenToken + 1
+    flyanim.enabled = true
     flyanim.mode = "normal"; flyanim.speed = BASE_SPEED
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
     flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
     flyanim.isMoving=false; flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
     flyanim.gyroProtectionActive=false; flyanim.turboPreImpulsoActivo=false
     flyanim.turboPreImpulsoToken=0; flyanim.c0ControlToken=0; flyanim.c0HeightToken=0
-    flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
     flyanim.noclipSpaceActive = false; flyanim.lastKnownPos = nil
     flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
@@ -3703,6 +3731,9 @@ local function _flyOn()
     if hum then
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        -- Sacar al personaje de freefall/caída inmediatamente
+        hum.PlatformStand = false
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     end
     setupAnimator(char)
     _flyMakeMotors(); _flyBuildGui(); startIdleWatcher(); startComboListener()
@@ -3823,7 +3854,15 @@ local function _flyOn()
         local aD = not typing and UserInputService:IsKeyDown(Enum.KeyCode.A)
         local dD = not typing and UserInputService:IsKeyDown(Enum.KeyCode.D)
         flyanim.wDown=wD; flyanim.sDown=sD; flyanim.aDown=aD; flyanim.dDown=dD
+        -- Detectar cambios en flags de movimiento para re-evaluar animaciones en modo normal
+        local prevW, prevS, prevA, prevD = flyanim.isWDown, flyanim.isSDown, flyanim.isADown, flyanim.isDDown
         flyanim.isWDown=wD; flyanim.isSDown=sD; flyanim.isADown=aD; flyanim.isDDown=dD
+        if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
+            and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
+            if prevW ~= wD or prevS ~= sD or prevA ~= aD or prevD ~= dD then
+                evaluarMovimientoNormal()
+            end
+        end
 
         if flyanim.bv then flyanim.bv.velocity = Vector3.new(0, 0, 0) end
 
@@ -3886,6 +3925,7 @@ local function _flyOff()
     -- Cancelar watchdog y tokens de C0 de forma síncrona PRIMERO,
     -- antes de cualquier otro sistema, para evitar que el watchdog
     -- sobreescriba el C0 restaurado un frame después.
+    heightTweenToken = heightTweenToken + 1  -- cancela tweens de compensación de altura
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     flyanim.c0HeightToken  = (flyanim.c0HeightToken  or 0) + 1
     if flyanim.c0HeightConn then
@@ -3924,10 +3964,11 @@ local function _flyOff()
     flyanim.comboAnimStartTime = 0
     if dashConnection then dashConnection:Disconnect(); dashConnection=nil end
 
-    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+    -- NOTA: NO incrementar c0ControlToken de nuevo aquí (ya se hizo arriba)
 
     if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
     if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
+
 
     detenerNormalTracks(0.1); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
     stopBlocking(); stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
@@ -4289,6 +4330,7 @@ local function _connectGlobal()
         flyanim.espacioTrackActivo=nil
         flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
         c0DesiredCFrame = nil
+        heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
