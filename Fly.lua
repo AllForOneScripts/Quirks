@@ -1,4 +1,4 @@
-print("version 1.12 fly")
+print("version 1.13 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -322,11 +322,6 @@ local flyanim = {
 local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
 -- Token para cancelar tweens de compensación de altura en vuelo
 local heightTweenToken = 0
--- Token para cancelar la animación épica de caída si se reactiva fly
-local landAnimToken = 0
--- Referencias a las animaciones de caída activas (para pararlas desde _flyOn)
-local activeLandBase    = nil
-local activeLandOverlay = nil
 
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
@@ -816,8 +811,7 @@ end
 local function ejecutarLateral(inicio, thisId)
     local nt = flyanim.normalTracks
     if not nt.lateral then return end
-    local timeout = tick() + 3
-    while nt.lateral.Length == 0 and tick() < timeout do task.wait() end
+    while nt.lateral.Length == 0 do task.wait() end
     if flyanim.currentLateralId ~= thisId then return end
     flyanim.lateralTarget = inicio
     flyanim.lateralKilled = false
@@ -827,9 +821,9 @@ local function ejecutarLateral(inicio, thisId)
     end
     flyanim.lateralLoopId = thisId
     normPlaySafe(nt.lateral)
-    pcall(function() nt.lateral:AdjustSpeed(0) end)
-    pcall(function() nt.lateral.TimePosition = nt.lateral.Length * inicio end)
-    pcall(function() nt.lateral:AdjustWeight(ANIM_NORMAL.PESO_LATERAL, ANIM_NORMAL.TRANSICION_FLUIDA) end)
+    nt.lateral:AdjustSpeed(0)
+    nt.lateral.TimePosition = nt.lateral.Length * inicio
+    nt.lateral:AdjustWeight(ANIM_NORMAL.PESO_LATERAL, ANIM_NORMAL.TRANSICION_FLUIDA)
     local currentPos = inicio
     while true do
         task.wait(0.05)
@@ -848,7 +842,7 @@ local function ejecutarLateral(inicio, thisId)
         else
             currentPos = currentPos + (delta > 0 and ANIM_NORMAL.LATERAL_LERP_VEL or -ANIM_NORMAL.LATERAL_LERP_VEL)
         end
-        pcall(function() nt.lateral.TimePosition = nt.lateral.Length * currentPos end)
+        nt.lateral.TimePosition = nt.lateral.Length * currentPos
     end
 end
 
@@ -867,20 +861,19 @@ local function ejecutarDashAtrasAnim(targetStartPercent, velocidadRapida)
     flyanim.atrasCurrentSpeed = nuevaVelocidad
     local thisLoop = flyanim.atrasLoopId
     task.spawn(function()
-        local timeout = tick() + 3
-        while nt.mov_back.Length == 0 and tick() < timeout do task.wait() end
+        while nt.mov_back.Length == 0 do task.wait() end
         if flyanim.atrasLoopId ~= thisLoop then return end
         normPlaySafe(nt.mov_back)
         if nt.mov_brazos then normPlaySafe(nt.mov_brazos) end
-        pcall(function() nt.mov_back:AdjustSpeed(0) end)
-        pcall(function() nt.mov_back.TimePosition = nt.mov_back.Length * targetStartPercent end)
+        nt.mov_back:AdjustSpeed(0)
+        nt.mov_back.TimePosition = nt.mov_back.Length * targetStartPercent
         local currentPos  = targetStartPercent
         local oscilaDir   = 1
         local oscilaTimer = 0
         while true do
             task.wait(0.05)
             if flyanim.atrasKilled then
-                pcall(function() nt.mov_back:AdjustSpeed(1) end)
+                nt.mov_back:AdjustSpeed(1)
                 normStopSafe(nt.mov_back)
                 if nt.mov_brazos then normStopSafe(nt.mov_brazos) end
                 flyanim.atrasLoopId = 0
@@ -897,7 +890,7 @@ local function ejecutarDashAtrasAnim(targetStartPercent, velocidadRapida)
             oscilaTimer = oscilaTimer + 0.05
             if oscilaTimer >= 0.8 then oscilaDir = -oscilaDir; oscilaTimer = 0 end
             local oscilaOffset = oscilaDir * ANIM_NORMAL.OSCILA_VEL * oscilaTimer / 0.8 * 0.04
-            pcall(function() nt.mov_back.TimePosition = nt.mov_back.Length * math.clamp(currentPos + oscilaOffset, 0, 1) end)
+            nt.mov_back.TimePosition = nt.mov_back.Length * math.clamp(currentPos + oscilaOffset, 0, 1)
         end
     end)
 end
@@ -969,12 +962,12 @@ local function evaluarMovimientoNormal()
     elseif estado == "W_A" then
         matarAtras()
         normPlaySafe(nt.mov_forward)
-        pcall(function() nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA) end)
+        nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA)
         relanzarLateral(C.INICIO_A)
     elseif estado == "W_D" then
         matarAtras()
         normPlaySafe(nt.mov_forward)
-        pcall(function() nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA) end)
+        nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA)
         relanzarLateral(C.INICIO_D)
     elseif estado == "S_A" then
         normStopSafe(nt.mov_forward)
@@ -985,12 +978,12 @@ local function evaluarMovimientoNormal()
     elseif estado == "A_SOLO" then
         matarAtras()
         normPlaySafe(nt.mov_forward)
-        pcall(function() nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA) end)
+        nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA)
         relanzarLateral(C.INICIO_A)
     elseif estado == "D_SOLO" then
         matarAtras()
         normPlaySafe(nt.mov_forward)
-        pcall(function() nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA) end)
+        nt.mov_forward:AdjustWeight(1.0, C.TRANSICION_FLUIDA)
         relanzarLateral(C.INICIO_D)
     else
         matarAtras(); matarLateral()
@@ -1000,19 +993,18 @@ local function evaluarMovimientoNormal()
         if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
             local nt2 = flyanim.normalTracks
             if nt2.estatica and not nt2.estatica.IsPlaying then
-                pcall(function() nt2.estatica:Play(ANIM_NORMAL.TRANSICION_FLUIDA) end)
+                nt2.estatica:Play(ANIM_NORMAL.TRANSICION_FLUIDA)
                 task.spawn(function()
-                    local to = tick() + 3
-                    while nt2.estatica.Length == 0 and tick() < to do task.wait() end
+                    while nt2.estatica.Length == 0 do task.wait() end
                     task.wait(nt2.estatica.Length * ANIM_NORMAL.PARADA_ESTATICA)
                     if flyanim.enabled and flyanim.mode == "normal" then
-                        pcall(function() nt2.estatica:AdjustSpeed(0) end)
+                        nt2.estatica:AdjustSpeed(0)
                     end
                 end)
             end
             if nt2.levitacion and not nt2.levitacion.IsPlaying then
-                pcall(function() nt2.levitacion:Play(ANIM_NORMAL.TRANSICION_FLUIDA) end)
-                pcall(function() nt2.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION) end)
+                nt2.levitacion:Play(ANIM_NORMAL.TRANSICION_FLUIDA)
+                nt2.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION)
             end
 
             if not flyanim.idleAnimConn then
@@ -2543,6 +2535,11 @@ end
 -- LANDING
 -- ============================================================
 
+-- CAMBIO SALVAJE: token global para matar la animación de caída épica desde _flyOn
+local _landAnimToken = 0
+local _landBaseRef    = nil
+local _landOverlayRef = nil
+
 local function doLanding(char)
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
@@ -2654,11 +2651,11 @@ local function doLanding(char)
         landBase.Looped    = true
         landOverlay.Looped = true
 
-        -- Registrar referencias globales para poder cancelarlas desde _flyOn
-        activeLandBase    = landBase
-        activeLandOverlay = landOverlay
-        -- Capturar token actual; si _flyOn lo incrementa, abortamos
-        local myLandToken = landAnimToken
+        -- CAMBIO SALVAJE: registrar refs globales y capturar token para poder matar esto desde _flyOn
+        _landAnimToken = _landAnimToken + 1
+        local myToken  = _landAnimToken
+        _landBaseRef    = landBase
+        _landOverlayRef = landOverlay
 
         pcall(function() landBase:Stop(0); landOverlay:Stop(0) end)
         pcall(function() landBase:Play(0.0, 1, 1) end)
@@ -2668,7 +2665,7 @@ local function doLanding(char)
         pcall(function() landOverlay:AdjustSpeed(8.0) end)
 
         task.wait(0.06)
-        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
 
         pcall(function() landBase:AdjustSpeed(0) end)
         pcall(function() landOverlay:AdjustSpeed(0) end)
@@ -2677,26 +2674,26 @@ local function doLanding(char)
         shakeCamera(shakeIntensity, 0.30)
 
         task.wait(0.30)
-        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(0.3); landOverlay:AdjustSpeed(0.3) end)
         task.wait(0.45)
-        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(1.0); landOverlay:AdjustSpeed(1.0) end)
         task.wait(0.3)
-        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:Stop(0.5); landOverlay:Stop(0.5) end)
         task.wait(0.5)
-        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
 
         landAnimConn:Disconnect()
 
         task.wait(0.4)
+        if _landAnimToken ~= myToken then return end
 
         pcall(function() landBase:Destroy() end)
         pcall(function() landOverlay:Destroy() end)
-        -- Limpiar referencias globales solo si siguen siendo las nuestras
-        if activeLandBase == landBase    then activeLandBase    = nil end
-        if activeLandOverlay == landOverlay then activeLandOverlay = nil end
+        if _landBaseRef == landBase then _landBaseRef = nil end
+        if _landOverlayRef == landOverlay then _landOverlayRef = nil end
     else
         -- Caída leve: solo efectos, sin animación larga
         local shakeIntensity = 0.8 + (math.clamp(altura, 10, 25) - 10) / 15 * 1.2
@@ -3729,16 +3726,11 @@ local function _flyOn()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
-    -- Cancelar animaciones de caída épica activas (landBase/landOverlay en doLanding)
-    landAnimToken = landAnimToken + 1
-    if activeLandBase and activeLandBase.Parent ~= nil then
-        pcall(function() activeLandBase:Stop(0) end)
-    end
-    if activeLandOverlay and activeLandOverlay.Parent ~= nil then
-        pcall(function() activeLandOverlay:Stop(0) end)
-    end
-    activeLandBase    = nil
-    activeLandOverlay = nil
+    -- CAMBIO SALVAJE: matar animación de caída épica si está corriendo
+    _landAnimToken = _landAnimToken + 1
+    if _landBaseRef and pcall(function() _landBaseRef:Stop(0) end) then end
+    if _landOverlayRef and pcall(function() _landOverlayRef:Stop(0) end) then end
+    _landBaseRef = nil; _landOverlayRef = nil
     -- Cancelar cualquier tween de compensación de altura en curso
     heightTweenToken = heightTweenToken + 1
     flyanim.enabled = true
@@ -3883,16 +3875,7 @@ local function _flyOn()
         local aD = not typing and UserInputService:IsKeyDown(Enum.KeyCode.A)
         local dD = not typing and UserInputService:IsKeyDown(Enum.KeyCode.D)
         flyanim.wDown=wD; flyanim.sDown=sD; flyanim.aDown=aD; flyanim.dDown=dD
-        -- Detectar cambios en flags de movimiento para re-evaluar animaciones en modo normal
-        local prevW, prevS, prevA, prevD = flyanim.isWDown, flyanim.isSDown, flyanim.isADown, flyanim.isDDown
         flyanim.isWDown=wD; flyanim.isSDown=sD; flyanim.isADown=aD; flyanim.isDDown=dD
-        if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
-            and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
-            if prevW ~= wD or prevS ~= sD or prevA ~= aD or prevD ~= dD then
-                -- Usar debounce para evitar race conditions con los loops de lateral/atrás
-                evaluarMovimientoDebounced()
-            end
-        end
 
         if flyanim.bv then flyanim.bv.velocity = Vector3.new(0, 0, 0) end
 
@@ -4056,20 +4039,22 @@ local function _flyOff()
         end
     end
 
-    -- FIX REBOTE: resetear velocidad vertical ANTES de Freefall para que el personaje
-    -- caiga normalmente y no suba al desactivar fly. Conservar solo la velocidad horizontal
-    -- para que los dashes/inercia lateral sigan funcionando.
+    -- CAMBIO SALVAJE: zerear TODA la velocidad del HRP (incluyendo Y positivo que provoca el rebote)
+    -- y mantener un BodyVelocity que fuerce velocidad cero por 2 frames antes de soltarlo
     if rootCurrent then
-        local vel = rootCurrent.AssemblyLinearVelocity
-        -- Solo zeroeamos el componente Y positivo (hacia arriba), no el negativo (caída legítima)
-        if vel.Y > 0 then
-            pcall(function()
-                rootCurrent.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
-            end)
-        end
+        pcall(function() rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+        pcall(function() rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
+        local zeroLock = Instance.new("BodyVelocity")
+        zeroLock.Velocity  = Vector3.new(0, 0, 0)
+        zeroLock.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
+        zeroLock.Parent    = rootCurrent
+        task.wait()
+        task.wait()
+        pcall(function() zeroLock:Destroy() end)
+        pcall(function() rootCurrent.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
+    else
+        task.wait()
     end
-
-    task.wait()
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
 
@@ -4374,9 +4359,7 @@ local function _connectGlobal()
         flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
         c0DesiredCFrame = nil
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
-        landAnimToken    = landAnimToken + 1     -- cancelar animación épica de caída al respawn
-        activeLandBase    = nil
-        activeLandOverlay = nil
+        _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
