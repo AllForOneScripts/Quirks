@@ -365,8 +365,6 @@ end
 
 -- ============================================================
 -- SISTEMA ANTI-TELETRANSPORTE FORZADO
--- Detecta cuando el personaje es teletransportado a coordenadas
--- absurdas y lo devuelve a la última posición segura conocida
 -- ============================================================
 
 local function startTeleportGuard()
@@ -396,15 +394,13 @@ local function startTeleportGuard()
 
         local pos = root.Position
 
-        -- Detectar coordenadas absolutamente absurdas (caída al void, etc.)
         local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
                       or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
                       or (math.abs(pos.Z) > COORD_SANITY_LIMIT)
-                      or (pos.Y < -5000)  -- caída al void
-                      or (pos ~= pos)     -- NaN check
+                      or (pos.Y < -5000)
+                      or (pos ~= pos)
 
         if isInsane then
-            -- Recuperar a última posición segura
             local safePos = flyanim.lastSafePos
             if safePos then
                 pcall(function()
@@ -412,10 +408,8 @@ local function startTeleportGuard()
                     root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                     root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end)
-                -- Resetear dash para que no siga empujando
                 flyanim.dashTimer = 0
                 flyanim.dashVel   = Vector3.new(0, 0, 0)
-                -- Reconstruir motores si es necesario
                 if not root:FindFirstChildOfClass("BodyGyro") then
                     pcall(_flyMakeMotors)
                 end
@@ -423,14 +417,12 @@ local function startTeleportGuard()
             return
         end
 
-        -- Detectar teletransporte brusco (no causado por dash legítimo)
         local now = tick()
         if flyanim.lastSafePos then
             local delta = (pos - flyanim.lastSafePos).Magnitude
             local elapsed = now - flyanim.lastSafeTime
             if elapsed > 0 then
                 local impliedSpeed = delta / elapsed
-                -- Si la velocidad implícita es absurdamente alta y no tenemos dash activo
                 local maxLegit = math.max(
                     BASE_SPEED * TURBO_MULT * 2,
                     flyanim.DASH_SPEED * 2,
@@ -438,7 +430,6 @@ local function startTeleportGuard()
                     flyanim.BACK_DASH_SPEED * 2
                 )
                 if impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
-                    -- Teletransporte forzado detectado - devolver a posición segura
                     pcall(function()
                         root.CFrame = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
                         root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
@@ -452,7 +443,6 @@ local function startTeleportGuard()
             end
         end
 
-        -- Actualizar posición segura solo si es razonable
         flyanim.lastSafePos  = pos
         flyanim.lastSafeTime = now
     end)
@@ -507,10 +497,8 @@ end
 local function getTrack(animId)
     if not flyanim.animator then return nil end
     if flyanim.tracks[animId] then
-        -- Verificar que el track sigue siendo válido
         local t = flyanim.tracks[animId]
         if t and t.Parent ~= nil then return t end
-        -- Track inválido, recargar
         flyanim.tracks[animId] = nil
     end
     local ok, obj = pcall(function()
@@ -572,11 +560,9 @@ end
 
 -- ============================================================
 -- SISTEMA DE COMPENSACIÓN DE ALTURA ROBUSTO
--- Corrige el offset vertical del rootJoint con watchdog
 -- ============================================================
 
 local function iniciarWatchdogAltura(expectedCF, modeTag)
-    -- Cancela el watchdog anterior
     flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
     local myToken = flyanim.c0HeightToken
 
@@ -587,8 +573,6 @@ local function iniciarWatchdogAltura(expectedCF, modeTag)
 
     if not expectedCF then return end
 
-    -- Watchdog: cada Heartbeat verifica que el C0 sea correcto
-    -- Solo aplica si el modo coincide y no hay otro sistema controlando C0
     flyanim.c0HeightConn = RunService.Heartbeat:Connect(function()
         if flyanim.c0HeightToken ~= myToken then
             if flyanim.c0HeightConn then
@@ -600,16 +584,13 @@ local function iniciarWatchdogAltura(expectedCF, modeTag)
         if not flyanim.enabled then return end
         if flyanim.mode ~= modeTag then return end
         if not flyanim.rootJoint or not flyanim.originalC0 then return end
-        -- No interferir si hay un render loop dedicado activo
         if modeTag == "fast" and (flyanim.turboRenderConn or flyanim.turboPreImpulsoActivo) then return end
         if modeTag == "turbo" and flyanim.megaRenderConn then return end
         if flyanim.comboPlaying then return end
 
-        -- Verificar que el C0 no se haya desviado demasiado
         local current = flyanim.rootJoint.C0
         local diff = (current.Position - expectedCF.Position).Magnitude
         if diff > 0.5 then
-            -- Corrección suave
             pcall(function()
                 flyanim.rootJoint.C0 = current:Lerp(expectedCF, 0.3)
             end)
@@ -617,12 +598,19 @@ local function iniciarWatchdogAltura(expectedCF, modeTag)
     end)
 end
 
+-- ============================================================
+-- FIX BUG 1: detenerWatchdogAltura ahora invalida el token
+-- Y desconecta la conexión de forma garantizada.
+-- ============================================================
 local function detenerWatchdogAltura()
+    -- Bump token primero para que cualquier callback en vuelo se cancele
     flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
     if flyanim.c0HeightConn then
         flyanim.c0HeightConn:Disconnect()
         flyanim.c0HeightConn = nil
     end
+    -- Limpiar también el CFrame deseado para no acumular estado
+    clearC0Desired()
 end
 
 local function actualizarPosicionNormal(offsetY, velocidad)
@@ -1296,7 +1284,6 @@ local function iniciarPoseTurbo()
         if nt.turbo_volado then nt.turbo_volado.Looped = true; pcall(function() nt.turbo_volado:Play(0.2) end) end
         if nt.turbo_burst  then pcall(function() nt.turbo_burst:Stop(0.4) end) end
 
-        -- 25 grados para turbo
         local cframeDespegue = originalC0 * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_DESPEGUE), 0, 0)
         local cframeVuelo    = originalC0
             * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
@@ -1341,10 +1328,8 @@ local function iniciarPoseTurbo()
         flyanim.turboPreImpulsoActivo = false
         if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect() end
 
-        -- Loop de vuelo turbo (25 grados) con watchdog de altura
         local myC0TkLoop = flyanim.c0ControlToken
 
-        -- CFrame de referencia para el watchdog
         local cframeVueloRef = originalC0
             * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
             * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_GRADOS), 0, 0)
@@ -1378,7 +1363,6 @@ local function iniciarPoseTurbo()
                 nt.turbo_volado.Looped = true
                 pcall(function() nt.turbo_volado:Play(0.1); nt.turbo_volado:AdjustSpeed(0) end)
             end
-            -- levitacion sinusoidal suave con 25 grados
             local movimientoY = math.sin(tick() * ANIM_TURBO.FRECUENCIA_LEVITACION) * ANIM_TURBO.AMPLITUD_LEVITACION
             local targetCF = originalC0
                 * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA + movimientoY, 0)
@@ -1493,7 +1477,6 @@ local function iniciarPoseMega()
             nt.mega_volado.Looped = true
             pcall(function() nt.mega_volado:Play(0.1); nt.mega_volado:AdjustSpeed(0) end)
         end
-        -- 45 grados para mega (sin cambios)
         local movimientoY = math.sin(tick() * ANIM_MEGA.FRECUENCIA_LEVITACION) * ANIM_MEGA.AMPLITUD_LEVITACION
         pcall(function()
             rootJoint.C0 = originalC0
@@ -1578,7 +1561,6 @@ local function startAntiImpulse()
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
 
-        -- Protección adicional contra velocidades absurdas
         local vel = root.AssemblyLinearVelocity
         local speed = vel.Magnitude
         local maxAllowed = math.max(
@@ -1705,7 +1687,13 @@ local function startAnomalyProtection()
             isAnomaly = true
         end
 
-        if not flyanim.megaTurboUpActive and math.abs(vel.Y) > ANOMALY_VERT_THRESHOLD and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+        -- ============================================================
+        -- FIX BUG 2: Solo vel.Y POSITIVA (hacia arriba) es anomalía.
+        -- vel.Y negativa = caída libre normal, NO debe disparar TP.
+        -- Antes: math.abs(vel.Y) > THRESHOLD → atrapaba caídas rápidas
+        -- Ahora: vel.Y > THRESHOLD → solo impulsos hacia arriba anómalos
+        -- ============================================================
+        if not flyanim.megaTurboUpActive and vel.Y > ANOMALY_VERT_THRESHOLD and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
         end
 
@@ -1713,7 +1701,6 @@ local function startAnomalyProtection()
             local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
             local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
             if posDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
-                -- Solo es anomalía si no es un dash activo
                 if flyanim.dashTimer <= 0 then
                     isAnomaly = true
                 end
@@ -1728,7 +1715,6 @@ local function startAnomalyProtection()
             lastAnomalyFix = now
             flyanim.ragdollDetected = true
 
-            -- Si la posición actual es absurda y hay lastKnownPos, volver ahí
             local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
 
             pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
@@ -1763,7 +1749,6 @@ local function startAnomalyProtection()
                 if flyanim.bg then flyanim.bg.cframe = root.CFrame end
             end
 
-            -- Restaurar C0 según el modo actual
             if flyanim.mode == "fast" and not flyanim.turboPreImpulsoActivo and not flyanim.turboRenderConn then
                 local rj = flyanim.rootJoint
                 local oc = flyanim.originalC0
@@ -2210,9 +2195,6 @@ end
 
 -- ============================================================
 -- EFECTOS DE ATERRIZAJE
--- - Piedras desde cualquier altura (mínimo desde 10 studs)
--- - El doble de piedritas
--- - A mayor altura, más piedritas (máximo sin lag = 28 rocas)
 -- ============================================================
 
 local function spawnLandingEffects(position, velocity)
@@ -2224,10 +2206,8 @@ local function spawnLandingEffects(position, velocity)
     local smokeAlphaEnd = 0.68 + t * 0.22
     local soundVol      = 0.30 + t * 0.55
 
-    -- DOBLE de piedras desde cualquier caída, escalado con altura, máximo 28 sin lag
-    -- Mínimo 4 rocas (era 0 hasta intensity<60), máximo 28 (era 14 antes del doble)
-    local numRocks = math.floor(4 + t * 24)  -- rango: 4 a 28
-    numRocks = math.min(numRocks, 28)         -- hard cap anti-lag
+    local numRocks = math.floor(4 + t * 24)
+    numRocks = math.min(numRocks, 28)
 
     local DUST_COLOR       = Color3.fromRGB(185, 180, 175)
     local DUST_COLOR_INNER = Color3.fromRGB(210, 207, 205)
@@ -2243,7 +2223,6 @@ local function spawnLandingEffects(position, velocity)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
     end)
 
-    -- Anillo principal de humo
     task.spawn(function()
         local ringSize = smokeScale * 9
         local p = Instance.new("Part")
@@ -2268,7 +2247,6 @@ local function spawnLandingEffects(position, velocity)
         task.delay(0.70, function() pcall(function() p:Destroy() end) end)
     end)
 
-    -- Segundo anillo mas pequeno
     task.spawn(function()
         task.wait(0.05)
         local ringSize2 = smokeScale * 5
@@ -2292,10 +2270,8 @@ local function spawnLandingEffects(position, velocity)
         task.delay(0.55, function() pcall(function() p2:Destroy() end) end)
     end)
 
-    -- Piedrecitas: siempre presentes, doble cantidad, escalado con intensidad
     task.spawn(function()
         local ROCK_BASE = Color3.fromRGB(130, 125, 118)
-        -- Distribuimos las rocas en lotes pequeños para no hacer spike de lag
         local batchSize = 6
         local spawned = 0
         while spawned < numRocks do
@@ -2329,7 +2305,7 @@ local function spawnLandingEffects(position, velocity)
                 end)
             end
             spawned = spawned + thisBatch
-            if spawned < numRocks then task.wait(0.01) end  -- micro-pausa entre lotes
+            if spawned < numRocks then task.wait(0.01) end
         end
     end)
 end
@@ -2373,11 +2349,10 @@ local function startIdleWatcher()
 end
 
 -- ============================================================
--- SETUP ANIMADOR (más robusto)
+-- SETUP ANIMADOR
 -- ============================================================
 
 local function setupAnimator(char)
-    -- Desactivar animate script del juego
     local animScript = char:FindFirstChild("Animate")
     if animScript then animScript.Disabled = true; flyanim.animScript = animScript end
 
@@ -2389,7 +2364,6 @@ local function setupAnimator(char)
     flyanim.animator = animator
     flyanim.tracks   = {}
 
-    -- Parar todas las animaciones del juego
     local ok, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
     if ok and playing then
         for _, t in ipairs(playing) do pcall(function() t:Stop(0) end) end
@@ -2405,7 +2379,6 @@ local function setupAnimator(char)
     flyanim.rootJoint  = rj
     flyanim.originalC0 = rj.C0
 
-    -- Pre-cargar tracks con protección
     for _, id in pairs(ANIM) do
         pcall(function() getTrack(id) end)
     end
@@ -2440,7 +2413,6 @@ local function setupAnimator(char)
     }
 
     local nt = flyanim.normalTracks
-    -- Pre-inicializar tracks que necesitan ser jugados y parados para tener Length
     if nt.lateral     then pcall(function() nt.lateral:Play(0);     nt.lateral:Stop(0) end) end
     if nt.mov_back    then pcall(function() nt.mov_back:Play(0);    nt.mov_back:Stop(0) end) end
     if nt.espacio_sec then pcall(function() nt.espacio_sec:Play(0); nt.espacio_sec:Stop(0) end) end
@@ -2452,7 +2424,6 @@ local function setupAnimator(char)
 
     if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
 
-    -- Bloquear animaciones del juego con reconexión automática
     flyanim.animConn = animator.AnimationPlayed:Connect(function(track)
         if not track or not track.Animation then return end
         local id = track.Animation.AnimationId
@@ -2501,7 +2472,6 @@ local function doLanding(char)
     flyanim.landingVelocity = 0
     flyanim.landingVelocityCapture = 0
 
-    -- Umbral bajo para piedritas: desde 10 studs ya hay efecto
     if altura < 10 then restoreGameAnimations(char); return end
     if not animator then restoreGameAnimations(char); return end
 
@@ -2567,7 +2537,6 @@ local function doLanding(char)
         end)
     end
 
-    -- Anti-bounce: solo un pulso inicial, luego liberar
     if root then
         pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
         pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
@@ -2585,10 +2554,8 @@ local function doLanding(char)
         end)
     end
 
-    -- Efectos de impacto: piedritas siempre, escaladas con velocidad/altura
     spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5))
 
-    -- Animación de landing solo si cayó desde bastante altura (>= 25 studs)
     if altura >= 25 then
         local animObjBase = Instance.new("Animation")
         animObjBase.AnimationId = CAIDA_BASE_ID
@@ -2632,7 +2599,6 @@ local function doLanding(char)
         pcall(function() landBase:Destroy() end)
         pcall(function() landOverlay:Destroy() end)
     else
-        -- Caída leve: solo efectos, sin animación larga
         local shakeIntensity = 0.8 + (math.clamp(altura, 10, 25) - 10) / 15 * 1.2
         shakeCamera(shakeIntensity, 0.18)
         landAnimConn:Disconnect()
@@ -3352,7 +3318,7 @@ end
 local function startLockSystem()
     local lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() then return end
-        if input.KeyCode == flyanim.lockKey then toggleLock() end   -- <-- CAMBIO
+        if input.KeyCode == flyanim.lockKey then toggleLock() end
     end)
     local lockRenderConn = RunService.RenderStepped:Connect(function()
         updateLockInfoGui()
@@ -3483,7 +3449,7 @@ local function _flyBuildGui()
         return f
     end
 
-     local lockSec = makeSection(30); lockSec.Parent=expandZone
+    local lockSec = makeSection(30); lockSec.Parent=expandZone
     local lockIconImg = Instance.new("TextLabel", lockSec)
     lockIconImg.Size=UDim2.new(0,24,0,24); lockIconImg.Position=UDim2.new(0,6,0.5,-12)
     lockIconImg.BackgroundTransparency=1; lockIconImg.Font=Enum.Font.GothamBold
@@ -3503,7 +3469,6 @@ local function _flyBuildGui()
     lockHint.Text = "Apuntar + " .. flyanim.lockKey.Name
     lockHint.TextXAlignment=Enum.TextXAlignment.Right
 
-    -- Guardar referencias para actualizar después si cambia la tecla
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
     local noclipSec = makeSection(58); noclipSec.Parent=expandZone
@@ -3677,6 +3642,22 @@ local function _flyOn()
     flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
     flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick()
+
+    -- ============================================================
+    -- FIX BUG 1 (ON): Limpiar completamente el estado de altura
+    -- antes de configurar el nuevo vuelo, para que no haya
+    -- acumulación de offsets de sesiones anteriores.
+    -- ============================================================
+    flyanim.c0ControlToken = 0
+    flyanim.c0HeightToken  = 0
+    -- Desconectar cualquier watchdog residual
+    if flyanim.c0HeightConn then
+        flyanim.c0HeightConn:Disconnect()
+        flyanim.c0HeightConn = nil
+    end
+    -- Limpiar CFrame deseado acumulado
+    clearC0Desired()
+
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
     if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
@@ -3702,7 +3683,6 @@ local function _flyOn()
         local root2 = cc and cc:FindFirstChild("HumanoidRootPart")
         if not root2 then return end
 
-        -- Guard: no mover si posición absurda
         local pos2 = root2.Position
         if math.abs(pos2.Y) > COORD_SANITY_LIMIT or math.abs(pos2.X) > COORD_SANITY_LIMIT or math.abs(pos2.Z) > COORD_SANITY_LIMIT then
             return
@@ -3781,7 +3761,6 @@ local function _flyOn()
         local ch   = cc and cc:FindFirstChildOfClass("Humanoid")
         if not root or not ch then return end
 
-        -- Guard: posición absurda - no procesar hasta que teleport guard la corrija
         local pos = root.Position
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
             return
@@ -3865,6 +3844,24 @@ end
 local function _flyOff()
     local char = lplr.Character
 
+    -- ============================================================
+    -- FIX BUG 1 (OFF): Cancelar watchdog y restaurar C0 PRIMERO,
+    -- de forma inmediata y síncrona, antes de tocar nada más.
+    -- Esto garantiza que no quede ningún loop corrigiendo el C0
+    -- después del apagado, sin importar el estado en que estemos.
+    -- ============================================================
+    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+    flyanim.c0HeightToken  = (flyanim.c0HeightToken or 0) + 1
+    if flyanim.c0HeightConn then
+        flyanim.c0HeightConn:Disconnect()
+        flyanim.c0HeightConn = nil
+    end
+    clearC0Desired()
+    -- Restaurar C0 inmediatamente de forma síncrona
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+
     local heightFromGround = 0
     if char then
         local root = char:FindFirstChild("HumanoidRootPart")
@@ -3892,8 +3889,6 @@ local function _flyOff()
     flyanim.comboAnimStartTime = 0
     if dashConnection then dashConnection:Disconnect(); dashConnection=nil end
 
-    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-
     if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
     if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
 
@@ -3920,6 +3915,7 @@ local function _flyOff()
     local rootCurrent = charCurrent and charCurrent:FindFirstChild("HumanoidRootPart")
     local hum = charCurrent and charCurrent:FindFirstChildOfClass("Humanoid")
 
+    -- C0 ya fue restaurado al inicio de _flyOff, pero por seguridad lo confirmamos
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
