@@ -1,4 +1,4 @@
-print("version 1.18 fly")
+print("version 1.19 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -53,13 +53,20 @@ local FlyLang = {
         speed_reset      = "🔄  Reset",
     },
 }
--- Lee el idioma guardado por el hub (mismo archivo AllForOne/lang.txt)
-local _flyLang = "ES"
-pcall(function()
-    local data = readfile("AllForOne/lang.txt")
-    if data == "EN" or data == "ES" then _flyLang = data end
-end)
-local FT = FlyLang[_flyLang]
+-- FT se recarga en cada _flyBuildGui() para respetar cambios de idioma del hub
+local FT = FlyLang["ES"]  -- default; se sobreescribe en _flyBuildGui y M.Start
+
+local function _reloadFT()
+    local lang = "ES"
+    pcall(function()
+        local data = readfile("AllForOne/lang.txt")
+        if data == "EN" or data == "ES" then lang = data end
+    end)
+    FT = FlyLang[lang]
+end
+
+-- Cargar al inicio del require por si el módulo se usa inmediatamente
+_reloadFT()
 
 -- lplr y camera se asignan en M.Start()
 local lplr   = nil
@@ -3407,13 +3414,13 @@ local function updateLockInfoGui()
                 --             negativo = target está MÁS ARRIBA que yo = él está arriba
                 local heightDiff = math.floor(myRoot.Position.Y - root.Position.Y)
                 if heightDiff > 0 then
-                    -- Yo estoy arriba → el target está abajo
+                    -- Yo estoy arriba → el target está abajo de mí (ventaja)
                     heightLabel.Text = "↓ "..heightDiff.." "..FT.height_below
-                    heightLabel.TextColor3 = Color3.fromRGB(255,200,100)
+                    heightLabel.TextColor3 = Color3.fromRGB(150,220,255)   -- azul: ventaja
                 elseif heightDiff < 0 then
-                    -- Yo estoy abajo → el target está arriba
+                    -- Yo estoy abajo → el target está arriba de mí (peligro)
                     heightLabel.Text = "↑ "..math.abs(heightDiff).." "..FT.height_above
-                    heightLabel.TextColor3 = Color3.fromRGB(150,220,255)
+                    heightLabel.TextColor3 = Color3.fromRGB(255,200,100)   -- naranja: peligro
                 else
                     heightLabel.Text = FT.height_same
                     heightLabel.TextColor3 = Color3.fromRGB(150,255,150)
@@ -3537,6 +3544,7 @@ local function createToggle(parent, xPos, yPos, initialState, onChange)
 end
 
 local function _flyBuildGui()
+    _reloadFT()  -- resincronizar idioma con el hub antes de construir la GUI
     _flyDestroyGui()
     local C_PURPLE = Color3.fromRGB(110,30,180); local C_DIM  = Color3.fromRGB(40,6,72)
     local C_BLACK  = Color3.fromRGB(6,4,12);    local C_ACCENT = Color3.fromRGB(160,60,255)
@@ -4039,10 +4047,22 @@ end
 local function _flyOff()
     local char = lplr.Character
 
-    -- Cancelar watchdog y tokens de C0 de forma síncrona PRIMERO,
-    -- antes de cualquier otro sistema, para evitar que el watchdog
+    -- ── PASO 0: Cancelar timers pendientes que podrían ejecutarse post-flyOff ──
+    -- gyroProtectionTimer puede llamar a _flyMakeMotors tras el apagado
+    if flyanim.gyroProtectionTimer then
+        task.cancel(flyanim.gyroProtectionTimer)
+        flyanim.gyroProtectionTimer = nil
+    end
+    if flyanim.backupGyro then
+        pcall(function() flyanim.backupGyro:Destroy() end)
+        flyanim.backupGyro = nil
+    end
+    flyanim.gyroProtectionActive = false
+
+    -- ── PASO 1: Cancelar watchdog y tokens de C0 SINCRÓNICAMENTE ──
+    -- Antes de cualquier otro sistema, para evitar que el watchdog
     -- sobreescriba el C0 restaurado un frame después.
-    heightTweenToken = heightTweenToken + 1  -- cancela tweens de compensación de altura
+    heightTweenToken = heightTweenToken + 1
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     flyanim.c0HeightToken  = (flyanim.c0HeightToken  or 0) + 1
     if flyanim.c0HeightConn then
@@ -4094,7 +4114,25 @@ local function _flyOff()
     if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
 
 
-    detenerNormalTracks(0.1); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
+    -- ── DESCONEXIÓN DIRECTA de todas las conexiones (sin depender de guards lazy) ──
+    -- Los guards internos comprueban `flyanim.enabled` en el próximo tick;
+    -- aquí matamos las conexiones explícitamente en este mismo frame.
+    if flyanim.antiImpulseConn    then flyanim.antiImpulseConn:Disconnect();    flyanim.antiImpulseConn    = nil end
+    if flyanim.anomalyConn        then flyanim.anomalyConn:Disconnect();        flyanim.anomalyConn        = nil end
+    if flyanim.teleportGuardConn  then flyanim.teleportGuardConn:Disconnect();  flyanim.teleportGuardConn  = nil end
+    if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
+    if flyanim.megaTurboUpConn    then flyanim.megaTurboUpConn:Disconnect();    flyanim.megaTurboUpConn    = nil end
+    if brakeConn                  then brakeConn:Disconnect();                  brakeConn                  = nil end
+    if flyanim.idleAnimConn       then flyanim.idleAnimConn:Disconnect();       flyanim.idleAnimConn       = nil end
+    if flyanim.comboC0Conn        then flyanim.comboC0Conn:Disconnect();        flyanim.comboC0Conn        = nil end
+    if flyanim.blockRenderConn    then flyanim.blockRenderConn:Disconnect();    flyanim.blockRenderConn    = nil end
+    flyanim.isTeleportGuardActive = false
+    flyanim.lastKnownPos          = nil
+    flyanim.megaTurboUpActive     = false
+    flyanim.spaceHoldStart        = nil
+    flyanim.brakingActive         = false
+
+    detenerNormalTracks(0); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
     stopBlocking(); stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
     stopMegaTurboUpListener(); stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
     stopTeleportGuard(); detenerWatchdogAltura()
@@ -4518,6 +4556,7 @@ function M.Start(lplrRef, flyKey)
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
     if flyKey then flyanim.flyKey = flyKey end
+    _reloadFT()  -- cargar idioma correcto al iniciar
     _connectGlobal()
 end
 
