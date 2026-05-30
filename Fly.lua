@@ -1,4 +1,4 @@
-print("version 1.7 flyfin")
+print("version 1.8 flyfin")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -367,6 +367,34 @@ local function aplicarC0Robusto(cf)
 end
 
 -- ============================================================
+-- LIMPIEZA COMPLETA DE COMPENSACIÓN DE ALTURA
+-- Detiene TODOS los render loops que modifican C0, igual que Fly(2)
+-- ============================================================
+local function limpiarCompensacionAltura()
+    flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
+    if flyanim.c0HeightConn then
+        flyanim.c0HeightConn:Disconnect()
+        flyanim.c0HeightConn = nil
+    end
+    if flyanim.turboRenderConn then
+        flyanim.turboRenderConn:Disconnect()
+        flyanim.turboRenderConn = nil
+    end
+    if flyanim.megaRenderConn then
+        flyanim.megaRenderConn:Disconnect()
+        flyanim.megaRenderConn = nil
+    end
+    clearC0Desired()
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    flyanim.turboPreImpulsoActivo = false
+    flyanim.turboTransitioning = false
+    flyanim.turboPreImpulsoToken = (flyanim.turboPreImpulsoToken or 0) + 1
+    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+end
+
+-- ============================================================
 -- SISTEMA ANTI-TELETRANSPORTE FORZADO
 -- Detecta cuando el personaje es teletransportado a coordenadas
 -- absurdas y lo devuelve a la última posición segura conocida
@@ -627,11 +655,7 @@ local function iniciarWatchdogAltura(expectedCF, modeTag)
 end
 
 local function detenerWatchdogAltura()
-    flyanim.c0HeightToken = (flyanim.c0HeightToken or 0) + 1
-    if flyanim.c0HeightConn then
-        flyanim.c0HeightConn:Disconnect()
-        flyanim.c0HeightConn = nil
-    end
+    limpiarCompensacionAltura()
 end
 
 local function actualizarPosicionNormal(offsetY, velocidad)
@@ -3883,7 +3907,13 @@ local function _flyOn()
             end
         end
 
-        updateAnimForMovement()
+        -- Actualizar animaciones cada frame (igual que Fly(2))
+        if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
+        and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
+            evaluarMovimientoNormal()
+        else
+            updateAnimForMovement()
+        end
     end)
 end
 
@@ -3905,7 +3935,6 @@ local function _flyOff()
     end
 
     local heightFromGround = 0
-    local flyOffTimestamp = tick()  -- marca de tiempo al desactivar vuelo
     if char then
         local root = char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -3920,8 +3949,7 @@ local function _flyOff()
             end
         end
     end
-    flyanim.landingHeight     = heightFromGround
-    flyanim.flyOffTimestamp   = flyOffTimestamp  -- guardamos para validar tiempo mínimo de caída
+    flyanim.landingHeight = heightFromGround
 
     flyanim.enabled = false
     flyanim.comboPlaying = false; flyanim.comboBusy = false; flyanim.combo4Frozen = false
@@ -4024,42 +4052,7 @@ local function _flyOff()
             flyanim.waitingLand = false
             if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
             if newState ~= Enum.HumanoidStateType.Dead then
-                -- RE-VALIDACIÓN: verificar con raycast la altura REAL al aterrizar
-                -- Esto evita que secuencias caer→volar→quitarVuelo→volar disparen la anim de caída
-                local realHeight = capturedHeight
-                local currentChar = lplr.Character
-                local currentRoot = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
-                if currentRoot then
-                    local rpLand = RaycastParams.new()
-                    rpLand.FilterType = Enum.RaycastFilterType.Exclude
-                    rpLand.FilterDescendantsInstances = {currentChar}
-                    local rayLand = workspace:Raycast(currentRoot.Position, Vector3.new(0, -500, 0), rpLand)
-                    if rayLand then
-                        -- Usar la MENOR altura entre la capturada al desactivar y la actual
-                        -- Esto previene falsos positivos cuando el personaje ya está cerca del suelo
-                        local currentHeight = currentRoot.Position.Y - rayLand.Position.Y
-                        realHeight = math.min(capturedHeight, currentHeight)
-                    else
-                        -- Sin suelo detectado: mantener capturedHeight
-                        realHeight = capturedHeight
-                    end
-                end
-                -- También verificar tiempo mínimo de caída libre (al menos 0.3s)
-                -- Si el vuelo se quitó hace muy poco y la altura real es baja, ignorar
-                local flyOffElapsed = tick() - (flyanim.flyOffTimestamp or 0)
-                if realHeight < 10 or (realHeight < 25 and flyOffElapsed < 0.3) then
-                    -- Caída insignificante o secuencia rápida: restaurar sin animación
-                    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
-                    local animSc2 = currentChar and currentChar:FindFirstChild("Animate") or flyanim.animScript
-                    if animSc2 then animSc2.Disabled = false; flyanim.animScript = nil end
-                    if hum and hum.Parent then
-                        hum.PlatformStand = false
-                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-                    end
-                    flyanim.landingHeight = nil
-                    return
-                end
-                flyanim.landingHeight   = realHeight
+                flyanim.landingHeight   = capturedHeight
                 flyanim.landingVelocity = capturedVelocity
                 flyanim.landingVelocityCapture = capturedVelocity
                 doLanding(lplr.Character)
