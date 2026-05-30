@@ -1,4 +1,4 @@
-print("version 1.5 fly")
+print("version 1.6 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -319,6 +319,7 @@ local flyanim = {
 -- ============================================================
 
 local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
+local _flyOnToken = 0         -- Se incrementa en cada _flyOn; cancela ops de sesiones anteriores
 
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
@@ -642,9 +643,25 @@ local function actualizarPosicionNormal(offsetY, velocidad)
     else
         targetCF = flyanim.originalC0 + Vector3.new(0, offsetY, 0)
     end
-    TweenService:Create(flyanim.rootJoint,
-        TweenInfo.new(velocidad or ANIM_NORMAL.TRANSICION_POS, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-        {C0 = targetCF}):Play()
+    local myToken = _flyOnToken
+    local rj = flyanim.rootJoint
+    local startCF = rj.C0
+    local dur = velocidad or ANIM_NORMAL.TRANSICION_POS
+    -- Usar task.spawn con check de token en vez de TweenService,
+    -- para que toggle rápido cancele el tween de altura de la sesión anterior.
+    task.spawn(function()
+        local startT = tick()
+        while tick() - startT < dur do
+            if _flyOnToken ~= myToken or not flyanim.enabled then return end
+            local t = (tick() - startT) / dur
+            t = t * t * (3 - 2 * t) -- smoothstep
+            pcall(function() rj.C0 = startCF:Lerp(targetCF, t) end)
+            task.wait()
+        end
+        if _flyOnToken == myToken and flyanim.enabled then
+            pcall(function() rj.C0 = targetCF end)
+        end
+    end)
 end
 
 -- ============================================================
@@ -2392,6 +2409,9 @@ local function startIdleWatcher()
                 end
                 flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
                 restaurarC0Inmediato()
+                -- Resetear snapshot para que la siguiente tecla dispare evaluación
+                flyanim._lastW = nil; flyanim._lastS = nil
+                flyanim._lastA = nil; flyanim._lastD = nil
                 if not flyanim.comboPlaying then
                     flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
                     iniciarCicloNormal(flyanim._normalPlayId)
@@ -3682,6 +3702,8 @@ end
 
 local function _flyOn()
     local char = lplr.Character; if not char then return end
+    _flyOnToken = _flyOnToken + 1
+    local myFlyToken = _flyOnToken
     if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
     flyanim.waitingLand = false; flyanim.enabled = true
     flyanim.mode = "normal"; flyanim.speed = BASE_SPEED
@@ -3695,6 +3717,8 @@ local function _flyOn()
     flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
     flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick()
+    -- Resetear snapshot de teclas para que el primer keypress dispare evaluación
+    flyanim._lastW = nil; flyanim._lastS = nil; flyanim._lastA = nil; flyanim._lastD = nil
 
     -- ============================================================
     -- FIX BUG 1 (ON): Limpiar completamente el estado de altura
@@ -3890,10 +3914,22 @@ if flyanim.rsConn then flyanim.rsConn:Disconnect() end
             end
         end
 
-        -- Actualizar animaciones de movimiento cada frame para modo normal
+        -- Actualizar animaciones: en modo normal solo re-evaluar cuando
+        -- el estado de teclas cambia (no cada frame), para que los loops
+        -- laterales/atrás puedan estabilizarse sin ser interrumpidos.
         if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
         and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
-            evaluarMovimientoNormal()
+            local prevW = flyanim._lastW
+            local prevS = flyanim._lastS
+            local prevA = flyanim._lastA
+            local prevD = flyanim._lastD
+            if prevW ~= wD or prevS ~= sD or prevA ~= aD or prevD ~= dD then
+                flyanim._lastW = wD
+                flyanim._lastS = sD
+                flyanim._lastA = aD
+                flyanim._lastD = dD
+                evaluarMovimientoNormal()
+            end
         else
             updateAnimForMovement()
         end
@@ -3903,7 +3939,8 @@ end
 local function _flyOff()
     local char = lplr.Character
 
-    -- Cancelar watchdog y C0 de forma inmediata y síncrona PRIMERO
+    -- Cancelar tweens de altura y watchdog de forma síncrona PRIMERO
+    _flyOnToken = _flyOnToken + 1
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     flyanim.c0HeightToken  = (flyanim.c0HeightToken or 0) + 1
     if flyanim.c0HeightConn then
@@ -3940,6 +3977,7 @@ local function _flyOff()
     flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
     flyanim.mouseHeld = false; flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
     flyanim.comboAnimStartTime = 0
+    flyanim._lastW = nil; flyanim._lastS = nil; flyanim._lastA = nil; flyanim._lastD = nil
     if dashConnection then dashConnection:Disconnect(); dashConnection=nil end
 
     if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
