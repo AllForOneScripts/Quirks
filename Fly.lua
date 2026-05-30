@@ -1,4 +1,4 @@
-print("version 1.14 fly")
+print("version 1.15 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -7,8 +7,8 @@ local UserInputService = game:GetService("UserInputService")
 local CoreGui          = game:GetService("CoreGui")
 local SoundService     = game:GetService("SoundService")
 
-local lplr   = nil
-local camera = nil
+local lplr   = Players.LocalPlayer
+local camera = workspace.CurrentCamera
 
 local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
@@ -112,7 +112,7 @@ local ANIM_NORMAL = {
 
 local ANIM_TURBO = {
     COMPENSACION_ALTURA    = 2,
-    INCLINACION_GRADOS     = 25,
+    INCLINACION_GRADOS     = 45,
     FRAME_CONGELADO        = 0.1,
     FRAME_VOLADO_CONGELADO = 0.35,
     AMPLITUD_LEVITACION    = 0.15,
@@ -214,6 +214,7 @@ local flyanim = {
     lockRenderConn  = nil,
 
     straightLineActive = false,
+
     brakingActive     = false,
     BRAKE_DISTANCE    = 35,
     BRAKE_HARD_DISTANCE = 14,
@@ -341,23 +342,12 @@ end
 
 local function getTrack(animId)
     if not flyanim.animator then return nil end
-    if flyanim.tracks[animId] then
-        local t = flyanim.tracks[animId]
-        if t and t.Parent ~= nil then return t end
-        flyanim.tracks[animId] = nil
-    end
-    local ok, obj = pcall(function()
-        local a = Instance.new("Animation")
-        a.AnimationId = animId
-        return a
-    end)
-    if not ok then return nil end
-    local ok2, t = pcall(function()
-        local track = flyanim.animator:LoadAnimation(obj)
-        track.Priority = Enum.AnimationPriority.Action4
-        return track
-    end)
-    if not ok2 or not t then return nil end
+    if flyanim.tracks[animId] then return flyanim.tracks[animId] end
+    local obj = Instance.new("Animation")
+    obj.AnimationId = animId
+    local ok, t = pcall(function() return flyanim.animator:LoadAnimation(obj) end)
+    if not ok or not t then return nil end
+    t.Priority = Enum.AnimationPriority.Action4
     flyanim.tracks[animId] = t
     return t
 end
@@ -366,7 +356,6 @@ local function stopAllExcept(keepId, fade, alsoKeepLevitacion)
     fade = fade or 0.12
     local levId = ANIM.levitacion
     for id, t in pairs(flyanim.tracks) do
-        if not t or not t.Parent then flyanim.tracks[id] = nil; continue end
         local isKeep = (id == keepId)
         local isLev  = (alsoKeepLevitacion and id == levId)
         if not isKeep and not isLev and t.IsPlaying then pcall(function() t:Stop(fade) end) end
@@ -384,26 +373,21 @@ local function playAnim(animId, looped, fade)
     fade  = fade or 0.18
     t.Looped = looped
     stopAllExcept(animId, fade, true)
-    if not t.IsPlaying then
-        pcall(function() t:Play(fade, 1, 1) end)
+    if not t.IsPlaying then 
+        pcall(function() t:Play(fade, 1, 1) end) 
     end
 end
 
 local function normPlaySafe(track, fade)
     fade = fade or ANIM_NORMAL.TRANSICION_FLUIDA
-    if track and track.Parent ~= nil and not track.IsPlaying then
-        pcall(function() track:Play(fade) end)
-    end
+    if track and not track.IsPlaying then track:Play(fade) end
 end
 
 local function normStopSafe(track, fade)
     fade = fade or ANIM_NORMAL.TRANSICION_FLUIDA
-    if track and track.Parent ~= nil and track.IsPlaying then
-        pcall(function() track:Stop(fade) end)
-    end
+    if track and track.IsPlaying then track:Stop(fade) end
 end
 
--- ANIMACIONES DE MOVIMIENTO RESTAURADAS AL SISTEMA FLUIDO FLY290
 local function actualizarPosicionNormal(offsetY, velocidad)
     if not flyanim.rootJoint or not flyanim.originalC0 then return end
     if offsetY == 0 then
@@ -444,7 +428,7 @@ end
 
 local function detenerEspacioAvanzado()
     if flyanim.espacioTrackActivo then
-        pcall(function() flyanim.espacioTrackActivo:Stop(flyanim.ESPACIO_FADE_OUT) end)
+        flyanim.espacioTrackActivo:Stop(flyanim.ESPACIO_FADE_OUT)
         flyanim.espacioTrackActivo = nil
     end
     if flyanim.spaceHoldTimerAdv then
@@ -514,7 +498,7 @@ local function setupDamageDetector()
                     flyanim.blockRenderConn:Disconnect()
                     flyanim.blockRenderConn = nil
                 end
-                if flyanim.blockTrack then pcall(function() flyanim.blockTrack:Stop(0.1) end) end
+                if flyanim.blockTrack then flyanim.blockTrack:Stop(0.1) end
             end
         end
     end)
@@ -523,7 +507,7 @@ end
 local function stopBlocking()
     flyanim.isBlocking = false
     if flyanim.blockRenderConn then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn = nil end
-    if flyanim.blockTrack then pcall(function() flyanim.blockTrack:Stop(0) end) end
+    if flyanim.blockTrack then flyanim.blockTrack:Stop(0) end
 end
 
 local function obtenerPiernaS()
@@ -557,7 +541,6 @@ local function cancelarLateral()
     flyanim.lateralKilled = true
 end
 
--- LÓGICA DE MOVIMIENTO PURO SIN WATCHDOGS (DE FLY290)
 local function ejecutarLateral(inicio, thisId)
     local nt = flyanim.normalTracks
     if not nt.lateral then return end
@@ -929,7 +912,7 @@ iniciarCicloNormal = function(thisPlay)
 end
 
 -- ============================================================
--- POSE TURBO (25 grados)
+-- POSE TURBO (45 GRADOS SUPERMAN)
 -- ============================================================
 
 local function iniciarPoseTurbo()
@@ -1067,7 +1050,7 @@ local function iniciarPoseTurbo()
             abortarYVolver(); return
         end
 
-        -- FASE 3: transicion a pose de vuelo (25 grados para turbo)
+        -- FASE 3: transicion a pose de vuelo a 45 grados
         if nt.turbo_pose  then nt.turbo_pose.Looped  = true; pcall(function() nt.turbo_pose:Play(0.2) end) end
         if nt.turbo_volado then nt.turbo_volado.Looped = true; pcall(function() nt.turbo_volado:Play(0.2) end) end
         if nt.turbo_burst  then pcall(function() nt.turbo_burst:Stop(0.4) end) end
@@ -1218,7 +1201,7 @@ local function detenerPoseTurbo()
 end
 
 -- ============================================================
--- POSE MEGA (45 grados)
+-- POSE MEGA (45 GRADOS SUPERMAN)
 -- ============================================================
 
 local function iniciarPoseMega()
@@ -1323,644 +1306,112 @@ local function updateAnimForMovement()
 end
 
 -- ============================================================
--- ANTI IMPULSO
+-- SETUP ANIMADOR
 -- ============================================================
 
-local function startAntiImpulse()
-    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-    flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
-        if not flyanim.enabled then
-            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-            return
-        end
-        local char = lplr.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
+local function setupAnimator(char)
+    local animScript = char:FindFirstChild("Animate")
+    if animScript then animScript.Disabled = true; flyanim.animScript = animScript end
+    local humanoid = char:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+    local animator = humanoid:WaitForChild("Animator", 5)
+    if not animator then return end
 
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
-        local maxAllowed = math.max(
-            BASE_SPEED * TURBO_MULT * 2,
-            flyanim.DASH_SPEED * 1.5,
-            flyanim.TURBO_DASH_SPEED * 1.5,
-            flyanim.BACK_DASH_SPEED * 1.2
-        )
-        if speed > maxAllowed * 2 and flyanim.dashTimer <= 0 then
-            pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
-        end
+    flyanim.animator = animator
+    flyanim.tracks   = {}
 
-        local bv = flyanim.bv
-        if not bv or not bv.Parent then return end
-        local expectedVel = bv.velocity
-        local actualVel   = root.AssemblyLinearVelocity
-        local diff = (actualVel - expectedVel).Magnitude
-        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
-        local bg = flyanim.bg
-        if bg then
-            local targetAngular  = Vector3.new(0,0,0)
-            local currentAngular = root.AssemblyAngularVelocity
-            if (currentAngular - targetAngular).Magnitude > 5 then
-                root.AssemblyAngularVelocity = targetAngular
-            end
-        end
-    end)
-end
-
-local function stopAntiImpulse()
-    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-end
-
-local function activateGyroProtection()
-    if flyanim.gyroProtectionActive then return end
-    if not flyanim.bg then return end
-    flyanim.gyroProtectionActive  = true
-    flyanim.originalGyroP         = flyanim.bg.P
-    flyanim.originalGyroMaxTorque = flyanim.bg.maxTorque
-    flyanim.bg.P         = 2000
-    flyanim.bg.maxTorque = Vector3.new(2000,2000,2000)
-    if flyanim.backupGyro then flyanim.backupGyro:Destroy() end
-    flyanim.backupGyro = Instance.new("BodyGyro", flyanim.bg.Parent)
-    flyanim.backupGyro.P         = 1000
-    flyanim.backupGyro.maxTorque = Vector3.new(1000,1000,1000)
-    flyanim.backupGyro.cframe    = flyanim.bg.cframe
-    if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
-    flyanim.gyroProtectionTimer = task.delay(0.5, function()
-        if flyanim.enabled and flyanim.bg then
-            flyanim.bg.P         = flyanim.originalGyroP or 9e4
-            flyanim.bg.maxTorque = flyanim.originalGyroMaxTorque or Vector3.new(9e9,9e9,9e9)
-        end
-        if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro = nil end
-        flyanim.gyroProtectionActive = false
-        flyanim.gyroProtectionTimer  = nil
-    end)
-end
-
-local ANOMALY_SPEED_THRESHOLD  = 300
-local ANOMALY_VERT_THRESHOLD   = 250
-local ANOMALY_TELEPORT_STUDS   = 40
-local ANOMALY_COOLDOWN         = 0.12
-
-local lastAnomalyFix = 0
-
-local function _flyMakeMotors()
-    local char = lplr.Character; if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    local hum  = char:FindFirstChildOfClass("Humanoid")
-    if not root or not hum then return end
-    cleanupMotors(root)
-    flyanim.bg = Instance.new("BodyGyro", root)
-    flyanim.bg.P = 9e4; flyanim.bg.maxTorque = Vector3.new(9e9,9e9,9e9); flyanim.bg.cframe = root.CFrame
-    flyanim.bv = Instance.new("BodyVelocity", root)
-    flyanim.bv.velocity = Vector3.new(0,0,0); flyanim.bv.maxForce = Vector3.new(9e9,9e9,9e9)
-    flyanim.bf = Instance.new("BodyForce", root)
-    flyanim.bf.Force = Vector3.new(0, root.AssemblyMass * workspace.Gravity, 0)
-    hum.PlatformStand = true
-    hum:ChangeState(Enum.HumanoidStateType.Physics)
-end
-
-local function startAnomalyProtection()
-    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
-    flyanim.lastKnownPos = nil
-    flyanim.anomalyConn = RunService.Stepped:Connect(function(_, dt)
-        if not flyanim.enabled then
-            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
-            return
-        end
-        local char = lplr.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then flyanim.lastKnownPos = nil; return end
-
-        local now = tick()
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
-        local hum = char:FindFirstChildOfClass("Humanoid")
-
-        local pos = root.Position
-        if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
-            if flyanim.lastKnownPos then
-                pcall(function()
-                    root.CFrame = CFrame.new(flyanim.lastKnownPos + Vector3.new(0, 5, 0))
-                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-                flyanim.dashTimer = 0
-                flyanim.dashVel   = Vector3.new(0, 0, 0)
-            end
-            return
-        end
-
-        local maxLegitSpeed = math.max(
-            BASE_SPEED * TURBO_MULT * 1.5,
-            flyanim.DASH_SPEED * 1.2,
-            flyanim.TURBO_DASH_SPEED * 1.2,
-            flyanim.BACK_DASH_SPEED * 1.1
-        )
-
-        local isAnomaly = false
-
-        if speed > ANOMALY_SPEED_THRESHOLD and speed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if not flyanim.megaTurboUpActive and math.abs(vel.Y) > ANOMALY_VERT_THRESHOLD and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
-            local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
-            if posDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
-                if flyanim.dashTimer <= 0 then
-                    isAnomaly = true
-                end
-            end
-        end
-
-        if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if isAnomaly then
-            lastAnomalyFix = now
-            flyanim.ragdollDetected = true
-
-            local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
-
-            pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
-            pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-
-            if recoverPos then
-                pcall(function() root.CFrame = CFrame.new(recoverPos) end)
-            end
-
-            flyanim.dashTimer = 0
-            flyanim.dashVel   = Vector3.new(0, 0, 0)
-
-            if hum then
-                pcall(function()
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                    hum.PlatformStand = true
-                    hum:ChangeState(Enum.HumanoidStateType.Physics)
-                end)
-            end
-
-            local needsMotors = (not root:FindFirstChildOfClass("BodyGyro"))
-                             or (not root:FindFirstChildOfClass("BodyVelocity"))
-                             or (not root:FindFirstChildOfClass("BodyForce"))
-            if needsMotors then
-                pcall(_flyMakeMotors)
-            else
-                flyanim.bg = root:FindFirstChildOfClass("BodyGyro")
-                flyanim.bv = root:FindFirstChildOfClass("BodyVelocity")
-                flyanim.bf = root:FindFirstChildOfClass("BodyForce")
-                if flyanim.bv then flyanim.bv.velocity = Vector3.new(0,0,0) end
-                if flyanim.bg then flyanim.bg.cframe = root.CFrame end
-            end
-
-            if flyanim.mode == "fast" and not flyanim.turboPreImpulsoActivo and not flyanim.turboRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            elseif flyanim.mode == "turbo" and not flyanim.megaRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_MEGA.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_MEGA.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            else
-                restaurarC0Inmediato()
-            end
-
-            task.defer(function()
-                if not flyanim.enabled then return end
-                flyanim.ragdollDetected = false
-            end)
-        end
-
-        flyanim.lastKnownPos = root.Position
-    end)
-end
-
-local function stopAnomalyProtection()
-    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
-    flyanim.lastKnownPos = nil
-end
-
-local function fixUndergroundOrientation()
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root or not flyanim.bg then return end
-    local upVec = root.CFrame.UpVector
-    if upVec.Y < 0.3 then
-        local lookVec = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
-        if lookVec.Magnitude < 0.01 then lookVec = Vector3.new(0,0,-1) end
-        local correctedCF = CFrame.lookAt(root.Position, root.Position + lookVec.Unit)
-        pcall(function()
-            root.CFrame = correctedCF
-            root.AssemblyAngularVelocity = Vector3.new(0,0,0)
-            if flyanim.bg then flyanim.bg.cframe = correctedCF end
-        end)
+    local ok, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
+    if ok and playing then
+        for _, t in ipairs(playing) do pcall(function() t:Stop(0) end) end
     end
-end
 
-local function startAnimBlockLoop()
-    if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
-    if not flyanim.animator then return end
+    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if not hrp then return end
+    local rj  = hrp:WaitForChild("RootJoint", 5)
+    if not rj then return end
+
+    flyanim.rootJoint  = rj
+    flyanim.originalC0 = rj.C0
+
+    for _, id in pairs(ANIM) do getTrack(id) end
+
+    local function loadNorm(id, priority, looped)
+        local anim = Instance.new("Animation")
+        anim.AnimationId = id
+        local ok2, t = pcall(function() return animator:LoadAnimation(anim) end)
+        if not ok2 or not t then return nil end
+        t.Priority = priority or Enum.AnimationPriority.Action3
+        t.Looped   = (looped ~= false)
+        return t
+    end
+
+    flyanim.normalTracks = {
+        estatica      = loadNorm(ANIM.estatica,       Enum.AnimationPriority.Action2),
+        levitacion    = loadNorm(ANIM.levitacion,     Enum.AnimationPriority.Action4),
+        brazos        = loadNorm(ANIM.brazos_idle,    Enum.AnimationPriority.Action3),
+        mov_forward   = loadNorm(ANIM.mov_forward,    Enum.AnimationPriority.Action3),
+        mov_back      = loadNorm(ANIM.mov_back_anim,  Enum.AnimationPriority.Action3),
+        mov_brazos    = loadNorm(ANIM.mov_brazos_mov, Enum.AnimationPriority.Action3),
+        lateral       = loadNorm(ANIM.mov_lateral,    Enum.AnimationPriority.Action3, false),
+        espacio_prim  = loadNorm(ANIM.espacio_prim,   Enum.AnimationPriority.Action3, true),
+        espacio_sec   = loadNorm(ANIM.espacio_sec,    Enum.AnimationPriority.Action3, false),
+        turbo_compact = loadNorm(ANIM.turbo_compact,  Enum.AnimationPriority.Action4, false),
+        turbo_burst   = loadNorm(ANIM.turbo_burst,    Enum.AnimationPriority.Action4, false),
+        turbo_pose    = loadNorm(ANIM.turbo_pose,     Enum.AnimationPriority.Action4, true),
+        turbo_volado  = loadNorm(ANIM.turbo_volado,   Enum.AnimationPriority.Action4, true),
+        mega_pose     = loadNorm(ANIM.mega_pose,      Enum.AnimationPriority.Action4, true),
+        mega_base     = loadNorm(ANIM.mega_base,      Enum.AnimationPriority.Action3, true),
+        mega_volado   = loadNorm(ANIM.mega_volado,    Enum.AnimationPriority.Action4, true),
+    }
+
+    local nt = flyanim.normalTracks
+    if nt.lateral     then pcall(function() nt.lateral:Play(0); nt.lateral:Stop(0) end) end
+    if nt.mov_back    then pcall(function() nt.mov_back:Play(0); nt.mov_back:Stop(0) end) end
+    if nt.espacio_sec then pcall(function() nt.espacio_sec:Play(0); nt.espacio_sec:Stop(0) end) end
 
     local ownAnimIds = {}
     for _, id in pairs(ANIM) do ownAnimIds[id] = true end
     ownAnimIds[CAIDA_BASE_ID]    = true
     ownAnimIds[CAIDA_OVERLAY_ID] = true
 
-    flyanim.animBlockRenderConn = RunService.RenderStepped:Connect(function()
-        if not flyanim.enabled then
-            if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
-            return
-        end
-        local anim = flyanim.animator
-        if not anim then return end
-        pcall(function()
-            local tracks = anim:GetPlayingAnimationTracks()
-            if not tracks then return end
-            for _, t in ipairs(tracks) do
-                if t and t.Animation then
-                    local id = t.Animation.AnimationId
-                    if not ownAnimIds[id] then pcall(function() t:Stop(0) end) end
-                end
-            end
-        end)
-    end)
-end
-
-local function stopAnimBlockLoop()
-    if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
-end
-
-local activeHitboxMarkers = {}
-local function clearHitboxMarkers()
-    for _, marker in ipairs(activeHitboxMarkers) do pcall(function() marker:Destroy() end) end
-    activeHitboxMarkers = {}
-end
-
-local function showHitboxMarkers(targetChar)
-    clearHitboxMarkers()
-    if not targetChar then return end
-    local box = Instance.new("SelectionBox")
-    box.Adornee       = targetChar
-    box.Color3        = Color3.fromRGB(255, 150, 50)
-    box.Transparency  = 0.5
-    box.LineThickness = 0.1
-    box.Parent        = targetChar
-    table.insert(activeHitboxMarkers, box)
-    task.delay(0.6, clearHitboxMarkers)
-end
-
--- ============================================================
--- BRAKE SYSTEM
--- ============================================================
-
-local brakeConn = nil
-local function startBrakeSystem()
-    if brakeConn then brakeConn:Disconnect(); brakeConn = nil end
-    brakeConn = RunService.RenderStepped:Connect(function()
-        if not flyanim.enabled then return end
-        if flyanim.mode ~= "fast" and flyanim.mode ~= "turbo" then return end
-        if not flyanim.lockActive or not flyanim.lockedTarget then return end
-        if flyanim.dashTimer <= 0 then return end
-        local char   = lplr.Character
-        local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-        if not myRoot then return end
-        local targetChar = flyanim.lockedTarget.Character
-        local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-        if not targetRoot then return end
-        local dist = (myRoot.Position - targetRoot.Position).Magnitude
-        if dist <= flyanim.BRAKE_HARD_DISTANCE then
-            flyanim.dashVel   = Vector3.new(0,0,0)
-            flyanim.dashTimer = 0
-            flyanim.brakingActive = false
-            showHitboxMarkers(targetChar)
-        elseif dist <= flyanim.BRAKE_DISTANCE then
-            local t = 1 - ((dist - flyanim.BRAKE_HARD_DISTANCE) / (flyanim.BRAKE_DISTANCE - flyanim.BRAKE_HARD_DISTANCE))
-            local brakeFactor = 1 - (t * 0.92)
-            flyanim.dashVel   = flyanim.dashVel * math.max(brakeFactor, 0.05)
-            flyanim.brakingActive = true
-        else
-            flyanim.brakingActive = false
-        end
-    end)
-end
-
-local function stopBrakeSystem()
-    if brakeConn then brakeConn:Disconnect(); brakeConn = nil end
-    flyanim.brakingActive = false
-end
-
-local dashConnection = nil
-local HIT_COOLDOWN   = 0.5
-
-local function startDashCollisionDetection()
-    if dashConnection then dashConnection:Disconnect() end
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local hitPlayers = {}
-    dashConnection = RunService.RenderStepped:Connect(function()
-        if flyanim.dashTimer <= 0 then
-            if dashConnection then dashConnection:Disconnect(); dashConnection = nil end
-            return
-        end
-        local currentChar = lplr.Character
-        local currentRoot = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
-        if not currentRoot then return end
-        local rootPos       = currentRoot.Position
-        local dashMagnitude = flyanim.dashVel.Magnitude
-        local currentDashDir = dashMagnitude > 0.01 and flyanim.dashVel.Unit or Vector3.new(0,0,1)
-        for _, otherPlayer in ipairs(Players:GetPlayers()) do
-            if otherPlayer ~= lplr then
-                local otherChar = otherPlayer.Character
-                if otherChar then
-                    local otherRoot = otherChar:FindFirstChild("HumanoidRootPart")
-                    if otherRoot then
-                        local dist = (rootPos - otherRoot.Position).Magnitude
-                        if dist < 5.5 then
-                            local playerId = otherPlayer.UserId
-                            local now = tick()
-                            if not hitPlayers[playerId] or now - hitPlayers[playerId] > HIT_COOLDOWN then
-                                hitPlayers[playerId] = now
-                                showHitboxMarkers(otherChar)
-                                local pushDir   = Vector3.new(currentDashDir.X, 0.5, currentDashDir.Z).Unit
-                                local pushForce = pushDir * (dashMagnitude * 1.5)
-                                otherRoot.AssemblyLinearVelocity = pushForce
-                                local originalVel = flyanim.dashVel
-                                flyanim.dashVel = flyanim.dashVel * 0.4
-                                task.delay(0.08, function()
-                                    if flyanim.dashTimer > 0 then flyanim.dashVel = originalVel end
-                                end)
-                                shakeCamera(2.5, 0.25)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local shakeConn = nil
-local function shakeCamera(intensity, duration)
-    if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn = nil end
-    local cam = workspace.CurrentCamera; if not cam then return end
-    local startT = tick()
-    shakeConn = RunService.RenderStepped:Connect(function()
-        local elapsed = tick() - startT
-        if elapsed >= duration then shakeConn:Disconnect(); shakeConn = nil; return end
-        local decay  = 1 - (elapsed / duration)
-        local angleX = math.sin(elapsed * 30 * math.pi) * intensity * decay
-        local angleY = math.sin(elapsed * 25 * math.pi) * intensity * decay * 0.8
-        local angleZ = math.sin(elapsed * 35 * math.pi) * intensity * decay * 0.6
-        pcall(function() cam.CFrame = cam.CFrame * CFrame.Angles(math.rad(angleX), math.rad(angleY), math.rad(angleZ)) end)
-    end)
-end
-
--- ============================================================
--- PARTICULAS Y EFECTOS
--- ============================================================
-
-local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
-local PARTICLE_LENGTH  = 6
-
-local function createParticle(isMega)
-    if flyanim.megaTurboUpActive then return end
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local camCF  = workspace.CurrentCamera.CFrame
-    local lookH  = Vector3.new(camCF.LookVector.X,  0, camCF.LookVector.Z)
-    local rightH = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
-    if lookH.Magnitude  > 0.01 then lookH  = lookH.Unit  else lookH  = Vector3.new(0,0,-1) end
-    if rightH.Magnitude > 0.01 then rightH = rightH.Unit else rightH = Vector3.new(1,0,0) end
-    local moveDir = Vector3.new(0,0,0)
-    if flyanim.wDown then moveDir = moveDir + lookH end
-    if flyanim.sDown then moveDir = moveDir - lookH end
-    if flyanim.aDown then moveDir = moveDir - rightH end
-    if flyanim.dDown then moveDir = moveDir + rightH end
-    if moveDir.Magnitude < 0.01 then moveDir = lookH else moveDir = moveDir.Unit end
-    local spawnPos = root.Position + (-moveDir * 5)
-    local awayDir  = -moveDir
-    local part = Instance.new("Part")
-    part.Anchored = true; part.CanCollide = false; part.CastShadow = false
-    part.Transparency = 1; part.Size = Vector3.new(0.1, PARTICLE_LENGTH, 0.1)
-    part.Position = spawnPos; part.Parent = workspace
-    local camPos  = workspace.CurrentCamera.CFrame.Position
-    local toCam   = (camPos - spawnPos).Unit
-    if toCam.Magnitude < 0.01 then toCam = Vector3.new(0,0,-1) end
-    local upDir   = awayDir.Unit
-    local rightDir = upDir:Cross(toCam).Unit
-    if rightDir.Magnitude < 0.01 then rightDir = Vector3.new(1,0,0) end
-    local lookDir = rightDir:Cross(upDir).Unit
-    part.CFrame = CFrame.fromMatrix(spawnPos, rightDir, upDir, lookDir)
-    local sg  = Instance.new("SurfaceGui", part)
-    sg.Adornee = part; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = true
-    sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 50
-    local img = Instance.new("ImageLabel", sg)
-    img.Image = PARTICLE_TEXTURE; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
-    img.ImageColor3 = Color3.fromRGB(255,255,255)
-    img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
-    TweenService:Create(img, TweenInfo.new(0.4, Enum.EasingStyle.Linear), {ImageTransparency = isMega and 0.85 or 0.92}):Play()
-    local travelDist = isMega and 14 or 8
-    local targetPos  = spawnPos + awayDir * travelDist
-    TweenService:Create(part, TweenInfo.new(0.45, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
-    task.delay(0.48, function() pcall(function() part:Destroy() end) end)
-end
-
-local function startParticleEmitter()
-    if flyanim.particleRunning then return end
-    flyanim.particleRunning = true
-    flyanim.particleConn = task.spawn(function()
-        while flyanim.enabled and (flyanim.mode == "fast" or flyanim.mode == "turbo") do
-            if flyanim.megaTurboUpActive then task.wait(0.05); continue end
-            local char = lplr.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                local isMega = (flyanim.mode == "turbo")
-                createParticle(isMega)
-                if isMega then task.wait(0.04); createParticle(true) end
-            end
-            task.wait(0.12)
-        end
-        flyanim.particleRunning = false
-        flyanim.particleConn    = nil
-    end)
-end
-
-function stopParticleEmitter()
-    if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
-    flyanim.particleRunning = false
-end
-
-local function getBrightnessFactor(speed)
-    if speed <= 1000 then return (speed - 1) / 999 else return 1 end
-end
-
-local whiteFlashGui = nil
-local function destroyWhiteFlash()
-    if whiteFlashGui then pcall(function() whiteFlashGui:Destroy() end); whiteFlashGui = nil end
-end
-
-local function speedWhiteFlash(mode)
-    destroyWhiteFlash()
-    local t = getBrightnessFactor(BASE_SPEED)
-    if t <= 0 then return end
-    local baseOpacity = 0.38
-    local maxOpacity  = (mode == "turbo") and (baseOpacity * 1.4) or baseOpacity
-    local opacity     = maxOpacity * t
-    local sg = Instance.new("ScreenGui")
-    sg.Name="AFO_WhiteFlash"; sg.ResetOnSpawn=false
-    sg.ZIndexBehavior=Enum.ZIndexBehavior.Global; sg.IgnoreGuiInset=true
-    sg.DisplayOrder=950; sg.Parent=CoreGui; whiteFlashGui=sg
-    local frame = Instance.new("Frame", sg)
-    frame.Size=UDim2.new(1,0,1,0); frame.BackgroundColor3=Color3.fromRGB(255,255,255)
-    frame.BackgroundTransparency=1; frame.BorderSizePixel=0; frame.ZIndex=2
-    TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {BackgroundTransparency = 1 - opacity}):Play()
-    task.delay(0.2, function()
-        if not sg or not sg.Parent then return end
-        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-            {BackgroundTransparency = 1}):Play()
-        task.delay(0.55, function() pcall(function() sg:Destroy() end); if whiteFlashGui == sg then whiteFlashGui = nil end end)
-    end)
-end
-
-local AIR_SHOCK_ID = "rbxassetid://112096280571499"
-local function airShockAura(intensity)
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local isMega = intensity == 2
-    task.spawn(function()
-        local bb = Instance.new("BillboardGui")
-        bb.Adornee=root; bb.AlwaysOnTop=false; bb.LightInfluence=0
-        bb.Size=UDim2.new(0,50,0,50); bb.ResetOnSpawn=false; bb.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb.Parent=root
-        local img = Instance.new("ImageLabel", bb)
-        img.Image=AIR_SHOCK_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
-        img.ImageColor3=Color3.fromRGB(210,240,255); img.ImageTransparency=0.25; img.ScaleType=Enum.ScaleType.Fit
-        local img2 = Instance.new("ImageLabel", bb)
-        img2.Image=AIR_SHOCK_ID; img2.Size=UDim2.new(1.3,0,1.3,0); img2.Position=UDim2.new(-0.15,0,-0.15,0)
-        img2.BackgroundTransparency=1; img2.ImageColor3=Color3.fromRGB(180,220,255); img2.ImageTransparency=0.45
-        img2.ScaleType=Enum.ScaleType.Fit; img2.Rotation=45
-        TweenService:Create(bb, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,200,0,200)}):Play()
-        task.wait(0.05)
-        if not bb or not bb.Parent then return end
-        TweenService:Create(bb, TweenInfo.new(0.20, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,280,0,280)}):Play()
-        TweenService:Create(img,  TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        TweenService:Create(img2, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        task.delay(0.32, function() pcall(function() bb:Destroy() end) end)
-    end)
-    if isMega then
-        task.spawn(function()
-            task.wait(0.05)
-            if not root or not root.Parent then return end
-            local bb2 = Instance.new("BillboardGui")
-            bb2.Adornee=root; bb2.AlwaysOnTop=false; bb2.LightInfluence=0
-            bb2.Size=UDim2.new(0,50,0,50); bb2.ResetOnSpawn=false; bb2.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb2.Parent=root
-            local i1 = Instance.new("ImageLabel", bb2)
-            i1.Image=AIR_SHOCK_ID; i1.Size=UDim2.new(1,0,1,0); i1.BackgroundTransparency=1
-            i1.ImageColor3=Color3.fromRGB(220,245,255); i1.ImageTransparency=0.15; i1.ScaleType=Enum.ScaleType.Fit; i1.Rotation=22
-            local i2 = Instance.new("ImageLabel", bb2)
-            i2.Image=AIR_SHOCK_ID; i2.Size=UDim2.new(1.5,0,1.5,0); i2.Position=UDim2.new(-0.25,0,-0.25,0)
-            i2.BackgroundTransparency=1; i2.ImageColor3=Color3.fromRGB(190,225,255); i2.ImageTransparency=0.30
-            i2.ScaleType=Enum.ScaleType.Fit; i2.Rotation=60
-            TweenService:Create(bb2, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size=UDim2.new(0,480,0,480)}):Play()
-            task.wait(0.10)
-            if not bb2 or not bb2.Parent then return end
-            TweenService:Create(bb2, TweenInfo.new(0.26, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-                {Size=UDim2.new(0,680,0,680)}):Play()
-            TweenService:Create(i1, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-            TweenService:Create(i2, TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-            task.delay(0.40, function() pcall(function() bb2:Destroy() end) end)
-        end)
-    end
-end
-
-local SHOCKWAVE_ID = "rbxassetid://117592591478260"
-local RING_ID      = "rbxassetid://12914395250"
-local WHITE        = Color3.fromRGB(255, 255, 255)
-
-local function sonicBoomEffect(intensity)
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local isMega = intensity == 2
-    local scale  = isMega and 0.95 or 0.55
-    local rings  = {
-        { start=(isMega and 5 or 3)*scale, peak=(isMega and 140 or 80)*scale, exp=isMega and 0.32 or 0.20, fadeDelay=isMega and 0.14 or 0.08, fadeDur=isMega and 0.26 or 0.16 },
-        { start=(isMega and 4 or 2)*scale, peak=(isMega and 90 or 52)*scale,  exp=isMega and 0.20 or 0.12, fadeDelay=isMega and 0.06 or 0.04, fadeDur=isMega and 0.18 or 0.10 },
-        { start=(isMega and 3 or 1.5)*scale, peak=(isMega and 55 or 32)*scale, exp=isMega and 0.12 or 0.07, fadeDelay=0, fadeDur=isMega and 0.10 or 0.06 },
-    }
-    for i, r in ipairs(rings) do
-        task.spawn(function()
-            task.wait(i == 1 and 0 or (i == 2 and 0.02 or 0.04))
-            if not root or not root.Parent then return end
-            local p = Instance.new("Part")
-            p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false; p.Transparency=1
-            p.Size=Vector3.new(r.start*2, r.start*2, 0.01); p.CFrame=root.CFrame
-            local cam = workspace.CurrentCamera
-            if cam then
-                local d = cam.CFrame.Position - root.Position
-                if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
-            end
-            p.Parent = workspace
-            local sg = Instance.new("SurfaceGui", p)
-            sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
-            sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
-            local outer = Instance.new("ImageLabel", sg)
-            outer.Image=RING_ID; outer.Size=UDim2.new(1,0,1,0); outer.BackgroundTransparency=1
-            outer.ImageColor3=WHITE; outer.ImageTransparency=0.06; outer.ZIndex=3
-            local innerScale = 0.72 - (i-1)*0.08
-            local inner = Instance.new("ImageLabel", sg)
-            inner.Image=RING_ID; inner.Size=UDim2.new(innerScale,0,innerScale,0)
-            inner.Position=UDim2.new((1-innerScale)/2,0,(1-innerScale)/2,0)
-            inner.BackgroundTransparency=1; inner.ImageColor3=WHITE; inner.ImageTransparency=0.20; inner.ZIndex=2
-            TweenService:Create(p, TweenInfo.new(r.exp, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size=Vector3.new(r.peak*2, r.peak*2, 0.01)}):Play()
-            task.delay(r.fadeDelay, function()
-                if not p or not p.Parent then return end
-                TweenService:Create(outer, TweenInfo.new(r.fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-                TweenService:Create(inner, TweenInfo.new(r.fadeDur*0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+    flyanim.animConn = animator.AnimationPlayed:Connect(function(track)
+        if not track or not track.Animation then return end
+        local id = track.Animation.AnimationId
+        if not ownAnimIds[id] then
+            pcall(function()
+                if track and track.IsPlaying then track:Stop(0) end
             end)
-            task.delay(r.fadeDelay + r.fadeDur + 0.08, function() pcall(function() p:Destroy() end) end)
-        end)
-    end
-    task.spawn(function()
-        local startPx = isMega and 90 or 60
-        local peakPx  = isMega and 780 or 460
-        local bb = Instance.new("BillboardGui")
-        bb.Adornee=root; bb.AlwaysOnTop=true; bb.LightInfluence=0
-        bb.Size=UDim2.new(0,startPx,0,startPx); bb.ResetOnSpawn=false; bb.Parent=root
-        local img = Instance.new("ImageLabel", bb)
-        img.Image=SHOCKWAVE_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
-        img.ImageColor3=WHITE; img.ImageTransparency=0; img.ScaleType=Enum.ScaleType.Fit
-        TweenService:Create(bb, TweenInfo.new(0.10, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,peakPx,0,peakPx)}):Play()
-        task.wait(0.04)
-        if not img or not img.Parent then return end
-        TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
+        end
     end)
+
+    setupBlockTrack()
+    setupDamageDetector()
 end
+
+local function restoreGameAnimations(char)
+    if not char then return end
+    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+    local animScript = char:FindFirstChild("Animate") or flyanim.animScript
+    if animScript then animScript.Disabled = false; flyanim.animScript = nil end
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root then cleanupMotors(root) end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = false
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        task.wait(0.05)
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+    end
+end
+
+-- ============================================================
+-- PARTICULAS Y EFECTOS DE ATERRIZAJE (FIXES DIRECTOS DE Flyfin_fixed.txt)
+-- ============================================================
 
 local function spawnLandingEffects(position, velocity)
     local intensity = math.clamp(velocity, 25, 180)
@@ -2087,148 +1538,6 @@ local function spawnLandingEffects(position, velocity)
     end
 end
 
-local function startIdleWatcher()
-    if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer = nil end
-    flyanim.idleTimer = task.spawn(function()
-        while flyanim.enabled do
-            task.wait(0.1)
-            if flyanim.mode == "normal" then continue end
-            if flyanim.turboTransitioning or flyanim.megaTransitioning then continue end
-            if flyanim.turboPreImpulsoActivo then continue end
-            local anyKey = UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.S)
-                        or UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D)
-            if not anyKey then
-                local prevMode = flyanim.mode
-                flyanim.mode   = "normal"
-                flyanim.speed  = BASE_SPEED
-                flyanim.qLastPress = 0
-                if flyanim.updateMode then flyanim.updateMode("normal") end
-                if not flyanim.noclipSpaceActive then setNoclip(false) end
-                stopParticleEmitter()
-                if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
-                if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn  = nil end
-                if prevMode == "fast" then
-                    detenerPoseTurbo()
-                elseif prevMode == "turbo" then
-                    detenerPoseMega()
-                    detenerPoseTurbo()
-                end
-                flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-                restaurarC0Inmediato()
-                if not flyanim.comboPlaying then
-                    flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-                    iniciarCicloNormal(flyanim._normalPlayId)
-                end
-            end
-        end
-    end)
-end
-
--- ============================================================
--- SETUP ANIMADOR
--- ============================================================
-
-local function setupAnimator(char)
-    local animScript = char:FindFirstChild("Animate")
-    if animScript then animScript.Disabled = true; flyanim.animScript = animScript end
-    local humanoid = char:WaitForChild("Humanoid", 5)
-    if not humanoid then return end
-    local animator = humanoid:WaitForChild("Animator", 5)
-    if not animator then return end
-
-    flyanim.animator = animator
-    flyanim.tracks   = {}
-
-    local ok, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
-    if ok and playing then
-        for _, t in ipairs(playing) do pcall(function() t:Stop(0) end) end
-    end
-
-    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
-
-    local hrp = char:WaitForChild("HumanoidRootPart", 5)
-    if not hrp then return end
-    local rj  = hrp:WaitForChild("RootJoint", 5)
-    if not rj then return end
-
-    flyanim.rootJoint  = rj
-    flyanim.originalC0 = rj.C0
-
-    for _, id in pairs(ANIM) do getTrack(id) end
-
-    local function loadNorm(id, priority, looped)
-        local anim = Instance.new("Animation")
-        anim.AnimationId = id
-        local ok2, t = pcall(function() return animator:LoadAnimation(anim) end)
-        if not ok2 or not t then return nil end
-        t.Priority = priority or Enum.AnimationPriority.Action3
-        t.Looped   = (looped ~= false)
-        return t
-    end
-
-    flyanim.normalTracks = {
-        estatica      = loadNorm(ANIM.estatica,       Enum.AnimationPriority.Action2),
-        levitacion    = loadNorm(ANIM.levitacion,     Enum.AnimationPriority.Action4),
-        brazos        = loadNorm(ANIM.brazos_idle,    Enum.AnimationPriority.Action3),
-        mov_forward   = loadNorm(ANIM.mov_forward,    Enum.AnimationPriority.Action3),
-        mov_back      = loadNorm(ANIM.mov_back_anim,  Enum.AnimationPriority.Action3),
-        mov_brazos    = loadNorm(ANIM.mov_brazos_mov, Enum.AnimationPriority.Action3),
-        lateral       = loadNorm(ANIM.mov_lateral,    Enum.AnimationPriority.Action3, false),
-        espacio_prim  = loadNorm(ANIM.espacio_prim,   Enum.AnimationPriority.Action3, true),
-        espacio_sec   = loadNorm(ANIM.espacio_sec,    Enum.AnimationPriority.Action3, false),
-        turbo_compact = loadNorm(ANIM.turbo_compact,  Enum.AnimationPriority.Action4, false),
-        turbo_burst   = loadNorm(ANIM.turbo_burst,    Enum.AnimationPriority.Action4, false),
-        turbo_pose    = loadNorm(ANIM.turbo_pose,     Enum.AnimationPriority.Action4, true),
-        turbo_volado  = loadNorm(ANIM.turbo_volado,   Enum.AnimationPriority.Action4, true),
-        mega_pose     = loadNorm(ANIM.mega_pose,      Enum.AnimationPriority.Action4, true),
-        mega_base     = loadNorm(ANIM.mega_base,      Enum.AnimationPriority.Action3, true),
-        mega_volado   = loadNorm(ANIM.mega_volado,    Enum.AnimationPriority.Action4, true),
-    }
-
-    local nt = flyanim.normalTracks
-    if nt.lateral     then pcall(function() nt.lateral:Play(0); nt.lateral:Stop(0) end) end
-    if nt.mov_back    then pcall(function() nt.mov_back:Play(0); nt.mov_back:Stop(0) end) end
-    if nt.espacio_sec then pcall(function() nt.espacio_sec:Play(0); nt.espacio_sec:Stop(0) end) end
-
-    local ownAnimIds = {}
-    for _, id in pairs(ANIM) do ownAnimIds[id] = true end
-    ownAnimIds[CAIDA_BASE_ID]    = true
-    ownAnimIds[CAIDA_OVERLAY_ID] = true
-
-    flyanim.animConn = animator.AnimationPlayed:Connect(function(track)
-        if not track or not track.Animation then return end
-        local id = track.Animation.AnimationId
-        if not ownAnimIds[id] then
-            pcall(function()
-                if track and track.IsPlaying then track:Stop(0) end
-            end)
-        end
-    end)
-
-    setupBlockTrack()
-    setupDamageDetector()
-end
-
-local function restoreGameAnimations(char)
-    if not char then return end
-    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
-    stopAnimBlockLoop()
-    local animScript = char:FindFirstChild("Animate") or flyanim.animScript
-    if animScript then animScript.Disabled = false; flyanim.animScript = nil end
-    if flyanim.rootJoint and flyanim.originalC0 then
-        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
-    end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if root then cleanupMotors(root) end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.PlatformStand = false
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        task.wait(0.05)
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
-    end
-end
-
 -- ============================================================
 -- LANDING
 -- ============================================================
@@ -2263,7 +1572,6 @@ local function doLanding(char)
     flyanim.megaTransitioning  = false
 
     if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
-    stopAnimBlockLoop()
 
     local ok, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
     if ok and playing then
@@ -2394,7 +1702,7 @@ local function doLanding(char)
 end
 
 -- ============================================================
--- SISTEMA DE COMBOS
+-- COMBOS & LOCK SYSTEM (RESTO DEL CODIGO)
 -- ============================================================
 
 local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
@@ -2798,10 +2106,6 @@ local function stopComboListener()
     flyanim.comboAnimStartTime = 0
 end
 
--- ============================================================
--- MEGA TURBO UP
--- ============================================================
-
 local function activateMegaTurboUp()
     if flyanim.megaTurboUpActive then return end
     if flyanim.mode == "turbo" then return end
@@ -2856,10 +2160,6 @@ local function stopMegaTurboUpListener()
     flyanim.spaceHoldStart    = nil
     flyanim.megaTurboUpActive = false
 end
-
--- ============================================================
--- SISTEMA DE LOCK
--- ============================================================
 
 local function isTargetValidForLock(target)
     if not target then return false end
@@ -3109,10 +2409,6 @@ local function stopLockSystem()
     if flyanim.lockHighlight then pcall(function() flyanim.lockHighlight:Destroy() end); flyanim.lockHighlight = nil end
 end
 
--- ============================================================
--- GUI
--- ============================================================
-
 local function _flyDestroyGui()
     if flyanim.pulse then pcall(function() task.cancel(flyanim.pulse) end); flyanim.pulse = nil end
     flyanim.expanded = false; flyanim.updateLbl = nil; flyanim.updateMode = nil
@@ -3224,15 +2520,13 @@ local function _flyBuildGui()
     lockIconImg.BackgroundTransparency=1; lockIconImg.Font=Enum.Font.GothamBold
     lockIconImg.TextSize=16; lockIconImg.TextColor3=Color3.fromRGB(255,220,80); lockIconImg.Text="🎯"
     local lockLabel = Instance.new("TextLabel", lockSec)
-    lockLabel.Size=UDim2.new(0,80,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
+    lockLabel.Size=UDim2.new(0,60,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
     lockLabel.BackgroundTransparency=1; lockLabel.Font=Enum.Font.GothamBold
-    lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT
-    lockLabel.Text="LOCK ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT; lockLabel.Text="LOCK ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
     local lockHint = Instance.new("TextLabel", lockSec)
     lockHint.Size=UDim2.new(1,-100,1,0); lockHint.Position=UDim2.new(0,95,0,0)
     lockHint.BackgroundTransparency=1; lockHint.Font=Enum.Font.Gotham
-    lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200)
-    lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
+    lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200); lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
     local noclipSec = makeSection(58); noclipSec.Parent=expandZone
@@ -3388,7 +2682,7 @@ local function _flyBuildGui()
 end
 
 -- ============================================================
--- FLY ON / OFF (ARREGLO SALVAJE APLICADO)
+-- FLY ON / OFF (LIMPIO Y SALVAJE)
 -- ============================================================
 
 local function _flyOn()
@@ -3423,7 +2717,6 @@ local function _flyOn()
     flyanim._normalPlayId = 1
     iniciarCicloNormal(1)
     startLockSystem(); startBrakeSystem(); startAntiImpulse(); startMegaTurboUpListener()
-    startAnomalyProtection(); startAnimBlockLoop()
 
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
     flyanim.tpMoveConn = RunService.Stepped:Connect(function(_, dt)
@@ -3625,7 +2918,7 @@ local function _flyOff()
 
     detenerNormalTracks(0.1); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
     stopBlocking(); stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
-    stopMegaTurboUpListener(); stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
+    stopMegaTurboUpListener()
 
     flyanim.noclipSpaceActive = false
     setNoclip(false)
@@ -3880,129 +3173,121 @@ local function handleQPress()
 end
 
 -- ============================================================
--- CONEXIONES GLOBALES DEL MÓDULO
+-- INPUT PRINCIPAL
 -- ============================================================
-local _inputConn     = nil
-local _inputConn_End = nil
-local _charConn      = nil
 
-local function _connectGlobal()
-    if _inputConn     then _inputConn:Disconnect(); _inputConn     = nil end
-    if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
-    if _charConn      then _charConn:Disconnect(); _charConn      = nil end
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if isTyping() then return end
 
-    _inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        if isTyping() then return end
+    if input.KeyCode == flyanim.flyKey then
+        if flyanim.enabled then _flyOff() else _flyOn() end
+        return
+    end
 
-        if input.KeyCode == flyanim.flyKey then
-            if flyanim.enabled then _flyOff() else _flyOn() end
-            return
-        end
+    if input.KeyCode == Enum.KeyCode.Q then handleQPress() end
 
-        if input.KeyCode == Enum.KeyCode.Q then handleQPress() end
-
-        if input.KeyCode == Enum.KeyCode.F and flyanim.enabled then
-            flyanim.fKeyHeld = true
-            if not flyanim.blockCancelledByCombo then
-                if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
-                    startBlocking()
-                end
-            end
-            return
-        end
-
-        if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled and flyanim.mode == "normal" then
-            if not flyanim.comboPlaying and not flyanim.turboPreImpulsoActivo then
-                manejarEspacioPresionadoNormal()
+    if input.KeyCode == Enum.KeyCode.F and flyanim.enabled then
+        flyanim.fKeyHeld = true
+        if not flyanim.blockCancelledByCombo then
+            if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
+                startBlocking()
             end
         end
+        return
+    end
 
-        if flyanim.enabled and flyanim.mode == "normal" then
-            if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+    if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled and flyanim.mode == "normal" then
+        if not flyanim.comboPlaying and not flyanim.turboPreImpulsoActivo then
+            manejarEspacioPresionadoNormal()
         end
-    end)
+    end
 
-    _inputConn_End = UserInputService.InputEnded:Connect(function(input, gpe)
-        if gpe then return end
+    if flyanim.enabled and flyanim.mode == "normal" then
+        if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+    end
+end)
 
-        if input.KeyCode == Enum.KeyCode.F then
-            flyanim.fKeyHeld = false
-            flyanim.blockCancelledByCombo = false
-            if flyanim.enabled then stopBlocking() end
-            return
-        end
+UserInputService.InputEnded:Connect(function(input, gpe)
+    if gpe then return end
 
-        if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled then
-            manejarEspacioSoltadoNormal()
-        end
-
-        if flyanim.enabled and flyanim.mode == "normal" then
-            if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
-            if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
-        end
-    end)
-
-    _charConn = lplr.CharacterAdded:Connect(function(newChar)
-        if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
-        destroyWhiteFlash()
-        local cam = workspace.CurrentCamera; if cam then cam.FieldOfView=70 end
-        flyanim.mode="normal"; flyanim.speed=BASE_SPEED; flyanim.isMoving=false
-        flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
-        flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
-        flyanim.waitingLand=false; flyanim.landingHeight=nil; flyanim.landingVelocity=0
-        flyanim.landingVelocityCapture=0
-        flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
-        flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
-        flyanim.turboPreImpulsoActivo=false; flyanim.turboPreImpulsoToken=0
-        flyanim.comboPlaying=false; flyanim.comboBusy=false; flyanim.combo4Frozen=false; flyanim.comboToken=0
-        flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
-        flyanim.c0ControlToken = 0
-        flyanim.lastDamageTime = 0
-        flyanim.straightLineActive = false
-        flyanim.noclipSpaceActive = false
-        flyanim.mouseHeld = false
-        flyanim.lastKnownPos = nil
-        flyanim.ragdollDetected = false
+    if input.KeyCode == Enum.KeyCode.F then
         flyanim.fKeyHeld = false
         flyanim.blockCancelledByCombo = false
-        flyanim.comboAnimStartTime = 0
-        if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
-        flyanim.lateralKilled=true; flyanim.atrasKilled=true
-        if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv=nil end
-        flyanim.espacioTrackActivo=nil
-        flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
-        stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
-        stopMegaTurboUpListener(); stopLockSystem()
-        stopAnomalyProtection(); stopComboC0Lock()
-        stopAnimBlockLoop()
-        if flyanim.turboRenderConn  then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn=nil end
-        if flyanim.megaRenderConn   then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn=nil end
-        if flyanim.blockRenderConn  then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn=nil end
-        if flyanim.landConn         then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-        if dashConnection           then dashConnection:Disconnect(); dashConnection=nil end
-        if flyanim.rsConn           then flyanim.rsConn:Disconnect(); flyanim.rsConn=nil end
-        if flyanim.tpMoveConn       then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn=nil end
-        if flyanim.idleTimer        then task.cancel(flyanim.idleTimer); flyanim.idleTimer=nil end
-        if flyanim.damageConn       then flyanim.damageConn:Disconnect(); flyanim.damageConn=nil end
-        if flyanim.anomalyConn      then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn=nil end
-        if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn=nil end
-        stopComboListener()
-        for _, t in pairs(flyanim.tracks)       do pcall(function() if t.IsPlaying then t:Stop(0) end end) end
-        for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
-        flyanim.tracks={}; flyanim.normalTracks={}
-        if flyanim.animScript then pcall(function() flyanim.animScript.Disabled=false end); flyanim.animScript=nil end
-        if flyanim.animConn   then flyanim.animConn:Disconnect(); flyanim.animConn=nil end
-        flyanim.animator=nil; flyanim.rootJoint=nil; flyanim.originalC0=nil
-        _flyDestroyGui()
-        if flyanim.enabled then task.wait(0.5); _flyOn() end
-    end)
-end
+        if flyanim.enabled then stopBlocking() end
+        return
+    end
+
+    if input.KeyCode == Enum.KeyCode.Space and flyanim.enabled then
+        manejarEspacioSoltadoNormal()
+    end
+
+    if flyanim.enabled and flyanim.mode == "normal" then
+        if input.KeyCode == Enum.KeyCode.W then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.S then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.A then evaluarMovimientoDebounced() end
+        if input.KeyCode == Enum.KeyCode.D then evaluarMovimientoDebounced() end
+    end
+end)
+
+-- ============================================================
+-- RESPAWN
+-- ============================================================
+
+lplr.CharacterAdded:Connect(function(newChar)
+    if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
+    destroyWhiteFlash()
+    local cam = workspace.CurrentCamera; if cam then cam.FieldOfView=70 end
+    flyanim.mode="normal"; flyanim.speed=BASE_SPEED; flyanim.isMoving=false
+    flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
+    flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
+    flyanim.waitingLand=false; flyanim.landingHeight=nil; flyanim.landingVelocity=0
+    flyanim.landingVelocityCapture=0
+    flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
+    flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
+    flyanim.turboPreImpulsoActivo=false; flyanim.turboPreImpulsoToken=0
+    flyanim.comboPlaying=false; flyanim.comboBusy=false; flyanim.combo4Frozen=false; flyanim.comboToken=0
+    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
+    flyanim.c0ControlToken = 0
+    flyanim.lastDamageTime = 0
+    flyanim.straightLineActive = false
+    flyanim.noclipSpaceActive = false
+    flyanim.mouseHeld = false
+    flyanim.lastKnownPos = nil
+    flyanim.ragdollDetected = false
+    flyanim.fKeyHeld = false
+    flyanim.blockCancelledByCombo = false
+    flyanim.comboAnimStartTime = 0
+    if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
+    flyanim.lateralKilled=true; flyanim.atrasKilled=true
+    if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv=nil end
+    flyanim.espacioTrackActivo=nil
+    flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+    stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
+    stopMegaTurboUpListener(); stopLockSystem()
+    stopComboC0Lock()
+    if flyanim.turboRenderConn  then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn=nil end
+    if flyanim.megaRenderConn   then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn=nil end
+    if flyanim.blockRenderConn  then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn=nil end
+    if flyanim.landConn         then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+    if dashConnection           then dashConnection:Disconnect(); dashConnection=nil end
+    if flyanim.rsConn           then flyanim.rsConn:Disconnect(); flyanim.rsConn=nil end
+    if flyanim.tpMoveConn       then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn=nil end
+    if flyanim.idleTimer        then task.cancel(flyanim.idleTimer); flyanim.idleTimer=nil end
+    if flyanim.damageConn       then flyanim.damageConn:Disconnect(); flyanim.damageConn=nil end
+    stopComboListener()
+    for _, t in pairs(flyanim.tracks)       do pcall(function() if t.IsPlaying then t:Stop(0) end end) end
+    for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.tracks={}; flyanim.normalTracks={}
+    if flyanim.animScript then pcall(function() flyanim.animScript.Disabled=false end); flyanim.animScript=nil end
+    if flyanim.animConn   then flyanim.animConn:Disconnect(); flyanim.animConn=nil end
+    flyanim.animator=nil; flyanim.rootJoint=nil; flyanim.originalC0=nil
+    _flyDestroyGui()
+    if flyanim.enabled then task.wait(0.5); _flyOn() end
+end)
 
 local function _disconnectGlobal()
     if _inputConn     then _inputConn:Disconnect(); _inputConn     = nil end
@@ -4019,7 +3304,10 @@ function M.Start(lplrRef, flyKey)
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
     if flyKey then flyanim.flyKey = flyKey end
-    _connectGlobal()
+    
+    if _inputConn     then _inputConn:Disconnect(); _inputConn     = nil end
+    if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
+    if _charConn      then _charConn:Disconnect(); _charConn      = nil end
 end
 
 function M.Stop()
@@ -4040,9 +3328,6 @@ function M.SetKey(keyCode)
     if flyanim.updateLbl then
         pcall(function() flyanim.updateLbl(keyCode.Name) end)
     end
-    if _inputConn     then _inputConn:Disconnect(); _inputConn     = nil end
-    if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
-    _connectGlobal()
 end
 
 function M.SetLockKey(keyCode)
