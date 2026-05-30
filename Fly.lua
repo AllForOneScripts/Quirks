@@ -1,4 +1,4 @@
-print("version 1.16 fly")
+print("version 1.17 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -231,6 +231,8 @@ local flyanim = {
     noclipSpaceEnabled   = true,
     noclipSpaceActive    = false,
     noclipMegaEnabled    = true,
+    noclipCtrlEnabled    = true,
+    noclipCtrlActive     = false,
     gyroProtectionActive = false,
     gyroProtectionTimer  = nil,
     originalGyroP        = nil,
@@ -1083,7 +1085,7 @@ local function manejarEspacioSoltadoNormal()
 
     if flyanim.noclipSpaceActive then
         flyanim.noclipSpaceActive = false
-        if flyanim.mode ~= "turbo" then
+        if flyanim.mode ~= "turbo" and not flyanim.noclipCtrlActive then
             setNoclip(false)
         end
     end
@@ -2389,7 +2391,7 @@ local function startIdleWatcher()
                 flyanim.speed  = BASE_SPEED
                 flyanim.qLastPress = 0
                 if flyanim.updateMode then flyanim.updateMode("normal") end
-                if not flyanim.noclipSpaceActive then setNoclip(false) end
+                if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
                 stopParticleEmitter()
                 if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
                 if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
@@ -3347,10 +3349,21 @@ local function updateLockInfoGui()
             end
             local heightLabel = flyanim.lockInfoGui:FindFirstChild("HeightLabel")
             if heightLabel and myRoot then
+                -- heightDiff: positivo = target está MÁS ABAJO que yo = él está abajo
+                --             negativo = target está MÁS ARRIBA que yo = él está arriba
                 local heightDiff = math.floor(myRoot.Position.Y - root.Position.Y)
-                if heightDiff > 0 then heightLabel.Text = "↕ "..heightDiff.." studs arriba"; heightLabel.TextColor3 = Color3.fromRGB(150,220,255)
-                elseif heightDiff < 0 then heightLabel.Text = "↕ "..math.abs(heightDiff).." studs abajo"; heightLabel.TextColor3 = Color3.fromRGB(255,200,100)
-                else heightLabel.Text = "↕ mismo nivel"; heightLabel.TextColor3 = Color3.fromRGB(150,255,150) end
+                if heightDiff > 0 then
+                    -- Yo estoy arriba → el target está abajo
+                    heightLabel.Text = "↓ "..heightDiff.." studs abajo"
+                    heightLabel.TextColor3 = Color3.fromRGB(255,200,100)
+                elseif heightDiff < 0 then
+                    -- Yo estoy abajo → el target está arriba
+                    heightLabel.Text = "↑ "..math.abs(heightDiff).." studs arriba"
+                    heightLabel.TextColor3 = Color3.fromRGB(150,220,255)
+                else
+                    heightLabel.Text = "↔ mismo nivel"
+                    heightLabel.TextColor3 = Color3.fromRGB(150,255,150)
+                end
             end
         end
         loadAvatarImage()
@@ -3478,7 +3491,8 @@ local function _flyBuildGui()
     local C_CYAN   = Color3.fromRGB(80,200,255)
     local W = 280; local H_MINI = 48; local DOT_SIZE = 10
 
-    local CONTENT_H = 8 + 30 + 6 + 58 + 6 + 104 + 8
+    -- noclipSec ahora tiene 3 filas (Espacio, Ctrl, Mega Turbo): 16 título + 3×20 filas + 6 padding = 82
+    local CONTENT_H = 8 + 30 + 6 + 82 + 6 + 104 + 8
     local H_FULL = H_MINI + CONTENT_H
 
     local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -3558,19 +3572,28 @@ local function _flyBuildGui()
     lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
-    local noclipSec = makeSection(58); noclipSec.Parent=expandZone
+    local noclipSec = makeSection(82); noclipSec.Parent=expandZone
     local noclipTitle = Instance.new("TextLabel", noclipSec)
     noclipTitle.Size=UDim2.new(1,-12,0,16); noclipTitle.Position=UDim2.new(0,6,0,2)
     noclipTitle.BackgroundTransparency=1; noclipTitle.Font=Enum.Font.GothamBold
     noclipTitle.TextSize=11; noclipTitle.TextColor3=C_TEXT; noclipTitle.Text="NOCLIP"; noclipTitle.TextXAlignment=Enum.TextXAlignment.Left
+    -- Fila 1: Espacio (subir)
     local spaceRow = Instance.new("Frame", noclipSec)
     spaceRow.Size=UDim2.new(1,-12,0,20); spaceRow.Position=UDim2.new(0,6,0,18); spaceRow.BackgroundTransparency=1
     local spaceLabel = Instance.new("TextLabel", spaceRow)
     spaceLabel.Size=UDim2.new(0,88,1,0); spaceLabel.BackgroundTransparency=1; spaceLabel.Font=Enum.Font.Gotham
-    spaceLabel.TextSize=10; spaceLabel.TextColor3=C_TEXT; spaceLabel.Text="Espacio/E"; spaceLabel.TextXAlignment=Enum.TextXAlignment.Left
+    spaceLabel.TextSize=10; spaceLabel.TextColor3=C_TEXT; spaceLabel.Text="Espacio"; spaceLabel.TextXAlignment=Enum.TextXAlignment.Left
     createToggle(spaceRow, 146, 1, flyanim.noclipSpaceEnabled, function(state) flyanim.noclipSpaceEnabled = state end)
+    -- Fila 2: Ctrl (bajar) - noclip dedicado al movimiento hacia abajo
+    local ctrlRow = Instance.new("Frame", noclipSec)
+    ctrlRow.Size=UDim2.new(1,-12,0,20); ctrlRow.Position=UDim2.new(0,6,0,40); ctrlRow.BackgroundTransparency=1
+    local ctrlLabel = Instance.new("TextLabel", ctrlRow)
+    ctrlLabel.Size=UDim2.new(0,88,1,0); ctrlLabel.BackgroundTransparency=1; ctrlLabel.Font=Enum.Font.Gotham
+    ctrlLabel.TextSize=10; ctrlLabel.TextColor3=C_TEXT; ctrlLabel.Text="Ctrl (bajar)"; ctrlLabel.TextXAlignment=Enum.TextXAlignment.Left
+    createToggle(ctrlRow, 146, 1, flyanim.noclipCtrlEnabled, function(state) flyanim.noclipCtrlEnabled = state end)
+    -- Fila 3: Mega Turbo
     local megaRow = Instance.new("Frame", noclipSec)
-    megaRow.Size=UDim2.new(1,-12,0,20); megaRow.Position=UDim2.new(0,6,0,38); megaRow.BackgroundTransparency=1
+    megaRow.Size=UDim2.new(1,-12,0,20); megaRow.Position=UDim2.new(0,6,0,62); megaRow.BackgroundTransparency=1
     local megaLabel = Instance.new("TextLabel", megaRow)
     megaLabel.Size=UDim2.new(0,88,1,0); megaLabel.BackgroundTransparency=1; megaLabel.Font=Enum.Font.Gotham
     megaLabel.TextSize=10; megaLabel.TextColor3=C_TEXT; megaLabel.Text="Mega Turbo"; megaLabel.TextXAlignment=Enum.TextXAlignment.Left
@@ -3782,6 +3805,19 @@ local function _flyOn()
         local spaceDown = not typing and UserInputService:IsKeyDown(Enum.KeyCode.Space)
         local ctrlDown  = not typing and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
 
+        -- Noclip para Ctrl (bajar a través del suelo)
+        if ctrlDown and flyanim.noclipCtrlEnabled and not flyanim.noclipCtrlActive then
+            flyanim.noclipCtrlActive = true
+            setNoclip(true)
+        elseif not ctrlDown and flyanim.noclipCtrlActive then
+            flyanim.noclipCtrlActive = false
+            -- Solo quitar noclip si no hay otro sistema que lo requiera
+            local megaActive = (flyanim.mode == "turbo") and flyanim.noclipMegaEnabled
+            if not flyanim.noclipSpaceActive and not megaActive then
+                setNoclip(false)
+            end
+        end
+
         local move = Vector3.new()
         if wD then move = move + cam.CFrame.LookVector end
         if sD then move = move - cam.CFrame.LookVector end
@@ -3901,7 +3937,26 @@ local function _flyOn()
             else
                 targetCFrame = cam.CFrame
             end
-            local sf = isFastMode2 and math.clamp(dt*22,0,1) or math.clamp(dt*10,0,1)
+            local sf
+            if isFastMode2 then
+                -- Suavizado progresivo: empieza lento y acelera conforme converge
+                -- Evita el "tp salvaje" al girar en turbo/mega sin perder precisión
+                local angleDiff = 0
+                pcall(function()
+                    local currentLook = flyanim.bg.cframe.LookVector
+                    local desiredLook = targetCFrame.LookVector
+                    local dot = math.clamp(currentLook:Dot(desiredLook), -1, 1)
+                    angleDiff = math.acos(dot)  -- ángulo en radianes entre dirección actual y deseada
+                end)
+                -- Lerp más lento cuando el ángulo es grande (giro amplio) y más rápido cuando ya está casi alineado
+                -- Rango: 0.04 (180°) → 0.18 (0°), curva cuadrática para sensación fluida
+                local t_angle = math.clamp(1 - (angleDiff / math.pi), 0, 1)
+                sf = 0.04 + (t_angle * t_angle) * 0.14
+                -- Clamp para que nunca pase de un valor razonable por frame
+                sf = math.clamp(sf * (1 + dt * 8), 0, 0.20)
+            else
+                sf = math.clamp(dt*10, 0, 1)
+            end
             flyanim.bg.cframe = flyanim.bg.cframe:Lerp(targetCFrame, sf)
         end
 
@@ -3970,6 +4025,13 @@ local function _flyOff()
     flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
     flyanim.mouseHeld = false; flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
     flyanim.comboAnimStartTime = 0
+    -- FLY OFF = TODO se apaga: noclip, espacio, ctrl, estado
+    flyanim.isSpaceAdv       = false
+    flyanim.noclipSpaceActive = false
+    flyanim.noclipCtrlActive  = false
+    if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
+    if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
+    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
     if dashConnection then dashConnection:Disconnect(); dashConnection=nil end
 
     -- NOTA: NO incrementar c0ControlToken de nuevo aquí (ya se hizo arriba)
@@ -3984,6 +4046,7 @@ local function _flyOff()
     stopTeleportGuard(); detenerWatchdogAltura()
 
     flyanim.noclipSpaceActive = false
+    flyanim.noclipCtrlActive  = false
     setNoclip(false)
 
     if flyanim.rsConn    then flyanim.rsConn:Disconnect(); flyanim.rsConn=nil end
@@ -4231,8 +4294,8 @@ if dDown and not sDown and not aDown then
 
         if flyanim.noclipSpaceActive then
             flyanim.noclipSpaceActive = false
-            setNoclip(false)
         end
+        flyanim.noclipCtrlActive = false
 
         flyanim.mode  = "fast"
         flyanim.speed = BASE_SPEED * FAST_MULT
@@ -4338,6 +4401,7 @@ local function _connectGlobal()
         flyanim.lastDamageTime = 0
         flyanim.straightLineActive = false
         flyanim.noclipSpaceActive = false
+        flyanim.noclipCtrlActive  = false
         flyanim.mouseHeld = false
         flyanim.lastKnownPos = nil
         flyanim.ragdollDetected = false
