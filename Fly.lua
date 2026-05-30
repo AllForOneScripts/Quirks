@@ -1,4 +1,4 @@
-print("version 1.19 fly")
+print("version 1.20 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4059,16 +4059,47 @@ local function _flyOff()
     end
     flyanim.gyroProtectionActive = false
 
-    -- ── PASO 1: Cancelar watchdog y tokens de C0 SINCRÓNICAMENTE ──
-    -- Antes de cualquier otro sistema, para evitar que el watchdog
-    -- sobreescriba el C0 restaurado un frame después.
-    heightTweenToken = heightTweenToken + 1
-    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-    flyanim.c0HeightToken  = (flyanim.c0HeightToken  or 0) + 1
-    if flyanim.c0HeightConn then
-        flyanim.c0HeightConn:Disconnect()
-        flyanim.c0HeightConn = nil
-    end
+    -- ── PASO 0B: Invalidar TODOS los tokens inmediatamente ──
+    -- Esto hace que cualquier coroutine/loop que compruebe su token
+    -- sepa que debe terminar, ANTES de que enabled cambie.
+    flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken  or 0) + 1
+    flyanim.turboPreImpulsoActivo = false
+    flyanim.idleWatchToken        = (flyanim.idleWatchToken        or 0) + 1
+    flyanim.dashAnimToken         = (flyanim.dashAnimToken         or 0) + 1
+    flyanim.comboToken            = (flyanim.comboToken            or 0) + 1
+    flyanim.c0ControlToken        = (flyanim.c0ControlToken        or 0) + 1
+    flyanim.c0HeightToken         = (flyanim.c0HeightToken         or 0) + 1
+    heightTweenToken              = heightTweenToken + 1
+
+    -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
+    -- No esperar a los guards internos (que solo actúan en el próximo tick).
+    -- Orden: primero los RenderStepped/Heartbeat que modifican C0, luego el resto.
+    if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
+    if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
+    if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
+    if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
+    if flyanim.comboC0Conn         then flyanim.comboC0Conn:Disconnect();         flyanim.comboC0Conn         = nil end
+    if flyanim.blockRenderConn     then flyanim.blockRenderConn:Disconnect();     flyanim.blockRenderConn     = nil end
+    if flyanim.idleAnimConn        then flyanim.idleAnimConn:Disconnect();        flyanim.idleAnimConn        = nil end
+    if flyanim.megaTurboUpConn     then flyanim.megaTurboUpConn:Disconnect();     flyanim.megaTurboUpConn     = nil end
+    if brakeConn                   then brakeConn:Disconnect();                   brakeConn                   = nil end
+    if flyanim.antiImpulseConn     then flyanim.antiImpulseConn:Disconnect();     flyanim.antiImpulseConn     = nil end
+    if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
+    if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
+    if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
+    if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
+    if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
+    if flyanim.lockRenderConn      then flyanim.lockRenderConn:Disconnect();      flyanim.lockRenderConn      = nil end
+    if flyanim.damageConn          then flyanim.damageConn:Disconnect();          flyanim.damageConn          = nil end
+    if flyanim.animConn            then flyanim.animConn:Disconnect();            flyanim.animConn            = nil end
+    if flyanim.comboConn           then flyanim.comboConn:Disconnect();           flyanim.comboConn           = nil end
+    if flyanim.comboHoldConn       then flyanim.comboHoldConn:Disconnect();       flyanim.comboHoldConn       = nil end
+    if flyanim._comboEndConn       then flyanim._comboEndConn:Disconnect();       flyanim._comboEndConn       = nil end
+    if dashConnection              then dashConnection:Disconnect();               dashConnection              = nil end
+    if flyanim.idleTimer           then task.cancel(flyanim.idleTimer);           flyanim.idleTimer           = nil end
+    if flyanim.spaceHoldTimerAdv   then task.cancel(flyanim.spaceHoldTimerAdv);   flyanim.spaceHoldTimerAdv   = nil end
+
+    -- ── PASO 1: Medir altura antes de apagar ──
     clearC0Desired()
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
@@ -4091,60 +4122,46 @@ local function _flyOff()
     end
     flyanim.landingHeight = heightFromGround
 
-    flyanim.enabled = false
-    flyanim.comboPlaying = false; flyanim.comboBusy = false; flyanim.combo4Frozen = false
-    flyanim.turboPreImpulsoActivo = false
-    flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken or 0) + 1
-    flyanim.dashTimer=0; flyanim.dashVel=Vector3.new(0,0,0)
-    flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
-    flyanim.mouseHeld = false; flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
-    flyanim.comboAnimStartTime = 0
-    -- FLY OFF = TODO se apaga: noclip, espacio, ctrl, estado
-    flyanim.isSpaceAdv       = false
-    flyanim.noclipSpaceActive = false
-    flyanim.noclipCtrlActive  = false
-    if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
-    if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
-    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
-    if dashConnection then dashConnection:Disconnect(); dashConnection=nil end
+    -- ── PASO 2: Marcar sistema como desactivado ──
+    flyanim.enabled   = false
+    flyanim.dashTimer = 0
+    flyanim.dashVel   = Vector3.new(0, 0, 0)
 
-    -- NOTA: NO incrementar c0ControlToken de nuevo aquí (ya se hizo arriba)
-
-    if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
-    if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
-
-
-    -- ── DESCONEXIÓN DIRECTA de todas las conexiones (sin depender de guards lazy) ──
-    -- Los guards internos comprueban `flyanim.enabled` en el próximo tick;
-    -- aquí matamos las conexiones explícitamente en este mismo frame.
-    if flyanim.antiImpulseConn    then flyanim.antiImpulseConn:Disconnect();    flyanim.antiImpulseConn    = nil end
-    if flyanim.anomalyConn        then flyanim.anomalyConn:Disconnect();        flyanim.anomalyConn        = nil end
-    if flyanim.teleportGuardConn  then flyanim.teleportGuardConn:Disconnect();  flyanim.teleportGuardConn  = nil end
-    if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
-    if flyanim.megaTurboUpConn    then flyanim.megaTurboUpConn:Disconnect();    flyanim.megaTurboUpConn    = nil end
-    if brakeConn                  then brakeConn:Disconnect();                  brakeConn                  = nil end
-    if flyanim.idleAnimConn       then flyanim.idleAnimConn:Disconnect();       flyanim.idleAnimConn       = nil end
-    if flyanim.comboC0Conn        then flyanim.comboC0Conn:Disconnect();        flyanim.comboC0Conn        = nil end
-    if flyanim.blockRenderConn    then flyanim.blockRenderConn:Disconnect();    flyanim.blockRenderConn    = nil end
+    -- ── Flags de estado: resetear todo ──
     flyanim.isTeleportGuardActive = false
     flyanim.lastKnownPos          = nil
+    flyanim.lastSafePos           = nil
     flyanim.megaTurboUpActive     = false
     flyanim.spaceHoldStart        = nil
     flyanim.brakingActive         = false
+    flyanim.noclipSpaceActive     = false
+    flyanim.noclipCtrlActive      = false
+    flyanim.isBlocking            = false
+    flyanim.isSpaceAdv            = false
+    flyanim.isBrazosActive        = false
+    flyanim.ragdollDetected       = false
+    flyanim.comboPlaying          = false
+    flyanim.comboBusy             = false
+    flyanim.combo4Frozen          = false
+    flyanim.mouseHeld             = false
+    flyanim.fKeyHeld              = false
+    flyanim.blockCancelledByCombo = false
+    flyanim.comboAnimStartTime    = 0
+    flyanim.turboTransitioning    = false
+    flyanim.megaTransitioning     = false
 
+    -- Llamar helpers de stop (son idempotentes: si la conn ya es nil no hacen nada)
+    -- Su única función aquí es limpiar estado extra que no sea una RBXScriptConnection
     detenerNormalTracks(0); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
-    stopBlocking(); stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
-    stopMegaTurboUpListener(); stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
+    stopBlocking(); stopParticleEmitter()
+    -- stopAntiImpulse / stopBrakeSystem / stopAnomalyProtection / stopTeleportGuard /
+    -- stopAnimBlockLoop / stopMegaTurboUpListener ya no tienen conn que desconectar
+    -- (se hizo en PASO 0C), pero los llamamos igual para limpiar sus flags internos
+    stopAntiImpulse(); stopBrakeSystem(); stopMegaTurboUpListener()
+    stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
     stopTeleportGuard(); detenerWatchdogAltura()
-
-    flyanim.noclipSpaceActive = false
-    flyanim.noclipCtrlActive  = false
     setNoclip(false)
 
-    if flyanim.rsConn    then flyanim.rsConn:Disconnect(); flyanim.rsConn=nil end
-    if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn=nil end
-    if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer=nil end
-    stopComboListener()
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
     destroyWhiteFlash()
     local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70 end
@@ -4167,14 +4184,15 @@ local function _flyOff()
     end
 
     flyanim.bg=nil; flyanim.bv=nil; flyanim.bf=nil; flyanim.mode="normal"; flyanim.speed=BASE_SPEED
-    _flyDestroyGui(); stopLockSystem()
-
-    if flyanim.damageConn then flyanim.damageConn:Disconnect(); flyanim.damageConn = nil end
+    _flyDestroyGui()
+    -- stopLockSystem ya desconectó lockConn y lockRenderConn en PASO 0C,
+    -- pero llamarlo limpia lockActive, lockedTarget, lockIconGui, lockHighlight
+    stopLockSystem()
 
     if not charCurrent or not hum or hum.Health <= 0 then
-        if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
         local animScript2 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript2 then animScript2.Disabled = false; flyanim.animScript = nil end
+        flyanim.animScript = nil
         flyanim.landingHeight = nil
         return
     end
@@ -4212,7 +4230,6 @@ local function _flyOff()
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
 
     if capturedHeight < 10 then
-        if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
         local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
@@ -4223,7 +4240,8 @@ local function _flyOff()
         return
     end
 
-    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+    -- animConn ya fue desconectado en PASO 0C.
+    -- El animScript del juego lo rehabilita doLanding() al terminar.
 
     flyanim.waitingLand = true
     if flyanim.landConn then flyanim.landConn:Disconnect() end
