@@ -1,4 +1,4 @@
-print("version 1.17 fly")
+print("version 1.18 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -6,6 +6,60 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui          = game:GetService("CoreGui")
 local SoundService     = game:GetService("SoundService")
+
+-- ══════════════════════════════════════════════
+-- SISTEMA DE IDIOMA (espejo del hub All For One)
+-- Lee el mismo lang.txt que el hub para mantenerse sincronizado
+-- ══════════════════════════════════════════════
+local FlyLang = {
+    ES = {
+        fly_title        = "  VUELO",
+        mode_normal      = "NORMAL",
+        mode_fast        = "TURBO  ×",
+        mode_mega        = "MEGA  ×",
+        mode_megaup      = "⬆ MEGA UP  ×",
+        lock_label       = "LOCK",
+        lock_hint_prefix = "Apuntar + ",
+        noclip_title     = "NOCLIP",
+        noclip_space     = "Espacio",
+        noclip_ctrl      = "Ctrl (bajar)",
+        noclip_mega      = "Mega Turbo",
+        height_below     = "studs abajo",
+        height_above     = "studs arriba",
+        height_same      = "↔ mismo nivel",
+        speed_base       = "Vel. base",
+        speed_turbo_mult = "Turbo ×",
+        speed_mega_mult  = "Mega ×",
+        speed_reset      = "🔄  Reset",
+    },
+    EN = {
+        fly_title        = "  FLY",
+        mode_normal      = "NORMAL",
+        mode_fast        = "TURBO  ×",
+        mode_mega        = "MEGA  ×",
+        mode_megaup      = "⬆ MEGA UP  ×",
+        lock_label       = "LOCK",
+        lock_hint_prefix = "Aim + ",
+        noclip_title     = "NOCLIP",
+        noclip_space     = "Space",
+        noclip_ctrl      = "Ctrl (down)",
+        noclip_mega      = "Mega Turbo",
+        height_below     = "studs below",
+        height_above     = "studs above",
+        height_same      = "↔ same level",
+        speed_base       = "Base speed",
+        speed_turbo_mult = "Turbo ×",
+        speed_mega_mult  = "Mega ×",
+        speed_reset      = "🔄  Reset",
+    },
+}
+-- Lee el idioma guardado por el hub (mismo archivo AllForOne/lang.txt)
+local _flyLang = "ES"
+pcall(function()
+    local data = readfile("AllForOne/lang.txt")
+    if data == "EN" or data == "ES" then _flyLang = data end
+end)
+local FT = FlyLang[_flyLang]
 
 -- lplr y camera se asignan en M.Start()
 local lplr   = nil
@@ -3309,7 +3363,7 @@ local function createLockInfoGui(parentFrame)
     local heightLabel = Instance.new("TextLabel", infoFrame)
     heightLabel.Name="HeightLabel"; heightLabel.Size=UDim2.new(0,120,0,15); heightLabel.Position=UDim2.new(0,40,0,68)
     heightLabel.BackgroundTransparency=1; heightLabel.Font=Enum.Font.Gotham
-    heightLabel.TextSize=9; heightLabel.TextColor3=Color3.fromRGB(150,220,255); heightLabel.Text="↕ --- studs arriba"; heightLabel.TextXAlignment=Enum.TextXAlignment.Left
+    heightLabel.TextSize=9; heightLabel.TextColor3=Color3.fromRGB(150,220,255); heightLabel.Text="↕ ---"; heightLabel.TextXAlignment=Enum.TextXAlignment.Left
     local playerImgContainer = Instance.new("Frame", infoFrame)
     playerImgContainer.Name="PlayerImgContainer"; playerImgContainer.Size=UDim2.new(0,55,0,55)
     playerImgContainer.Position=UDim2.new(1,-65,0,20); playerImgContainer.BackgroundColor3=Color3.fromRGB(20,10,40)
@@ -3354,14 +3408,14 @@ local function updateLockInfoGui()
                 local heightDiff = math.floor(myRoot.Position.Y - root.Position.Y)
                 if heightDiff > 0 then
                     -- Yo estoy arriba → el target está abajo
-                    heightLabel.Text = "↓ "..heightDiff.." studs abajo"
+                    heightLabel.Text = "↓ "..heightDiff.." "..FT.height_below
                     heightLabel.TextColor3 = Color3.fromRGB(255,200,100)
                 elseif heightDiff < 0 then
                     -- Yo estoy abajo → el target está arriba
-                    heightLabel.Text = "↑ "..math.abs(heightDiff).." studs arriba"
+                    heightLabel.Text = "↑ "..math.abs(heightDiff).." "..FT.height_above
                     heightLabel.TextColor3 = Color3.fromRGB(150,220,255)
                 else
-                    heightLabel.Text = "↔ mismo nivel"
+                    heightLabel.Text = FT.height_same
                     heightLabel.TextColor3 = Color3.fromRGB(150,255,150)
                 end
             end
@@ -3518,14 +3572,14 @@ local function _flyBuildGui()
     titleLbl.Size=UDim2.new(0,75,1,0); titleLbl.Position=UDim2.new(0,34,0,0)
     titleLbl.BackgroundTransparency=1; titleLbl.Font=Enum.Font.GothamBold
     titleLbl.TextSize=12; titleLbl.TextColor3=C_TEXT
-    titleLbl.Text="  FLY ["..flyanim.flyKey.Name.."]"; titleLbl.TextXAlignment=Enum.TextXAlignment.Left
+    titleLbl.Text=FT.fly_title.." ["..flyanim.flyKey.Name.."]"; titleLbl.TextXAlignment=Enum.TextXAlignment.Left
     local sep = Instance.new("Frame", topBar)
     sep.Size=UDim2.new(0,1,0,22); sep.Position=UDim2.new(0,113,0.5,-11)
     sep.BackgroundColor3=C_PURPLE; sep.BackgroundTransparency=0.4
     local modeLbl = Instance.new("TextLabel", topBar)
     modeLbl.Size=UDim2.new(1,-134,1,0); modeLbl.Position=UDim2.new(0,119,0,0)
     modeLbl.BackgroundTransparency=1; modeLbl.Font=Enum.Font.GothamBold
-    modeLbl.TextSize=12; modeLbl.TextColor3=C_GREEN; modeLbl.Text="NORMAL"; modeLbl.TextXAlignment=Enum.TextXAlignment.Center
+    modeLbl.TextSize=12; modeLbl.TextColor3=C_GREEN; modeLbl.Text=FT.mode_normal; modeLbl.TextXAlignment=Enum.TextXAlignment.Center
     local dotBtn = Instance.new("TextButton", topBar)
     dotBtn.Size=UDim2.new(0,DOT_SIZE+10,1,0); dotBtn.Position=UDim2.new(1,-(DOT_SIZE+14),0,0)
     dotBtn.BackgroundTransparency=1; dotBtn.Text=""
@@ -3564,39 +3618,39 @@ local function _flyBuildGui()
     lockLabel.Size=UDim2.new(0,80,1,0); lockLabel.Position=UDim2.new(0,34,0,0)
     lockLabel.BackgroundTransparency=1; lockLabel.Font=Enum.Font.GothamBold
     lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT
-    lockLabel.Text="LOCK ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    lockLabel.Text=FT.lock_label.." ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
     local lockHint = Instance.new("TextLabel", lockSec)
     lockHint.Size=UDim2.new(1,-100,1,0); lockHint.Position=UDim2.new(0,95,0,0)
     lockHint.BackgroundTransparency=1; lockHint.Font=Enum.Font.Gotham
     lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200)
-    lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
+    lockHint.Text=FT.lock_hint_prefix..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
     local noclipSec = makeSection(82); noclipSec.Parent=expandZone
     local noclipTitle = Instance.new("TextLabel", noclipSec)
     noclipTitle.Size=UDim2.new(1,-12,0,16); noclipTitle.Position=UDim2.new(0,6,0,2)
     noclipTitle.BackgroundTransparency=1; noclipTitle.Font=Enum.Font.GothamBold
-    noclipTitle.TextSize=11; noclipTitle.TextColor3=C_TEXT; noclipTitle.Text="NOCLIP"; noclipTitle.TextXAlignment=Enum.TextXAlignment.Left
+    noclipTitle.TextSize=11; noclipTitle.TextColor3=C_TEXT; noclipTitle.Text=FT.noclip_title; noclipTitle.TextXAlignment=Enum.TextXAlignment.Left
     -- Fila 1: Espacio (subir)
     local spaceRow = Instance.new("Frame", noclipSec)
     spaceRow.Size=UDim2.new(1,-12,0,20); spaceRow.Position=UDim2.new(0,6,0,18); spaceRow.BackgroundTransparency=1
     local spaceLabel = Instance.new("TextLabel", spaceRow)
     spaceLabel.Size=UDim2.new(0,88,1,0); spaceLabel.BackgroundTransparency=1; spaceLabel.Font=Enum.Font.Gotham
-    spaceLabel.TextSize=10; spaceLabel.TextColor3=C_TEXT; spaceLabel.Text="Espacio"; spaceLabel.TextXAlignment=Enum.TextXAlignment.Left
+    spaceLabel.TextSize=10; spaceLabel.TextColor3=C_TEXT; spaceLabel.Text=FT.noclip_space; spaceLabel.TextXAlignment=Enum.TextXAlignment.Left
     createToggle(spaceRow, 146, 1, flyanim.noclipSpaceEnabled, function(state) flyanim.noclipSpaceEnabled = state end)
     -- Fila 2: Ctrl (bajar) - noclip dedicado al movimiento hacia abajo
     local ctrlRow = Instance.new("Frame", noclipSec)
     ctrlRow.Size=UDim2.new(1,-12,0,20); ctrlRow.Position=UDim2.new(0,6,0,40); ctrlRow.BackgroundTransparency=1
     local ctrlLabel = Instance.new("TextLabel", ctrlRow)
     ctrlLabel.Size=UDim2.new(0,88,1,0); ctrlLabel.BackgroundTransparency=1; ctrlLabel.Font=Enum.Font.Gotham
-    ctrlLabel.TextSize=10; ctrlLabel.TextColor3=C_TEXT; ctrlLabel.Text="Ctrl (bajar)"; ctrlLabel.TextXAlignment=Enum.TextXAlignment.Left
+    ctrlLabel.TextSize=10; ctrlLabel.TextColor3=C_TEXT; ctrlLabel.Text=FT.noclip_ctrl; ctrlLabel.TextXAlignment=Enum.TextXAlignment.Left
     createToggle(ctrlRow, 146, 1, flyanim.noclipCtrlEnabled, function(state) flyanim.noclipCtrlEnabled = state end)
     -- Fila 3: Mega Turbo
     local megaRow = Instance.new("Frame", noclipSec)
     megaRow.Size=UDim2.new(1,-12,0,20); megaRow.Position=UDim2.new(0,6,0,62); megaRow.BackgroundTransparency=1
     local megaLabel = Instance.new("TextLabel", megaRow)
     megaLabel.Size=UDim2.new(0,88,1,0); megaLabel.BackgroundTransparency=1; megaLabel.Font=Enum.Font.Gotham
-    megaLabel.TextSize=10; megaLabel.TextColor3=C_TEXT; megaLabel.Text="Mega Turbo"; megaLabel.TextXAlignment=Enum.TextXAlignment.Left
+    megaLabel.TextSize=10; megaLabel.TextColor3=C_TEXT; megaLabel.Text=FT.noclip_mega; megaLabel.TextXAlignment=Enum.TextXAlignment.Left
     createToggle(megaRow, 146, 1, flyanim.noclipMegaEnabled, function(state) flyanim.noclipMegaEnabled = state end)
 
     local speedSec = makeSection(104); speedSec.BackgroundColor3=Color3.fromRGB(25,12,55); speedSec.Parent=expandZone
@@ -3620,15 +3674,15 @@ local function _flyBuildGui()
         return box
     end
 
-    local speedBox = makeRow("Vel. base", 6,  BASE_SPEED,  1, 10000)
-    local fastBox  = makeRow("Turbo ×",   30, FAST_MULT,   1, 1000)
-    local turboBox = makeRow("Mega ×",    54, TURBO_MULT,  1, 1000)
+    local speedBox = makeRow(FT.speed_base,       6,  BASE_SPEED,  1, 10000)
+    local fastBox  = makeRow(FT.speed_turbo_mult, 30, FAST_MULT,   1, 1000)
+    local turboBox = makeRow(FT.speed_mega_mult,  54, TURBO_MULT,  1, 1000)
 
     local resetBtn = Instance.new("TextButton", speedSec)
     resetBtn.Size=UDim2.new(0,90,0,20); resetBtn.Position=UDim2.new(0.5,-45,0,82)
     resetBtn.BackgroundColor3=Color3.fromRGB(60,10,110); resetBtn.BackgroundTransparency=0.2
     resetBtn.BorderSizePixel=0; resetBtn.Font=Enum.Font.GothamBold; resetBtn.TextSize=10
-    resetBtn.TextColor3=C_TEXT; resetBtn.Text="🔄  Reset"
+    resetBtn.TextColor3=C_TEXT; resetBtn.Text=FT.speed_reset
     Instance.new("UICorner", resetBtn).CornerRadius=UDim.new(0,5)
 
     local function recalcSpeed()
@@ -3716,12 +3770,12 @@ local function _flyBuildGui()
         root.Position = UDim2.new(dragStartPos.X.Scale, dragStartPos.X.Offset+delta.X, dragStartPos.Y.Scale, dragStartPos.Y.Offset+delta.Y)
     end)
 
-    flyanim.updateLbl  = function(keyName) pcall(function() titleLbl.Text="  FLY ["..keyName.."]" end) end
+    flyanim.updateLbl  = function(keyName) pcall(function() titleLbl.Text=FT.fly_title.." ["..keyName.."]" end) end
     flyanim.updateMode = function(modeName)
         pcall(function()
             local multF = math.floor(FAST_MULT*10+0.5)/10
             local multT = math.floor(TURBO_MULT*10+0.5)/10
-            local labels  = { normal="NORMAL", fast="TURBO  ×"..tostring(multF), turbo="MEGA  ×"..tostring(multT), megaup="⬆ MEGA UP  ×"..tostring(multT) }
+            local labels  = { normal=FT.mode_normal, fast=FT.mode_fast..tostring(multF), turbo=FT.mode_mega..tostring(multT), megaup=FT.mode_megaup..tostring(multT) }
             local colors   = { normal=C_GREEN, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
             local dotColors = { normal=C_ACCENT, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
             modeLbl.Text = labels[modeName] or modeName
@@ -4495,8 +4549,8 @@ function M.SetLockKey(keyCode)
     flyanim.lockKey = keyCode
     -- Actualizar GUI en tiempo real
     if flyanim.lockLabels then
-        flyanim.lockLabels.label.Text = "LOCK ["..keyCode.Name.."]"
-        flyanim.lockLabels.hint.Text  = "Apuntar + "..keyCode.Name
+        flyanim.lockLabels.label.Text = FT.lock_label.." ["..keyCode.Name.."]"
+        flyanim.lockLabels.hint.Text  = FT.lock_hint_prefix..keyCode.Name
     end
     -- Reconectar listener de lock para que tome la nueva tecla
     if flyanim.lockConn then flyanim.lockConn:Disconnect(); flyanim.lockConn = nil end
