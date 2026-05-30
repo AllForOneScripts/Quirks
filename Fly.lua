@@ -421,10 +421,13 @@ local function startTeleportGuard()
 
         local now = tick()
         if flyanim.lastSafePos then
-            local delta = (pos - flyanim.lastSafePos).Magnitude
-            local elapsed = now - flyanim.lastSafeTime
+            local delta    = pos - flyanim.lastSafePos
+            local elapsed  = now - flyanim.lastSafeTime
             if elapsed > 0 then
-                local impliedSpeed = delta / elapsed
+                -- Solo medir desplazamiento HORIZONTAL para detectar TP forzado.
+                -- El desplazamiento vertical (caída libre) nunca debe contar.
+                local horizDelta   = Vector3.new(delta.X, 0, delta.Z).Magnitude
+                local impliedSpeed = horizDelta / elapsed
                 local maxLegit = math.max(
                     BASE_SPEED * TURBO_MULT * 2,
                     flyanim.DASH_SPEED * 2,
