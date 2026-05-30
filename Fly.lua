@@ -1496,11 +1496,9 @@ local function detenerPoseMega()
     detenerWatchdogAltura()
     restaurarC0Inmediato()
 end
-
 -- ============================================================
 -- MOVIMIENTO
 -- ============================================================
-
 local function getMovDir()
     local w = flyanim.wDown; local s = flyanim.sDown
     local a = flyanim.aDown; local d = flyanim.dDown
@@ -1523,13 +1521,10 @@ local function updateAnimForMovement()
     if flyanim.isBlocking   then return end
 
     if mode == "normal" then
-        local nt = flyanim.normalTracks
-        if not nt.mov_forward then
-            if not moving then playAnim(ANIM.idle, true)
-            elseif dir == "right" then playAnim(ANIM.right, true)
-            elseif dir == "left"  then playAnim(ANIM.left, true)
-            elseif dir == "back"  then playAnim(ANIM.back, true)
-            else playAnim(ANIM.forward, true) end
+        -- Siempre delegar a evaluarMovimientoNormal para que
+        -- los tracks de W/A/S/D se actualicen correctamente
+        if not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
+            evaluarMovimientoNormal()
         end
     elseif mode == "fast" then
         if flyanim.turboRenderConn then return end
@@ -1656,10 +1651,8 @@ local function startAnomalyProtection()
 
         local now = tick()
         local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
 
-        -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
             if flyanim.lastKnownPos then
@@ -1683,30 +1676,33 @@ local function startAnomalyProtection()
 
         local isAnomaly = false
 
-        if speed > ANOMALY_SPEED_THRESHOLD and speed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+        -- Solo velocidad horizontal excesiva cuenta como anomalía.
+        -- Ignorar vel.Y negativa (caída libre) completamente.
+        local horizSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+        if horizSpeed > ANOMALY_SPEED_THRESHOLD and horizSpeed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
         end
 
-        -- ============================================================
-        -- FIX BUG 2: Solo vel.Y POSITIVA (hacia arriba) es anomalía.
-        -- vel.Y negativa = caída libre normal, NO debe disparar TP.
-        -- Antes: math.abs(vel.Y) > THRESHOLD → atrapaba caídas rápidas
-        -- Ahora: vel.Y > THRESHOLD → solo impulsos hacia arriba anómalos
-        -- ============================================================
+        -- Solo impulso hacia ARRIBA anómalo (vel.Y positiva y alta).
+        -- vel.Y negativa = caída libre normal, NUNCA es anomalía.
         if not flyanim.megaTurboUpActive and vel.Y > ANOMALY_VERT_THRESHOLD and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
         end
 
+        -- Teletransporte horizontal: solo medir desplazamiento en XZ,
+        -- ignorar que el personaje caiga rápido en Y.
         if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
+            local delta     = root.Position - flyanim.lastKnownPos
+            local horizDelta = Vector3.new(delta.X, 0, delta.Z).Magnitude
             local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
-            if posDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
+            if horizDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
                 if flyanim.dashTimer <= 0 then
                     isAnomaly = true
                 end
             end
         end
 
+        -- Ragdoll forzado por el juego
         if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
         end
@@ -3753,7 +3749,7 @@ local function _flyOn()
         end
     end)
 
-    if flyanim.rsConn then flyanim.rsConn:Disconnect() end
+if flyanim.rsConn then flyanim.rsConn:Disconnect() end
     flyanim.rsConn = RunService.RenderStepped:Connect(function(dt)
         if not flyanim.enabled then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         local cc   = lplr.Character
@@ -3837,19 +3833,20 @@ local function _flyOn()
             end
         end
 
-        updateAnimForMovement()
+        -- Actualizar animaciones de movimiento cada frame para modo normal
+        if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
+        and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
+            evaluarMovimientoNormal()
+        else
+            updateAnimForMovement()
+        end
     end)
 end
 
 local function _flyOff()
     local char = lplr.Character
 
-    -- ============================================================
-    -- FIX BUG 1 (OFF): Cancelar watchdog y restaurar C0 PRIMERO,
-    -- de forma inmediata y síncrona, antes de tocar nada más.
-    -- Esto garantiza que no quede ningún loop corrigiendo el C0
-    -- después del apagado, sin importar el estado en que estemos.
-    -- ============================================================
+    -- Cancelar watchdog y C0 de forma inmediata y síncrona PRIMERO
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     flyanim.c0HeightToken  = (flyanim.c0HeightToken or 0) + 1
     if flyanim.c0HeightConn then
@@ -3857,7 +3854,6 @@ local function _flyOff()
         flyanim.c0HeightConn = nil
     end
     clearC0Desired()
-    -- Restaurar C0 inmediatamente de forma síncrona
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
@@ -3915,7 +3911,6 @@ local function _flyOff()
     local rootCurrent = charCurrent and charCurrent:FindFirstChild("HumanoidRootPart")
     local hum = charCurrent and charCurrent:FindFirstChildOfClass("Humanoid")
 
-    -- C0 ya fue restaurado al inicio de _flyOff, pero por seguridad lo confirmamos
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
