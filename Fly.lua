@@ -1,4 +1,4 @@
-print("version 1.11 fly")
+print("version 1.12 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -322,6 +322,11 @@ local flyanim = {
 local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
 -- Token para cancelar tweens de compensación de altura en vuelo
 local heightTweenToken = 0
+-- Token para cancelar la animación épica de caída si se reactiva fly
+local landAnimToken = 0
+-- Referencias a las animaciones de caída activas (para pararlas desde _flyOn)
+local activeLandBase    = nil
+local activeLandOverlay = nil
 
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
@@ -2649,6 +2654,12 @@ local function doLanding(char)
         landBase.Looped    = true
         landOverlay.Looped = true
 
+        -- Registrar referencias globales para poder cancelarlas desde _flyOn
+        activeLandBase    = landBase
+        activeLandOverlay = landOverlay
+        -- Capturar token actual; si _flyOn lo incrementa, abortamos
+        local myLandToken = landAnimToken
+
         pcall(function() landBase:Stop(0); landOverlay:Stop(0) end)
         pcall(function() landBase:Play(0.0, 1, 1) end)
         pcall(function() landOverlay:Play(0.0, 1, 1) end)
@@ -2657,6 +2668,7 @@ local function doLanding(char)
         pcall(function() landOverlay:AdjustSpeed(8.0) end)
 
         task.wait(0.06)
+        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
 
         pcall(function() landBase:AdjustSpeed(0) end)
         pcall(function() landOverlay:AdjustSpeed(0) end)
@@ -2665,12 +2677,16 @@ local function doLanding(char)
         shakeCamera(shakeIntensity, 0.30)
 
         task.wait(0.30)
+        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(0.3); landOverlay:AdjustSpeed(0.3) end)
         task.wait(0.45)
+        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(1.0); landOverlay:AdjustSpeed(1.0) end)
         task.wait(0.3)
+        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:Stop(0.5); landOverlay:Stop(0.5) end)
         task.wait(0.5)
+        if landAnimToken ~= myLandToken then landAnimConn:Disconnect(); return end
 
         landAnimConn:Disconnect()
 
@@ -2678,6 +2694,9 @@ local function doLanding(char)
 
         pcall(function() landBase:Destroy() end)
         pcall(function() landOverlay:Destroy() end)
+        -- Limpiar referencias globales solo si siguen siendo las nuestras
+        if activeLandBase == landBase    then activeLandBase    = nil end
+        if activeLandOverlay == landOverlay then activeLandOverlay = nil end
     else
         -- Caída leve: solo efectos, sin animación larga
         local shakeIntensity = 0.8 + (math.clamp(altura, 10, 25) - 10) / 15 * 1.2
@@ -3710,6 +3729,16 @@ local function _flyOn()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
+    -- Cancelar animaciones de caída épica activas (landBase/landOverlay en doLanding)
+    landAnimToken = landAnimToken + 1
+    if activeLandBase and activeLandBase.Parent ~= nil then
+        pcall(function() activeLandBase:Stop(0) end)
+    end
+    if activeLandOverlay and activeLandOverlay.Parent ~= nil then
+        pcall(function() activeLandOverlay:Stop(0) end)
+    end
+    activeLandBase    = nil
+    activeLandOverlay = nil
     -- Cancelar cualquier tween de compensación de altura en curso
     heightTweenToken = heightTweenToken + 1
     flyanim.enabled = true
@@ -3860,7 +3889,8 @@ local function _flyOn()
         if flyanim.mode == "normal" and not flyanim.comboPlaying and not flyanim.isBlocking
             and not flyanim.isSpaceAdv and not flyanim.turboPreImpulsoActivo then
             if prevW ~= wD or prevS ~= sD or prevA ~= aD or prevD ~= dD then
-                evaluarMovimientoNormal()
+                -- Usar debounce para evitar race conditions con los loops de lateral/atrás
+                evaluarMovimientoDebounced()
             end
         end
 
@@ -4023,6 +4053,19 @@ local function _flyOff()
     if rootCurrent then
         for _, part in ipairs(charCurrent:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+
+    -- FIX REBOTE: resetear velocidad vertical ANTES de Freefall para que el personaje
+    -- caiga normalmente y no suba al desactivar fly. Conservar solo la velocidad horizontal
+    -- para que los dashes/inercia lateral sigan funcionando.
+    if rootCurrent then
+        local vel = rootCurrent.AssemblyLinearVelocity
+        -- Solo zeroeamos el componente Y positivo (hacia arriba), no el negativo (caída legítima)
+        if vel.Y > 0 then
+            pcall(function()
+                rootCurrent.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+            end)
         end
     end
 
@@ -4331,6 +4374,9 @@ local function _connectGlobal()
         flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
         c0DesiredCFrame = nil
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
+        landAnimToken    = landAnimToken + 1     -- cancelar animación épica de caída al respawn
+        activeLandBase    = nil
+        activeLandOverlay = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
