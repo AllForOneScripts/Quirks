@@ -3,12 +3,12 @@ local UserInputService = game:GetService("UserInputService")
 local _conn = nil
 local _lplr = nil
 local _keys = nil
-local _flyModule = nil  -- referencia al módulo Fly
+local _flyModule = nil
 
 function M.Start(Keys, lplr, flyModuleRef)
     _keys = Keys
     _lplr = lplr
-    _flyModule = flyModuleRef  -- puede ser nil si Fly no está cargado
+    _flyModule = flyModuleRef
     if _conn then _conn:Disconnect() end
     local mouse = lplr:GetMouse()
     _conn = UserInputService.InputBegan:Connect(function(input, gpe)
@@ -17,9 +17,10 @@ function M.Start(Keys, lplr, flyModuleRef)
             local char = _lplr.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             if hrp and mouse.Target then
-                -- Notificar al módulo Fly antes del TP
-                if _flyModule and _flyModule.Bypass then
-                    _flyModule.Bypass(0.5, "teleport")
+                -- Bypass: notificar a Fly antes del TP
+                local _fm = _flyModule or rawget(getgenv(), "_AFO_FLY_MODULE")
+                if _fm and _fm.Bypass then
+                    _fm.Bypass(0.5, "teleport")
                 end
                 hrp.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 5, 0))
             end
