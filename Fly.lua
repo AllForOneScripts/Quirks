@@ -1,4 +1,4 @@
-print("version 1.26 fly")
+print("version 1.27 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -82,7 +82,6 @@ local ANIM = {
     back            = "rbxassetid://92646687237670",
     right           = "rbxassetid://113592486960274",
     left            = "rbxassetid://133459589582592",
-    diagonal        = "rbxassetid://101776150450756",
     estatica        = "rbxassetid://97171309",
     levitacion      = "rbxassetid://313762630",
     brazos_idle     = "rbxassetid://159223413",
@@ -105,9 +104,6 @@ local ANIM = {
     turbo_enter     = "rbxassetid://116114386574305",
     turbo_loop      = "rbxassetid://126091881048662",
     turbo_idle      = "rbxassetid://107048806104233",
-    landing         = "rbxassetid://72842336781973",
-    caida_base      = "rbxassetid://287325678",
-    caida_overlay   = "rbxassetid://70439247",
     combo1          = "rbxassetid://204062532",
     combo2a         = "rbxassetid://218504594",
     combo2b         = "rbxassetid://218504594",
@@ -115,7 +111,6 @@ local ANIM = {
     combo3b         = "rbxassetid://218504594",
     combo4          = "rbxassetid://2954124238",
     combo4_space    = "rbxassetid://45828430",
-    combo4_f        = "rbxassetid://83689877448729",
     sq_anim         = "rbxassetid://82718659527221",
     dq_anim         = "rbxassetid://93831708296422",
     bloqueo         = "rbxassetid://107456513",
@@ -147,11 +142,43 @@ local DEFAULT_BASE  = 60
 local DEFAULT_FAST  = 3.0
 local DEFAULT_TURBO = 6.0
 
-local ROBLOX_GRAVITY = 196.2
 local LOCK_ROTATION_SMOOTH = 0.8
 
 -- Límite de coordenadas para detectar teletransporte anómalo
 local COORD_SANITY_LIMIT = 50000
+
+-- ============================================================
+-- SISTEMA DE ACCIÓN NO ANÓMALA (TrustedAction)
+-- Ventana retroactiva: cubre DESDE _trustedFrom HASTA _trustedUntil.
+-- Así funciona aunque el TP ocurra ligeramente antes de la llamada.
+-- ============================================================
+local _trustedFrom   = 0   -- tick() desde el que la ventana es válida (retroactivo)
+local _trustedUntil  = 0   -- tick() hasta el que los guards están suspendidos
+local _trustedReason = ""
+
+local TRUSTED_LOOKBACK = 0.15  -- ventana retroactiva en segundos
+
+local function isTrustedAction()
+    local now = tick()
+    return now >= _trustedFrom and now < _trustedUntil
+end
+
+-- Fuerza actualización de las posiciones seguras con la posición actual.
+-- Se llama desde TrustedAction para que los guards no reviertan el TP.
+local function _flushSafePos()
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local pos = root.Position
+    -- Sólo actualizar si la posición no es absurda
+    if math.abs(pos.X) < COORD_SANITY_LIMIT
+    and math.abs(pos.Y) < COORD_SANITY_LIMIT
+    and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+        flyanim.lastSafePos  = pos
+        flyanim.lastSafeTime = tick()
+        flyanim.lastKnownPos = pos
+    end
+end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -299,12 +326,9 @@ local flyanim = {
     originalGyroP        = nil,
     originalGyroMaxTorque = nil,
     backupGyro           = nil,
-    antiOrbitTimer       = nil,
 
     lastKnownPos         = nil,
     anomalyConn          = nil,
-    anomalyFixActive     = false,
-    anomalyFixConn       = nil,
     ragdollDetected      = false,
 
     animBlockRenderConn  = nil,
@@ -357,7 +381,6 @@ local flyanim = {
     turboTransitioning = false,
     megaRenderConn    = nil,
     megaTransitioning = false,
-    poseOriginalC0    = nil,
     _normalPlayId     = 0,
 
     turboPreImpulsoActivo = false,
@@ -403,35 +426,6 @@ local function restaurarC0Inmediato()
     clearC0Desired()
 end
 
-local function restaurarC0Suave(duracion)
-    if not flyanim.rootJoint or not flyanim.originalC0 then return end
-    local rj = flyanim.rootJoint
-    local oc = flyanim.originalC0
-    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-    local myToken = flyanim.c0ControlToken
-    clearC0Desired()
-    task.spawn(function()
-        local startT = tick()
-        local startC0 = rj.C0
-        while tick() - startT < (duracion or 0.3) do
-            if flyanim.c0ControlToken ~= myToken then return end
-            local t = (tick() - startT) / (duracion or 0.3)
-            pcall(function() rj.C0 = startC0:Lerp(oc, t) end)
-            task.wait()
-        end
-        if flyanim.c0ControlToken == myToken then
-            pcall(function() rj.C0 = oc end)
-        end
-    end)
-end
-
--- Aplica el CFrame deseado con corrección robusta
-local function aplicarC0Robusto(cf)
-    if not flyanim.rootJoint then return end
-    setC0Desired(cf)
-    pcall(function() flyanim.rootJoint.C0 = cf end)
-end
-
 -- ============================================================
 -- SISTEMA ANTI-TELETRANSPORTE FORZADO
 -- Detecta cuando el personaje es teletransportado a coordenadas
@@ -465,6 +459,13 @@ local function startTeleportGuard()
 
         local pos = root.Position
 
+        -- Si hay una acción marcada como legítima, actualizar posición segura sin corregir
+        if isTrustedAction() then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+            return
+        end
+
         -- Detectar coordenadas absolutamente absurdas (caída al void, etc.)
         local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
                       or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
@@ -476,11 +477,22 @@ local function startTeleportGuard()
             -- Recuperar a última posición segura
             local safePos = flyanim.lastSafePos
             if safePos then
+                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
                 pcall(function()
-                    root.CFrame = CFrame.new(safePos + Vector3.new(0, 5, 0))
+                    root.CFrame = targetCF
                     root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                     root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end)
+                -- Anclar cámara brevemente para evitar parpadeo
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local camCF = cam.CFrame
+                    task.defer(function()
+                        if cam and cam.Parent then
+                            cam.CFrame = camCF
+                        end
+                    end)
+                end
                 -- Resetear dash para que no siga empujando
                 flyanim.dashTimer = 0
                 flyanim.dashVel   = Vector3.new(0, 0, 0)
@@ -514,11 +526,20 @@ local function startTeleportGuard()
                 )
                 if not isFalling and impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
                     -- Teletransporte forzado detectado - devolver a posición segura
+                    local recovCF = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
+                    local cam = workspace.CurrentCamera
+                    local camCF = cam and cam.CFrame
                     pcall(function()
-                        root.CFrame = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
+                        root.CFrame = recovCF
                         root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                         root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end)
+                    -- Restaurar cámara en el mismo frame para que no salte
+                    if cam and camCF then
+                        task.defer(function()
+                            if cam and cam.Parent then cam.CFrame = camCF end
+                        end)
+                    end
                     if not root:FindFirstChildOfClass("BodyGyro") then
                         pcall(_flyMakeMotors)
                     end
@@ -1079,16 +1100,6 @@ local function evaluarMovimientoDebounced()
     task.delay(ANIM_NORMAL.DEBOUNCE_TECLADO, function()
         if flyanim.evalToken == token then evaluarMovimientoNormal() end
     end)
-end
-
-local function iniciarEspacioPrimario()
-    if not flyanim.enabled or flyanim.mode ~= "normal" then return end
-    local nt = flyanim.normalTracks
-    if not nt.espacio_prim then return end
-    detenerEspacioAvanzado()
-    detenerNormalExceptoBase(0.1)
-    pcall(function() nt.espacio_prim:Play(0.1) end)
-    flyanim.espacioTrackActivo = nt.espacio_prim
 end
 
 local function cambiarAEspacioSecundario()
@@ -1722,7 +1733,6 @@ local function activateGyroProtection()
 end
 
 local ANOMALY_SPEED_THRESHOLD  = 300
-local ANOMALY_VERT_THRESHOLD   = 250
 local ANOMALY_TELEPORT_STUDS   = 40
 local ANOMALY_COOLDOWN         = 0.12
 
@@ -1761,6 +1771,12 @@ local function startAnomalyProtection()
         local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
 
+        -- Si hay una acción marcada como legítima, actualizar lastKnownPos sin corregir
+        if isTrustedAction() then
+            flyanim.lastKnownPos = root.Position
+            return
+        end
+
         -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
@@ -1789,10 +1805,6 @@ local function startAnomalyProtection()
             isAnomaly = true
         end
 
-        -- NOTA: eliminado el check de ANOMALY_VERT_THRESHOLD porque disparaba TP
-        -- hacia arriba cuando el personaje caía con velocidad Y alta al desactivar el vuelo.
-        -- La caída libre normal puede generar vel.Y > 250 y no es una anomalía.
-
         if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
             local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
@@ -1814,6 +1826,10 @@ local function startAnomalyProtection()
             lastAnomalyFix = now
             flyanim.ragdollDetected = true
 
+            -- Capturar posición de cámara ANTES de mover el personaje
+            local cam = workspace.CurrentCamera
+            local camCF = cam and cam.CFrame
+
             -- Si la posición actual es absurda y hay lastKnownPos, volver ahí
             local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
 
@@ -1822,6 +1838,13 @@ local function startAnomalyProtection()
 
             if recoverPos then
                 pcall(function() root.CFrame = CFrame.new(recoverPos) end)
+            end
+
+            -- Restaurar cámara en el siguiente frame para evitar parpadeo/salto
+            if cam and camCF then
+                task.defer(function()
+                    if cam and cam.Parent then cam.CFrame = camCF end
+                end)
             end
 
             flyanim.dashTimer = 0
