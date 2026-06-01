@@ -1,4 +1,4 @@
-print("version 1.45 fly")
+print("version 1.47 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -1075,7 +1075,10 @@ local function manejarEspacioPresionadoNormal()
     if nt.mov_back    and nt.mov_back.IsPlaying    then pcall(function() nt.mov_back:Stop(0.1) end) end
     if nt.lateral     and nt.lateral.IsPlaying     then pcall(function() nt.lateral:Stop(0.1) end) end
     if nt.mov_brazos  and nt.mov_brazos.IsPlaying  then pcall(function() nt.mov_brazos:Stop(0.1) end) end
-    if nt.brazos      and nt.brazos.IsPlaying      then pcall(function() nt.brazos:Stop(0.1) end) end
+    -- Cerrar brazos inmediatamente al activar up: fade rápido (0.05s) y resetear timer
+    if nt.brazos and nt.brazos.IsPlaying then pcall(function() nt.brazos:Stop(0.05) end) end
+    flyanim.isBrazosActive = false
+    flyanim.idleTimerAnim  = 0
     flyanim.currentAtrasId  = flyanim.currentAtrasId  + 1; flyanim.atrasKilled   = true
     flyanim.currentLateralId = flyanim.currentLateralId + 1; flyanim.lateralKilled = true
 
@@ -1168,7 +1171,10 @@ iniciarCicloNormal = function(thisPlay)
                 end
             end)
         end
-        local isMovingAdv = flyanim.isWDown or flyanim.isSDown or flyanim.isADown or flyanim.isDDown or flyanim.isSpaceAdv
+        -- Spacio (up) y MegaTurboUp cuentan como movimiento: el timer de brazos
+        -- se detiene y si los brazos ya están abiertos se cierran inmediatamente.
+        local isMovingAdv = flyanim.isWDown or flyanim.isSDown or flyanim.isADown or flyanim.isDDown
+            or flyanim.isSpaceAdv or flyanim.megaTurboUpActive
         if not isMovingAdv then
             flyanim.idleTimerAnim += dt
             if flyanim.idleTimerAnim >= ANIM_NORMAL.TIEMPO_QUIETO and not flyanim.isBrazosActive then
@@ -1179,7 +1185,9 @@ iniciarCicloNormal = function(thisPlay)
             flyanim.idleTimerAnim = 0
             if flyanim.isBrazosActive then
                 flyanim.isBrazosActive = false
-                if nt.brazos then pcall(function() nt.brazos:Stop(ANIM_NORMAL.TIEMPO_TRANSICION) end) end
+                -- Fade rápido al cerrar por up/megaup para que no se vea el brazo a medias
+                local fadeBrazos = (flyanim.isSpaceAdv or flyanim.megaTurboUpActive) and 0.05 or ANIM_NORMAL.TIEMPO_TRANSICION
+                if nt.brazos then pcall(function() nt.brazos:Stop(fadeBrazos) end) end
             end
         end
     end)
@@ -1456,6 +1464,7 @@ local function iniciarPoseTurbo()
                     pcall(function() ntl.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION) end)
                 end
                 local isMovingAdv = flyanim.isWDown or flyanim.isSDown or flyanim.isADown or flyanim.isDDown
+                    or flyanim.megaTurboUpActive
                 if not isMovingAdv then
                     flyanim.idleTimerAnim += dt
                     if flyanim.idleTimerAnim >= ANIM_NORMAL.TIEMPO_QUIETO and not flyanim.isBrazosActive then
@@ -1466,7 +1475,9 @@ local function iniciarPoseTurbo()
                     flyanim.idleTimerAnim = 0
                     if flyanim.isBrazosActive then
                         flyanim.isBrazosActive = false
-                        if ntl.brazos then pcall(function() ntl.brazos:Stop(ANIM_NORMAL.TIEMPO_TRANSICION) end) end
+                        -- Fade rápido al activarse megaTurboUp
+                        local fadeBrazos = flyanim.megaTurboUpActive and 0.05 or ANIM_NORMAL.TIEMPO_TRANSICION
+                        if ntl.brazos then pcall(function() ntl.brazos:Stop(fadeBrazos) end) end
                     end
                 end
             end)
@@ -2226,36 +2237,51 @@ local function spawnLandingEffects(position, velocity)
     local intensity = math.clamp(velocity, 25, 180)
     local t = (intensity - 25) / 155
 
+    -- Escala general de humo y sonido
     local smokeScale    = 0.8 + t * 1.8
-    local smokeAlpha    = 0.10 + t * 0.20
-    local smokeAlphaEnd = 0.68 + t * 0.22
     local soundVol      = 0.30 + t * 0.55
 
-    -- DOBLE de piedras desde cualquier caída, escalado con altura, máximo 28 sin lag
-    -- Mínimo 4 rocas (era 0 hasta intensity<60), máximo 28 (era 14 antes del doble)
-    local numRocks = math.floor(4 + t * 24)  -- rango: 4 a 28
-    numRocks = math.min(numRocks, 28)         -- hard cap anti-lag
+    -- Parámetros cinemáticos de humo épico:
+    -- Arranca casi opaco (presencia fuerte) y desvanece muy lentamente
+    local smokeAlphaStart = 0.02 + t * 0.06   -- casi sólido al aparecer
+    local smokeAlphaEnd   = 0.82 + t * 0.14   -- desvanece a casi transparente
+    local smokeDuration   = 1.10 + t * 0.60   -- dura más en caídas épicas
 
-    -- Encontrar la Y real del suelo bajo el punto de impacto
-    -- position es el centro del HRP (~3 studs sobre el suelo); sin esto
-    -- los efectos flotan en el aire en vez de aparecer en la superficie.
-    local groundY = position.Y  -- fallback si no hay suelo detectable
-    do
-        local char = lplr.Character
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        if char then rp.FilterDescendantsInstances = {char} end
-        local hit = workspace:Raycast(position, Vector3.new(0, -8, 0), rp)
-        if hit then
-            groundY = hit.Position.Y
-        end
-    end
-    local groundPos = Vector3.new(position.X, groundY, position.Z)
+    local numRocks = math.floor(4 + t * 24)
+    numRocks = math.min(numRocks, 28)
 
-    local DUST_COLOR       = Color3.fromRGB(185, 180, 175)
-    local DUST_COLOR_INNER = Color3.fromRGB(210, 207, 205)
+    -- ── Delay para esperar que el personaje esté EN el suelo ────────────────
+    -- El personaje llega a Landed y luego se llama spawnLandingEffects;
+    -- el HRP aún puede estar unos studs sobre la superficie real.
+    -- Esperamos 1 frame para que la física siente al personaje y luego
+    -- hacemos el raycast desde la posición ya asentada.
+    local EFFECT_DELAY = 0.06   -- segundos de espera antes de spawnear efectos
 
     task.spawn(function()
+        task.wait(EFFECT_DELAY)
+
+        -- Recalcular groundPos desde la posición actual del personaje
+        -- (puede haber cambiado ligeramente tras el asentamiento)
+        local char = lplr.Character
+        local hrpNow = char and char:FindFirstChild("HumanoidRootPart")
+        local samplePos = hrpNow and hrpNow.Position or position
+
+        local groundY = samplePos.Y
+        do
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            if char then rp.FilterDescendantsInstances = {char} end
+            local hit = workspace:Raycast(samplePos, Vector3.new(0, -8, 0), rp)
+            if hit then groundY = hit.Position.Y end
+        end
+        local groundPos = Vector3.new(samplePos.X, groundY, samplePos.Z)
+
+        -- Colores de polvo épico (ligeramente más oscuros y saturados)
+        local DUST_COLOR        = Color3.fromRGB(160, 152, 140)
+        local DUST_COLOR_INNER  = Color3.fromRGB(200, 192, 182)
+        local DUST_COLOR_BILLOW = Color3.fromRGB(120, 112, 100)   -- capa de billow oscura
+
+        -- Sonido
         local snd = Instance.new("Sound")
         snd.SoundId = SFX_LANDING
         snd.Volume  = soundVol
@@ -2264,97 +2290,142 @@ local function spawnLandingEffects(position, velocity)
         snd:Play()
         snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
-    end)
 
-    -- Anillo principal de humo
-    task.spawn(function()
-        local ringSize = smokeScale * 9
-        local p = Instance.new("Part")
-        p.Anchored    = true; p.CanCollide  = false; p.CanTouch = false; p.CastShadow = false
-        p.Transparency = 1; p.Size = Vector3.new(ringSize, ringSize, 0.05)
-        p.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.12, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-        p.Parent = workspace
+        -- ── CAPA 0: flash de impacto (anillo fino e instantáneo) ─────────────
+        -- Aparece y se disuelve muy rápido para dar el "golpe" visual
+        task.spawn(function()
+            local flashSize = smokeScale * 6
+            local pf = Instance.new("Part")
+            pf.Anchored = true; pf.CanCollide = false; pf.CanTouch = false; pf.CastShadow = false
+            pf.Transparency = 1; pf.Size = Vector3.new(flashSize, flashSize, 0.05)
+            pf.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            pf.Parent = workspace
+            local sgf = Instance.new("SurfaceGui", pf)
+            sgf.Adornee = pf; sgf.Face = Enum.NormalId.Front; sgf.AlwaysOnTop = false
+            sgf.LightInfluence = 0; sgf.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sgf.PixelsPerStud = 40
+            local imgf = Instance.new("ImageLabel", sgf)
+            imgf.Image = SMOKE_RING_TEX; imgf.Size = UDim2.new(1,0,1,0); imgf.BackgroundTransparency = 1
+            imgf.ImageColor3 = Color3.fromRGB(230, 225, 218); imgf.ImageTransparency = 0.0; imgf.ScaleType = Enum.ScaleType.Fit
+            local flashPeak = flashSize * (3.5 + t * 1.5)
+            TweenService:Create(pf, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = Vector3.new(flashPeak, flashPeak, 0.05)}):Play()
+            TweenService:Create(imgf, TweenInfo.new(0.22, Enum.EasingStyle.Expo, Enum.EasingDirection.In),
+                {ImageTransparency = 1}):Play()
+            task.delay(0.25, function() pcall(function() pf:Destroy() end) end)
+        end)
 
-        local sg = Instance.new("SurfaceGui", p)
-        sg.Adornee = p; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = false
-        sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 40
+        -- ── CAPA 1: anillo principal de humo épico (grande, lento, persistente) ─
+        task.spawn(function()
+            local ringSize = smokeScale * 10
+            local p = Instance.new("Part")
+            p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CastShadow = false
+            p.Transparency = 1; p.Size = Vector3.new(ringSize, ringSize, 0.05)
+            p.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.14, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p.Parent = workspace
+            local sg = Instance.new("SurfaceGui", p)
+            sg.Adornee = p; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = false
+            sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 40
+            local img = Instance.new("ImageLabel", sg)
+            img.Image = SMOKE_RING_TEX; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
+            img.ImageColor3 = DUST_COLOR; img.ImageTransparency = smokeAlphaStart; img.ScaleType = Enum.ScaleType.Fit
+            local peakSize = ringSize * (3.2 + t * 2.5)
+            TweenService:Create(p, TweenInfo.new(smokeDuration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
+            TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = smokeAlphaEnd}):Play()
+            task.delay(smokeDuration + 0.05, function() pcall(function() p:Destroy() end) end)
+        end)
 
-        local img = Instance.new("ImageLabel", sg)
-        img.Image = SMOKE_RING_TEX; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
-        img.ImageColor3 = DUST_COLOR; img.ImageTransparency = smokeAlpha; img.ScaleType = Enum.ScaleType.Fit
+        -- ── CAPA 2: anillo de billow oscuro (sale antes, da profundidad) ──────
+        task.spawn(function()
+            task.wait(0.03)
+            local ringSize2 = smokeScale * 7
+            local p2 = Instance.new("Part")
+            p2.Anchored = true; p2.CanCollide = false; p2.CanTouch = false; p2.CastShadow = false
+            p2.Transparency = 1; p2.Size = Vector3.new(ringSize2, ringSize2, 0.05)
+            p2.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.10, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p2.Parent = workspace
+            local sg2 = Instance.new("SurfaceGui", p2)
+            sg2.Adornee = p2; sg2.Face = Enum.NormalId.Front; sg2.AlwaysOnTop = false
+            sg2.LightInfluence = 0; sg2.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud = 40
+            local img2 = Instance.new("ImageLabel", sg2)
+            img2.Image = SMOKE_RING_TEX; img2.Size = UDim2.new(1,0,1,0); img2.BackgroundTransparency = 1
+            img2.ImageColor3 = DUST_COLOR_BILLOW
+            img2.ImageTransparency = smokeAlphaStart + 0.08; img2.ScaleType = Enum.ScaleType.Fit
+            local dur2 = smokeDuration * 0.75
+            local peakSize2 = ringSize2 * (2.4 + t * 1.8)
+            TweenService:Create(p2, TweenInfo.new(dur2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = Vector3.new(peakSize2, peakSize2, 0.05)}):Play()
+            TweenService:Create(img2, TweenInfo.new(dur2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = smokeAlphaEnd + 0.08}):Play()
+            task.delay(dur2 + 0.05, function() pcall(function() p2:Destroy() end) end)
+        end)
 
-        local peakSize = ringSize * (2.5 + t * 2.0)
-        TweenService:Create(p, TweenInfo.new(0.65, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
-        TweenService:Create(img, TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-            {ImageTransparency = smokeAlphaEnd}):Play()
-        task.delay(0.70, function() pcall(function() p:Destroy() end) end)
-    end)
+        -- ── CAPA 3: anillo interior luminoso (da sensación de explosión de aire) ─
+        task.spawn(function()
+            task.wait(0.07)
+            local ringSize3 = smokeScale * 4
+            local p3 = Instance.new("Part")
+            p3.Anchored = true; p3.CanCollide = false; p3.CanTouch = false; p3.CastShadow = false
+            p3.Transparency = 1; p3.Size = Vector3.new(ringSize3, ringSize3, 0.05)
+            p3.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p3.Parent = workspace
+            local sg3 = Instance.new("SurfaceGui", p3)
+            sg3.Adornee = p3; sg3.Face = Enum.NormalId.Front; sg3.AlwaysOnTop = false
+            sg3.LightInfluence = 0; sg3.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg3.PixelsPerStud = 40
+            local img3 = Instance.new("ImageLabel", sg3)
+            img3.Image = SMOKE_RING_TEX; img3.Size = UDim2.new(1,0,1,0); img3.BackgroundTransparency = 1
+            img3.ImageColor3 = DUST_COLOR_INNER
+            img3.ImageTransparency = smokeAlphaStart - 0.01; img3.ScaleType = Enum.ScaleType.Fit
+            local dur3 = smokeDuration * 0.55
+            local peakSize3 = ringSize3 * (2.0 + t * 1.4)
+            TweenService:Create(p3, TweenInfo.new(dur3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = Vector3.new(peakSize3, peakSize3, 0.05)}):Play()
+            TweenService:Create(img3, TweenInfo.new(dur3, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = smokeAlphaEnd - 0.06}):Play()
+            task.delay(dur3 + 0.05, function() pcall(function() p3:Destroy() end) end)
+        end)
 
-    -- Segundo anillo mas pequeno
-    task.spawn(function()
-        task.wait(0.05)
-        local ringSize2 = smokeScale * 5
-        local p2 = Instance.new("Part")
-        p2.Anchored = true; p2.CanCollide = false; p2.CanTouch = false; p2.CastShadow = false
-        p2.Transparency = 1; p2.Size = Vector3.new(ringSize2, ringSize2, 0.05)
-        p2.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.07, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-        p2.Parent = workspace
-        local sg2 = Instance.new("SurfaceGui", p2)
-        sg2.Adornee = p2; sg2.Face = Enum.NormalId.Front; sg2.AlwaysOnTop = false
-        sg2.LightInfluence = 0; sg2.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud = 40
-        local img2 = Instance.new("ImageLabel", sg2)
-        img2.Image = SMOKE_RING_TEX; img2.Size = UDim2.new(1,0,1,0); img2.BackgroundTransparency = 1
-        img2.ImageColor3 = DUST_COLOR_INNER
-        img2.ImageTransparency = smokeAlpha + 0.10; img2.ScaleType = Enum.ScaleType.Fit
-        local peakSize2 = ringSize2 * (2.0 + t * 1.5)
-        TweenService:Create(p2, TweenInfo.new(0.50, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size = Vector3.new(peakSize2, peakSize2, 0.05)}):Play()
-        TweenService:Create(img2, TweenInfo.new(0.50, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-            {ImageTransparency = smokeAlphaEnd + 0.10}):Play()
-        task.delay(0.55, function() pcall(function() p2:Destroy() end) end)
-    end)
-
-    -- Piedrecitas: siempre presentes, doble cantidad, escalado con intensidad
-    task.spawn(function()
-        local ROCK_BASE = Color3.fromRGB(130, 125, 118)
-        -- Distribuimos las rocas en lotes pequeños para no hacer spike de lag
-        local batchSize = 6
-        local spawned = 0
-        while spawned < numRocks do
-            local thisBatch = math.min(batchSize, numRocks - spawned)
-            for i = 1, thisBatch do
-                task.spawn(function()
-                    local rockSize = 0.08 + math.random() * (0.14 + t * 0.12)
-                    local rock = Instance.new("Part")
-                    rock.Size        = Vector3.new(rockSize, rockSize, rockSize)
-                    rock.Material    = Enum.Material.SmoothPlastic
-                    rock.Color       = ROCK_BASE:Lerp(Color3.fromRGB(160,155,148), math.random() * 0.4)
-                    rock.CanCollide  = false; rock.CanTouch = false; rock.CastShadow = false; rock.Anchored = false
-                    local angle = ((spawned + i) / numRocks) * math.pi * 2 + math.random() * 0.9
-                    local radius = 0.25 + math.random() * 0.75
-                    rock.CFrame  = CFrame.new(
-                        groundPos.X + math.cos(angle) * radius,
-                        groundPos.Y + 0.05,
-                        groundPos.Z + math.sin(angle) * radius
-                    )
-                    rock.Parent = workspace
-                    local outDir = Vector3.new(math.cos(angle), 0.55 + math.random() * 0.9, math.sin(angle)).Unit
-                    local power = (3.5 + t * 9) * (0.65 + math.random() * 0.7)
-                    rock.AssemblyLinearVelocity = outDir * power
-                    local fadeTime = 0.35 + math.random() * 0.35
-                    task.delay(0.04, function()
-                        if not rock or not rock.Parent then return end
-                        TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                            {Transparency = 1}):Play()
-                        task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
+        -- ── Piedrecitas ───────────────────────────────────────────────────────
+        task.spawn(function()
+            local ROCK_BASE = Color3.fromRGB(130, 125, 118)
+            local batchSize = 6
+            local spawned = 0
+            while spawned < numRocks do
+                local thisBatch = math.min(batchSize, numRocks - spawned)
+                for i = 1, thisBatch do
+                    task.spawn(function()
+                        local rockSize = 0.08 + math.random() * (0.14 + t * 0.12)
+                        local rock = Instance.new("Part")
+                        rock.Size        = Vector3.new(rockSize, rockSize, rockSize)
+                        rock.Material    = Enum.Material.SmoothPlastic
+                        rock.Color       = ROCK_BASE:Lerp(Color3.fromRGB(160,155,148), math.random() * 0.4)
+                        rock.CanCollide  = false; rock.CanTouch = false; rock.CastShadow = false; rock.Anchored = false
+                        local angle = ((spawned + i) / numRocks) * math.pi * 2 + math.random() * 0.9
+                        local radius = 0.25 + math.random() * 0.75
+                        rock.CFrame  = CFrame.new(
+                            groundPos.X + math.cos(angle) * radius,
+                            groundPos.Y + 0.05,
+                            groundPos.Z + math.sin(angle) * radius
+                        )
+                        rock.Parent = workspace
+                        local outDir = Vector3.new(math.cos(angle), 0.55 + math.random() * 0.9, math.sin(angle)).Unit
+                        local power = (3.5 + t * 9) * (0.65 + math.random() * 0.7)
+                        rock.AssemblyLinearVelocity = outDir * power
+                        local fadeTime = 0.35 + math.random() * 0.35
+                        task.delay(0.04, function()
+                            if not rock or not rock.Parent then return end
+                            TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                                {Transparency = 1}):Play()
+                            task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
+                        end)
                     end)
-                end)
+                end
+                spawned = spawned + thisBatch
+                if spawned < numRocks then task.wait(0.01) end
             end
-            spawned = spawned + thisBatch
-            if spawned < numRocks then task.wait(0.01) end  -- micro-pausa entre lotes
-        end
-    end)
+        end)
+    end)  -- fin task.spawn EFFECT_DELAY
 end
 
 local function startIdleWatcher()
@@ -3096,6 +3167,15 @@ local function activateMegaTurboUp()
     if flyanim.megaTurboUpActive then return end
     if flyanim.mode == "turbo" then return end
     flyanim.megaTurboUpActive = true
+    -- Cerrar brazos al instante si estaban abiertos
+    if flyanim.isBrazosActive then
+        flyanim.isBrazosActive = false
+        flyanim.idleTimerAnim  = 0
+        local ntMega = flyanim.normalTracks
+        if ntMega.brazos and ntMega.brazos.IsPlaying then
+            pcall(function() ntMega.brazos:Stop(0.05) end)
+        end
+    end
     stopParticleEmitter()
     shakeCamera(3.0, 0.5)
     playLocalSound(SFX_MEGA_TURBO, 0.90)
@@ -3325,6 +3405,32 @@ local function updateLockInfoGui()
                     -- Yo estoy abajo → el target está arriba de mí (peligro)
                     heightLabel.Text = "↑ "..math.abs(heightDiff).." "..FT.height_above
                     heightLabel.TextColor3 = Color3.fromRGB(255,200,100)   -- naranja: peligro
+                    -- TP automático: si el target está por encima de mí y la
+                    -- distancia circular (XZ) es <= 50 studs, teletransportarse
+                    -- a su lado para no quedar atrapado bajo él.
+                    if flyanim.enabled then
+                        local myChar2 = lplr.Character
+                        local myRoot2 = myChar2 and myChar2:FindFirstChild("HumanoidRootPart")
+                        if myRoot2 then
+                            local horDist = Vector3.new(
+                                root.Position.X - myRoot2.Position.X,
+                                0,
+                                root.Position.Z - myRoot2.Position.Z
+                            ).Magnitude
+                            if horDist <= 50 then
+                                -- Posicionarse al lado del target (3 studs detrás de él)
+                                local toTarget = (root.Position - myRoot2.Position)
+                                local toTargetH = Vector3.new(toTarget.X, 0, toTarget.Z)
+                                local behindDir = toTargetH.Magnitude > 0.1
+                                    and -toTargetH.Unit
+                                    or Vector3.new(0, 0, 1)
+                                local tpPos = root.Position + behindDir * 3
+                                pcall(function()
+                                    myRoot2.CFrame = CFrame.new(tpPos, root.Position)
+                                end)
+                            end
+                        end
+                    end
                 else
                     heightLabel.Text = FT.height_same
                     heightLabel.TextColor3 = Color3.fromRGB(150,255,150)
@@ -4214,7 +4320,13 @@ local function _flyOff()
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer); flyanim.gyroProtectionTimer = nil end
 
     -- ── PASO 1: Medir altura antes de apagar ──
+    -- Limpiar compensación de altura INCONDICIONALMENTE al apagar el vuelo.
+    -- Esto cubre el caso edge donde una animación de combo/turbo modifica C0
+    -- y el fly se apaga mientras corre: sin esto el personaje queda con el
+    -- offset de altura aplicado permanentemente.
+    heightTweenToken = heightTweenToken + 1   -- cancelar tweens de altura en curso
     clearC0Desired()
+    detenerWatchdogAltura()
     if flyanim.rootJoint and flyanim.originalC0 then
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
