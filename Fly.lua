@@ -380,6 +380,11 @@ local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
 -- Token para cancelar tweens de compensación de altura en vuelo
 local heightTweenToken = 0
 
+-- Forward declarations para funciones de landing watcher
+-- (definidas más abajo, pero usadas por _flyOn y _charConn que se definen antes)
+local stopLandingWatcher
+local startLandingWatcher
+
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
 end
@@ -769,8 +774,9 @@ local function setupDamageDetector()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     flyanim.damageConn = hum.HealthChanged:Connect(function(newHealth)
-        local oldHealth = hum.Health
-        if newHealth < oldHealth then
+        -- HealthChanged ya trae el nuevo valor; cualquier reducción de HP cuenta como daño
+        -- (hum.Health en este momento ya ES newHealth, no el valor anterior)
+        if newHealth < hum.MaxHealth then  -- si no tiene HP máximo, fue golpeado
             flyanim.lastDamageTime = tick()
             if flyanim.isBlocking then
                 flyanim.isBlocking = false
@@ -1664,7 +1670,59 @@ local ANOMALY_SPEED_THRESHOLD  = 300
 local ANOMALY_TELEPORT_STUDS   = 40
 local ANOMALY_COOLDOWN         = 0.12
 
-local lastAnomalyFix = 0
+local lastAnomalyFix    = 0
+local lastMotorReset    = 0
+local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
+
+-- ── Silent motor reset (fake fly-off / fly-on invisible) ──────────────────
+-- Se activa cuando el juego "suelta" la hitbox sin que el jugador lo pida:
+-- destruye y recrea los body movers en el mismo frame, restaurando el estado
+-- de Physics sin que el jugador note ningún parpadeo ni interrupción.
+local function silentMotorReset()
+    local now = tick()
+    if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
+    lastMotorReset = now
+
+    local char = lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    -- Capturar posición y orientación actuales para no perder contexto
+    local currentCF = root.CFrame
+
+    -- Destruir motores viejos y recrear en un único pcall atómico
+    pcall(function()
+        -- Limpiar motores corruptos/ausentes
+        for _, v in ipairs(root:GetChildren()) do
+            if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+            or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+                v:Destroy()
+            end
+        end
+        root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+        -- Recrear motores
+        local bg = Instance.new("BodyGyro", root)
+        bg.P = 9e4; bg.maxTorque = Vector3.new(9e9,9e9,9e9); bg.cframe = currentCF
+        local bv = Instance.new("BodyVelocity", root)
+        bv.velocity = Vector3.new(0,0,0); bv.maxForce = Vector3.new(9e9,9e9,9e9)
+        local bf = Instance.new("BodyForce", root)
+        local totalMass = root.AssemblyMass
+        bf.Force = Vector3.new(0, totalMass * workspace.Gravity, 0)
+
+        flyanim.bg = bg
+        flyanim.bv = bv
+        flyanim.bf = bf
+
+        -- Forzar estado de física sin animación de levantarse
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+end
 
 local function _flyMakeMotors()
     local char = lplr.Character; if not char then return end
@@ -1708,35 +1766,32 @@ local function startAnomalyProtection()
         -- Actualizar posición conocida
         flyanim.lastKnownPos = pos
 
-        -- Solo intervenir si hay ragdoll activo (no hacer TP por velocidad ni posición)
-        if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+        if not hum then return end
+        local state = hum:GetState()
+
+        -- ── Detección de hitbox caída ─────────────────────────────────────────
+        -- Mientras volamos, el estado DEBE ser Physics. Si detectamos Freefall,
+        -- GettingUp, FallingDown o Ragdoll sin que nosotros lo hayamos pedido,
+        -- es señal de que el juego "soltó" la hitbox. Hacemos un reset silencioso.
+        local isHitboxDrop = (
+            state == Enum.HumanoidStateType.Freefall     or
+            state == Enum.HumanoidStateType.FallingDown  or
+            state == Enum.HumanoidStateType.Ragdoll      or
+            state == Enum.HumanoidStateType.GettingUp
+        )
+
+        -- También detectar si los motores desaparecieron (el juego los puede destruir)
+        local motorsGone = (
+            not root:FindFirstChildOfClass("BodyGyro") or
+            not root:FindFirstChildOfClass("BodyVelocity")
+        )
+
+        if (isHitboxDrop or motorsGone) and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             lastAnomalyFix = now
-            flyanim.ragdollDetected = true
+            flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
 
-            pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
-            pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-
-            if hum then
-                pcall(function()
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                    hum.PlatformStand = true
-                    hum:ChangeState(Enum.HumanoidStateType.Physics)
-                end)
-            end
-
-            local needsMotors = (not root:FindFirstChildOfClass("BodyGyro"))
-                             or (not root:FindFirstChildOfClass("BodyVelocity"))
-                             or (not root:FindFirstChildOfClass("BodyForce"))
-            if needsMotors then
-                pcall(_flyMakeMotors)
-            else
-                flyanim.bg = root:FindFirstChildOfClass("BodyGyro")
-                flyanim.bv = root:FindFirstChildOfClass("BodyVelocity")
-                flyanim.bf = root:FindFirstChildOfClass("BodyForce")
-                if flyanim.bv then flyanim.bv.velocity = Vector3.new(0,0,0) end
-                if flyanim.bg then flyanim.bg.cframe = root.CFrame end
-            end
+            -- Reset silencioso: recrea los motores sin que el jugador lo note
+            silentMotorReset()
 
             task.defer(function()
                 if not flyanim.enabled then return end
@@ -3971,7 +4026,7 @@ end
 local _landingWatchConn = nil
 local _landingWatchToken = 0
 
-local function stopLandingWatcher()
+stopLandingWatcher = function()
     _landingWatchToken = _landingWatchToken + 1
     if _landingWatchConn then
         _landingWatchConn:Disconnect()
@@ -3979,7 +4034,7 @@ local function stopLandingWatcher()
     end
 end
 
-local function startLandingWatcher()
+startLandingWatcher = function()
     stopLandingWatcher()
     local myToken = _landingWatchToken
 
@@ -4009,8 +4064,23 @@ local function startLandingWatcher()
         local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
 
         if hit then
-            -- Hay suelo dentro del rango de sondeo → aplicar anti-rebote ahora
+            -- Hay suelo dentro del rango de sondeo → aplicar anti-rebote y
+            -- suprimir animaciones del juego -0.1s antes del impacto
             stopLandingWatcher()
+
+            -- Inhibir el Animate script del juego ahora, antes de que
+            -- el estado Landed se dispare y active la animación por defecto
+            local animScriptPre = char and char:FindFirstChild("Animate")
+            if animScriptPre then
+                pcall(function() animScriptPre.Disabled = true end)
+                -- Re-habilitar tras 0.2s si doLanding no tomó el control
+                task.delay(0.2, function()
+                    if not flyanim.waitingLand and animScriptPre and animScriptPre.Parent then
+                        pcall(function() animScriptPre.Disabled = false end)
+                    end
+                end)
+            end
+
             omniAntiBounceLand(hrp, hum)
         end
     end)
@@ -4205,6 +4275,23 @@ local function _flyOff()
         end
     end
 
+    -- ── Limpieza completa de motores residuales ───────────────────────────────
+    -- cleanupMotors() en PASO 0C ya destruyó bg/bv/bf, pero pueden quedar
+    -- instancias creadas por gyroProtection (backupGyro) u otros sistemas.
+    -- Las destruimos TODAS aquí para evitar el efecto "lego" (personaje con
+    -- resistencia angular residual que hace que caiga de lado con física rara).
+    if rootCurrent then
+        pcall(function()
+            for _, v in ipairs(rootCurrent:GetChildren()) do
+                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
+                or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
+                    v:Destroy()
+                end
+            end
+        end)
+    end
+
     -- Alinear orientación (quitar inclinación del vuelo).
     -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
     -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
@@ -4217,6 +4304,18 @@ local function _flyOff()
             local velY = rootCurrent.AssemblyLinearVelocity.Y
             rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+    end
+
+    -- Restablecer también los miembros del personaje (las partes del cuerpo pueden
+    -- tener velocidad angular residual del vuelo que causa el efecto "lego").
+    if charCurrent then
+        pcall(function()
+            for _, part in ipairs(charCurrent:GetDescendants()) do
+                if part:IsA("BasePart") and part ~= rootCurrent then
+                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
         end)
     end
 
