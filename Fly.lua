@@ -1,4 +1,4 @@
-print("version 1.21 fly 9")
+print("version 1.45 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -147,38 +147,7 @@ local LOCK_ROTATION_SMOOTH = 0.8
 -- Límite de coordenadas para detectar teletransporte anómalo
 local COORD_SANITY_LIMIT = 50000
 
--- ============================================================
--- SISTEMA DE ACCIÓN NO ANÓMALA (TrustedAction)
--- Ventana retroactiva: cubre DESDE _trustedFrom HASTA _trustedUntil.
--- Así funciona aunque el TP ocurra ligeramente antes de la llamada.
--- ============================================================
-local _trustedFrom   = 0   -- tick() desde el que la ventana es válida (retroactivo)
-local _trustedUntil  = 0   -- tick() hasta el que los guards están suspendidos
-local _trustedReason = ""
 
-local TRUSTED_LOOKBACK = 0.15  -- ventana retroactiva en segundos
-
-local function isTrustedAction()
-    local now = tick()
-    return now >= _trustedFrom and now < _trustedUntil
-end
-
--- Fuerza actualización de las posiciones seguras con la posición actual.
--- Se llama desde TrustedAction para que los guards no reviertan el TP.
-local function _flushSafePos()
-    local char = lplr and lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local pos = root.Position
-    -- Sólo actualizar si la posición no es absurda
-    if math.abs(pos.X) < COORD_SANITY_LIMIT
-    and math.abs(pos.Y) < COORD_SANITY_LIMIT
-    and math.abs(pos.Z) < COORD_SANITY_LIMIT then
-        flyanim.lastSafePos  = pos
-        flyanim.lastSafeTime = tick()
-        flyanim.lastKnownPos = pos
-    end
-end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -234,9 +203,6 @@ local ANIM_BLOQUEO = {
 }
 
 local COMBO_MIN_GAP        = 0.08
-local COMBO4_SPACE_MIN_GAP = 0.20
-local COMBO_CHAIN_WINDOW   = 1.4
-local COMBO_ANIM_MIN_DURATION = 0.18
 
 local flyanim = {
     enabled     = false,
@@ -397,6 +363,11 @@ local flyanim = {
     lastSafeTime     = 0,
     teleportGuardConn = nil,
     isTeleportGuardActive = false,
+
+    -- Token de sesión: se incrementa en _flyOff() para invalidar INSTANTÁNEAMENTE
+    -- cualquier callback de Heartbeat/Stepped que corra un tick extra tras el apagado.
+    -- Cada guard captura su sessionToken al iniciar y lo comprueba ANTES de actuar.
+    sessionToken = 0,
 }
 
 -- ============================================================
@@ -408,6 +379,11 @@ local flyanim = {
 local c0DesiredCFrame = nil  -- El CFrame exacto que queremos en rootJoint.C0
 -- Token para cancelar tweens de compensación de altura en vuelo
 local heightTweenToken = 0
+
+-- Forward declarations para funciones de landing watcher
+-- (definidas más abajo, pero usadas por _flyOn y _charConn que se definen antes)
+local stopLandingWatcher
+local startLandingWatcher
 
 local function setC0Desired(cf)
     c0DesiredCFrame = cf
@@ -441,14 +417,26 @@ local function startTeleportGuard()
     flyanim.lastSafeTime = tick()
     flyanim.isTeleportGuardActive = true
 
+    local mySession = flyanim.sessionToken
+
     flyanim.teleportGuardConn = RunService.Stepped:Connect(function(_, dt)
-        if not flyanim.enabled or not flyanim.isTeleportGuardActive then
+        if flyanim.sessionToken ~= mySession then
             if flyanim.teleportGuardConn then
                 flyanim.teleportGuardConn:Disconnect()
                 flyanim.teleportGuardConn = nil
             end
+            flyanim.isTeleportGuardActive = false
             return
         end
+        if not flyanim.enabled then
+            if flyanim.teleportGuardConn then
+                flyanim.teleportGuardConn:Disconnect()
+                flyanim.teleportGuardConn = nil
+            end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+        if not flyanim.isTeleportGuardActive then return end
 
         local char = lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -459,22 +447,9 @@ local function startTeleportGuard()
 
         local pos = root.Position
 
-        -- Si hay una acción marcada como legítima, actualizar posición segura sin corregir
-        if isTrustedAction() then
-            flyanim.lastSafePos  = pos
-            flyanim.lastSafeTime = tick()
-            return
-        end
-
-        -- Detectar coordenadas absolutamente absurdas (caída al void, etc.)
-        local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
-                      or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
-                      or (math.abs(pos.Z) > COORD_SANITY_LIMIT)
-                      or (pos.Y < -5000)  -- caída al void
-                      or (pos ~= pos)     -- NaN check
-
-        if isInsane then
-            -- Recuperar a última posición segura
+        -- ÚNICA condición de TP permitida: caer al void (Y <= -500)
+        -- Ninguna otra condición (delta de posición, velocidad absurda, etc.) activa el TP.
+        if pos.Y <= -500 then
             local safePos = flyanim.lastSafePos
             if safePos then
                 local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
@@ -483,7 +458,6 @@ local function startTeleportGuard()
                     root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                     root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end)
-                -- Anclar cámara brevemente para evitar parpadeo
                 local cam = workspace.CurrentCamera
                 if cam then
                     local camCF = cam.CFrame
@@ -493,10 +467,8 @@ local function startTeleportGuard()
                         end
                     end)
                 end
-                -- Resetear dash para que no siga empujando
                 flyanim.dashTimer = 0
                 flyanim.dashVel   = Vector3.new(0, 0, 0)
-                -- Reconstruir motores si es necesario
                 if not root:FindFirstChildOfClass("BodyGyro") then
                     pcall(_flyMakeMotors)
                 end
@@ -504,53 +476,11 @@ local function startTeleportGuard()
             return
         end
 
-        -- Detectar teletransporte brusco (no causado por dash legítimo)
-        local now = tick()
-        if flyanim.lastSafePos then
-            local delta3D  = pos - flyanim.lastSafePos
-            -- Solo medir desplazamiento HORIZONTAL: la caída libre genera delta vertical
-            -- enorme que dispara el guard y hace TP hacia arriba al desactivar el vuelo.
-            local horizDelta = Vector3.new(delta3D.X, 0, delta3D.Z).Magnitude
-            local elapsed    = now - flyanim.lastSafeTime
-            if elapsed > 0 then
-                local impliedSpeed = horizDelta / elapsed
-                -- Ignorar completamente si el personaje está cayendo (caída libre normal)
-                local velY = root.AssemblyLinearVelocity.Y
-                local isFalling = velY < -8
-                -- Si la velocidad implícita es absurdamente alta y no tenemos dash activo
-                local maxLegit = math.max(
-                    BASE_SPEED * TURBO_MULT * 2,
-                    flyanim.DASH_SPEED * 2,
-                    flyanim.TURBO_DASH_SPEED * 2,
-                    flyanim.BACK_DASH_SPEED * 2
-                )
-                if not isFalling and impliedSpeed > maxLegit * 3 and flyanim.dashTimer <= 0 then
-                    -- Teletransporte forzado detectado - devolver a posición segura
-                    local recovCF = CFrame.new(flyanim.lastSafePos + Vector3.new(0, 3, 0))
-                    local cam = workspace.CurrentCamera
-                    local camCF = cam and cam.CFrame
-                    pcall(function()
-                        root.CFrame = recovCF
-                        root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                    end)
-                    -- Restaurar cámara en el mismo frame para que no salte
-                    if cam and camCF then
-                        task.defer(function()
-                            if cam and cam.Parent then cam.CFrame = camCF end
-                        end)
-                    end
-                    if not root:FindFirstChildOfClass("BodyGyro") then
-                        pcall(_flyMakeMotors)
-                    end
-                    return
-                end
-            end
+        -- Actualizar posición segura siempre que las coords sean razonables
+        if math.abs(pos.X) < COORD_SANITY_LIMIT and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
         end
-
-        -- Actualizar posición segura solo si es razonable
-        flyanim.lastSafePos  = pos
-        flyanim.lastSafeTime = now
     end)
 end
 
@@ -571,7 +501,7 @@ local function setNoclip(state)
     end
 end
 
-local function cleanupMotors(root)
+local function cleanupMotors(root, preserveVelY)
     if not root then return end
     for _, v in ipairs(root:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
@@ -580,7 +510,18 @@ local function cleanupMotors(root)
             pcall(function() v:Destroy() end)
         end
     end
-    pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+    -- preserveVelY=true: conservar velocidad Y o aplicar mínimo hacia abajo
+    -- para que la gravedad tome efecto inmediatamente al apagar el vuelo.
+    if preserveVelY then
+        local currentVelY = 0
+        pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
+        -- Si está quieto (velY == 0) o subiendo (velY > 0), aplicar
+        -- pequeño impulso hacia abajo para que Freefall arranque correctamente.
+        local finalVelY = (currentVelY >= 0) and -4 or currentVelY
+        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, finalVelY, 0) end)
+    else
+        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+    end
     pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
 end
 
@@ -833,8 +774,9 @@ local function setupDamageDetector()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     flyanim.damageConn = hum.HealthChanged:Connect(function(newHealth)
-        local oldHealth = hum.Health
-        if newHealth < oldHealth then
+        -- HealthChanged ya trae el nuevo valor; cualquier reducción de HP cuenta como daño
+        -- (hum.Health en este momento ya ES newHealth, no el valor anterior)
+        if newHealth < hum.MaxHealth then  -- si no tiene HP máximo, fue golpeado
             flyanim.lastDamageTime = tick()
             if flyanim.isBlocking then
                 flyanim.isBlocking = false
@@ -1664,7 +1606,12 @@ end
 
 local function startAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+    local mySession = flyanim.sessionToken
     flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
         if not flyanim.enabled then
             if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
             return
@@ -1672,19 +1619,6 @@ local function startAntiImpulse()
         local char = lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
-
-        -- Protección adicional contra velocidades absurdas
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
-        local maxAllowed = math.max(
-            BASE_SPEED * TURBO_MULT * 2,
-            flyanim.DASH_SPEED * 1.5,
-            flyanim.TURBO_DASH_SPEED * 1.5,
-            flyanim.BACK_DASH_SPEED * 1.2
-        )
-        if speed > maxAllowed * 2 and flyanim.dashTimer <= 0 then
-            pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
-        end
 
         local bv = flyanim.bv
         if not bv or not bv.Parent then return end
@@ -1736,7 +1670,74 @@ local ANOMALY_SPEED_THRESHOLD  = 300
 local ANOMALY_TELEPORT_STUDS   = 40
 local ANOMALY_COOLDOWN         = 0.12
 
-local lastAnomalyFix = 0
+local lastAnomalyFix    = 0
+local lastMotorReset    = 0
+local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
+
+-- ── Silent motor reset (fake fly-off / fly-on invisible) ──────────────────
+-- Se activa cuando el juego "suelta" la hitbox sin que el jugador lo pida.
+-- DURACIÓN EXACTA: 0.1s. Destruye y recrea los body movers restaurando el
+-- estado de Physics. La DETECCIÓN se basa en desincronía cámara/hitbox:
+-- cuando mi vista no coincide con donde está mi HRP en el juego, algo externo
+-- movió la hitbox (el servidor, un estado de fisíca forzado, etc.).
+local function silentMotorReset()
+    local now = tick()
+    if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
+    lastMotorReset = now
+
+    local char = lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    -- Capturar posición y orientación actuales para no perder contexto
+    local currentCF = root.CFrame
+
+    -- Destruir motores viejos y recrear en un único pcall atómico
+    pcall(function()
+        -- Limpiar motores corruptos/ausentes
+        for _, v in ipairs(root:GetChildren()) do
+            if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+            or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+                v:Destroy()
+            end
+        end
+        root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+        -- Recrear motores
+        local bg = Instance.new("BodyGyro", root)
+        bg.P = 9e4; bg.maxTorque = Vector3.new(9e9,9e9,9e9); bg.cframe = currentCF
+        local bv = Instance.new("BodyVelocity", root)
+        bv.velocity = Vector3.new(0,0,0); bv.maxForce = Vector3.new(9e9,9e9,9e9)
+        local bf = Instance.new("BodyForce", root)
+        local totalMass = root.AssemblyMass
+        bf.Force = Vector3.new(0, totalMass * workspace.Gravity, 0)
+
+        flyanim.bg = bg
+        flyanim.bv = bv
+        flyanim.bf = bf
+
+        -- Forzar estado de física sin animación de levantarse
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+
+    -- Duración exacta de 0.1s: tras ese tiempo los motores quedan estables
+    task.delay(0.1, function()
+        if not flyanim.enabled then return end
+        local r2 = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+        if r2 then
+            -- Asegurar que sigue en modo Physics tras el reset
+            local h2 = lplr.Character:FindFirstChildOfClass("Humanoid")
+            if h2 and h2:GetState() ~= Enum.HumanoidStateType.Physics then
+                pcall(function() h2:ChangeState(Enum.HumanoidStateType.Physics) end)
+            end
+        end
+    end)
+end
 
 local function _flyMakeMotors()
     local char = lplr.Character; if not char then return end
@@ -1757,9 +1758,16 @@ end
 local function startAnomalyProtection()
     if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
     flyanim.lastKnownPos = nil
+    local mySession = flyanim.sessionToken
     flyanim.anomalyConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
         if not flyanim.enabled then
             if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
             return
         end
         local char = lplr.Character
@@ -1767,143 +1775,51 @@ local function startAnomalyProtection()
         if not root then flyanim.lastKnownPos = nil; return end
 
         local now = tick()
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
-
-        -- Si hay una acción marcada como legítima, actualizar lastKnownPos sin corregir
-        if isTrustedAction() then
-            flyanim.lastKnownPos = root.Position
-            return
-        end
-
-        -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
-        if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
-            if flyanim.lastKnownPos then
-                pcall(function()
-                    root.CFrame = CFrame.new(flyanim.lastKnownPos + Vector3.new(0, 5, 0))
-                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-                flyanim.dashTimer = 0
-                flyanim.dashVel   = Vector3.new(0, 0, 0)
-            end
-            return
-        end
 
-        local maxLegitSpeed = math.max(
-            BASE_SPEED * TURBO_MULT * 1.5,
-            flyanim.DASH_SPEED * 1.2,
-            flyanim.TURBO_DASH_SPEED * 1.2,
-            flyanim.BACK_DASH_SPEED * 1.1
+        -- Actualizar posición conocida
+        flyanim.lastKnownPos = pos
+
+        if not hum then return end
+        local state = hum:GetState()
+
+        -- ── Detección de hitbox caída ─────────────────────────────────────────
+        -- Solo actuar si el vuelo está activo Y no estamos en período de aterrizaje.
+        -- Durante waitingLand, Freefall/GettingUp/FallingDown son estados NORMALES
+        -- de la caída post-flyOff. Si silentMotorReset() los interrumpe aquí,
+        -- recrea los motores, re-ancora la física → el personaje sube, vuelve a
+        -- caer → bucle infinito de rebote.
+        if flyanim.waitingLand then return end
+
+        -- Mientras volamos, el estado DEBE ser Physics. Si detectamos Freefall,
+        -- GettingUp, FallingDown o Ragdoll sin que nosotros lo hayamos pedido,
+        -- es señal de que el juego "soltó" la hitbox. Hacemos un reset silencioso.
+        local isHitboxDrop = (
+            state == Enum.HumanoidStateType.Freefall     or
+            state == Enum.HumanoidStateType.FallingDown  or
+            state == Enum.HumanoidStateType.Ragdoll      or
+            state == Enum.HumanoidStateType.GettingUp
         )
 
-        local isAnomaly = false
+        -- También detectar si los motores desaparecieron (el juego los puede destruir)
+        local motorsGone = (
+            not root:FindFirstChildOfClass("BodyGyro") or
+            not root:FindFirstChildOfClass("BodyVelocity")
+        )
 
-        if speed > ANOMALY_SPEED_THRESHOLD and speed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
-            local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
-            -- Ignorar delta de posición cuando hay velocidad vertical grande (caída libre)
-            local isFallingFast = vel.Y < -30
-            if not isFallingFast and posDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
-                -- Solo es anomalía si no es un dash activo
-                if flyanim.dashTimer <= 0 then
-                    isAnomaly = true
-                end
-            end
-        end
-
-        if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if isAnomaly then
+        if (isHitboxDrop or motorsGone) and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             lastAnomalyFix = now
-            flyanim.ragdollDetected = true
+            flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
 
-            -- Capturar posición de cámara ANTES de mover el personaje
-            local cam = workspace.CurrentCamera
-            local camCF = cam and cam.CFrame
-
-            -- Si la posición actual es absurda y hay lastKnownPos, volver ahí
-            local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
-
-            pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
-            pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-
-            if recoverPos then
-                pcall(function() root.CFrame = CFrame.new(recoverPos) end)
-            end
-
-            -- Restaurar cámara en el siguiente frame para evitar parpadeo/salto
-            if cam and camCF then
-                task.defer(function()
-                    if cam and cam.Parent then cam.CFrame = camCF end
-                end)
-            end
-
-            flyanim.dashTimer = 0
-            flyanim.dashVel   = Vector3.new(0, 0, 0)
-
-            if hum then
-                pcall(function()
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                    hum.PlatformStand = true
-                    hum:ChangeState(Enum.HumanoidStateType.Physics)
-                end)
-            end
-
-            local needsMotors = (not root:FindFirstChildOfClass("BodyGyro"))
-                             or (not root:FindFirstChildOfClass("BodyVelocity"))
-                             or (not root:FindFirstChildOfClass("BodyForce"))
-            if needsMotors then
-                pcall(_flyMakeMotors)
-            else
-                flyanim.bg = root:FindFirstChildOfClass("BodyGyro")
-                flyanim.bv = root:FindFirstChildOfClass("BodyVelocity")
-                flyanim.bf = root:FindFirstChildOfClass("BodyForce")
-                if flyanim.bv then flyanim.bv.velocity = Vector3.new(0,0,0) end
-                if flyanim.bg then flyanim.bg.cframe = root.CFrame end
-            end
-
-            -- Restaurar C0 según el modo actual
-            if flyanim.mode == "fast" and not flyanim.turboPreImpulsoActivo and not flyanim.turboRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            elseif flyanim.mode == "turbo" and not flyanim.megaRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_MEGA.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_MEGA.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            else
-                restaurarC0Inmediato()
-            end
+            -- Reset silencioso: recrea los motores sin que el jugador lo note
+            silentMotorReset()
 
             task.defer(function()
                 if not flyanim.enabled then return end
                 flyanim.ragdollDetected = false
             end)
         end
-
-        flyanim.lastKnownPos = root.Position
     end)
 end
 
@@ -1938,7 +1854,12 @@ local function startAnimBlockLoop()
     ownAnimIds[CAIDA_BASE_ID]    = true
     ownAnimIds[CAIDA_OVERLAY_ID] = true
 
+    local mySession = flyanim.sessionToken
     flyanim.animBlockRenderConn = RunService.RenderStepped:Connect(function()
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
+            return
+        end
         if not flyanim.enabled then
             if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
             return
@@ -2697,22 +2618,11 @@ local function doLanding(char)
         end)
     end
 
-    -- Anti-bounce: solo un pulso inicial, luego liberar
+    -- Solo zerear velocidad angular para evitar giros involuntarios al aterrizar.
+    -- NO usar BodyVelocity ni PlatformStand=true aqui: causan que el humanoid
+    -- quede suspendido en el aire y nunca llegue al estado Landed real.
     if root then
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
         pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-        local quickBounce = Instance.new("BodyVelocity")
-        quickBounce.Velocity  = Vector3.new(0, 0, 0)
-        quickBounce.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
-        quickBounce.Parent    = root
-        humanoid.PlatformStand = true
-        task.defer(function()
-            pcall(function() quickBounce:Destroy() end)
-            if humanoid and humanoid.Parent then
-                humanoid.PlatformStand = false
-                pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
-            end
-        end)
     end
 
     -- Efectos de impacto: piedritas siempre, escaladas con velocidad/altura
@@ -2804,62 +2714,50 @@ end
 -- ============================================================
 -- SISTEMA DE COMBOS
 -- ============================================================
+--
+-- Diseño: un único "secuenciador" (task.spawn) vive durante todo el
+-- combo. Cada paso lanza la animación y luego bloquea 0.75s antes de
+-- aceptar el siguiente golpe. Si en esos 0.75s llega un click se
+-- registra como "pendiente" y se ejecuta inmediatamente al desbloquearse.
+-- Si pasados 1.5s (COMBO_CHAIN_WINDOW) no llegó ningún click, el combo
+-- termina limpiamente sin depender de onStopped.
+-- ============================================================
 
-local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
-    local t = getTrack(animId)
-    if not t then if onStopped then onStopped() end; return nil end
+-- Duración mínima por paso antes de aceptar el siguiente golpe
+-- Paso 1: 0.47s | Paso 2: 0.47s | Paso 3: 0.53s | Paso 4: 0.68s
+local COMBO_STEP_DURATION  = {0.47, 0.47, 0.53, 0.68}
+local COMBO_ANIM_DURATION  = 0.47   -- fallback genérico (ya no lo usa el secuenciador principal)
+-- Si pasa más de 1s sin click, el combo termina
+local COMBO_PENDING_WINDOW = 1.0
 
+-- Señal de "click pendiente": el secuenciador la consume cuando comboBusy=false
+local comboPendingClick = false
+
+local function _launchComboAnim(animId, speed)
+    -- Solo parar animaciones de combate (flyanim.tracks), NUNCA las normalTracks
+    -- (levitación, estatica, idle, movimiento) para que no se rompa el sistema de animación
     for id, track in pairs(flyanim.tracks) do
         if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
         end
     end
-    for key, track in pairs(flyanim.normalTracks) do
-        if key ~= "levitacion" then
-            pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-        end
-    end
+    -- NO tocar flyanim.normalTracks aqui: esas son las animaciones del vuelo normal
+    -- y pararlas rompe la animacion de idle/levitacion al terminar el combo
 
+    local t = getTrack(animId)
+    if not t then return end
     t.Looped   = false
     t.Priority = Enum.AnimationPriority.Action4
     if t.IsPlaying then pcall(function() t:Stop(0) end) end
     pcall(function() t:Play(0.05, 1, 1) end)
     pcall(function() t:AdjustSpeed(speed or 3.0) end)
-
-    flyanim.comboAnimStartTime = tick()
-    flyanim.comboBusy = true
-
-    task.spawn(function()
-        local timeout = tick() + 2
-        while t.Length == 0 and tick() < timeout do task.wait() end
-        if t.Length > 0 and t.IsPlaying then pcall(function() t.TimePosition = 0 end) end
-
-        local minWait = COMBO_ANIM_MIN_DURATION
-        local elapsed = tick() - flyanim.comboAnimStartTime
-        if elapsed < minWait then task.wait(minWait - elapsed) end
-
-        local cancelFrame = t.Length * 0.40
-        local cancelTimeout = tick() + 2
-        while t.IsPlaying and t.TimePosition < cancelFrame and tick() < cancelTimeout do
-            task.wait()
-        end
-        flyanim.comboBusy = false
-        if onCancelable then onCancelable() end
-    end)
-
-    if onStopped then
-        task.spawn(function()
-            t.Stopped:Wait()
-            onStopped()
-        end)
-    end
-    return t
 end
 
 local function resetCombo()
     flyanim.comboStep      = 0
     flyanim.comboLastClick = 0
     flyanim.combo2LastUsed = nil
+    comboPendingClick      = false
 end
 
 local function startComboC0Lock()
@@ -2892,6 +2790,7 @@ local function finalizarCombo()
     flyanim.comboPlaying = false
     flyanim.comboBusy    = false
     flyanim.combo4Frozen = false
+    comboPendingClick    = false
 
     stopComboC0Lock()
 
@@ -2899,7 +2798,7 @@ local function finalizarCombo()
 
     for id, track in pairs(flyanim.tracks) do
         if id ~= ANIM.levitacion and track and track.IsPlaying then
-            pcall(function() track:Stop(0.1) end)
+            pcall(function() track:Stop(0.12) end)
         end
     end
 
@@ -2932,127 +2831,200 @@ local function finalizarCombo()
     end
 end
 
-local function ejecutarPuno4()
-    local animId  = ANIM.combo4
-    local myToken = flyanim.comboToken
-    local t = getTrack(animId)
-    if not t then finalizarCombo(); return end
-
-    for id, track in pairs(flyanim.tracks) do
-        if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
-            pcall(function() track:Stop(0.05) end)
-        end
-    end
-    for key, track in pairs(flyanim.normalTracks) do
-        if key ~= "levitacion" then
-            pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-        end
-    end
-
-    t.Looped   = false
-    t.Priority = Enum.AnimationPriority.Action4
-    if t.IsPlaying then pcall(function() t:Stop(0) end) end
-    pcall(function() t:Play(0.05, 1, 1) end)
-    pcall(function() t:AdjustSpeed(3.0) end)
-
-    flyanim.comboAnimStartTime = tick()
-    flyanim.comboBusy = true
-
-    task.spawn(function()
-        local timeout = tick() + 3
-        while t.Length == 0 and tick() < timeout do task.wait() end
-        if t.Length == 0 then finalizarCombo(); return end
-
-        if flyanim.comboToken ~= myToken then return end
-
-        local length    = t.Length
-        local target40  = length * 0.40
-        local target65  = length * 0.65
-
-        timeout = tick() + 3
-        while t.IsPlaying and t.TimePosition < target40 and tick() < timeout do
-            if flyanim.comboToken ~= myToken then return end
-            task.wait()
+-- Secuenciador del combo: corre en su propio task y maneja toda la secuencia
+-- Duraciones por paso: 0.47s / 0.47s / 0.53s / 0.68s
+-- Cancelación si no hay click en 1s tras cada paso.
+local function runComboSequencer(startToken)
+    -- ── Helper: esperar duración de paso y luego aguardar click ──────────────
+    local function waitStep(stepIdx)
+        local dur = COMBO_STEP_DURATION[stepIdx] or 0.47
+        local stepStart = tick()
+        while tick() - stepStart < dur do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then return false end
         end
         flyanim.comboBusy = false
 
-        timeout = tick() + 3
-        while t.IsPlaying and t.TimePosition < target65 and tick() < timeout do
-            if flyanim.comboToken ~= myToken then return end
-            task.wait()
-        end
-        if not t.IsPlaying then finalizarCombo(); return end
-        if flyanim.comboToken ~= myToken then return end
-
-        flyanim.combo4Frozen = true
-        pcall(function() t:AdjustSpeed(0) end)
-        pcall(function() t.TimePosition = target65 end)
-
         local waitStart = tick()
-        while tick() - waitStart < 0.3 do
-            if flyanim.comboToken ~= myToken then
-                flyanim.combo4Frozen = false
-                return
+        while not comboPendingClick do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then return false end
+            if tick() - waitStart > COMBO_PENDING_WINDOW then
+                finalizarCombo(); return false
             end
-            if not flyanim.combo4Frozen then
-                pcall(function() t:AdjustSpeed(10) end)
-                t.Looped = false
-                task.spawn(function()
-                    local to2 = tick() + 1
-                    while t.IsPlaying and tick() < to2 do task.wait() end
-                    finalizarCombo()
-                end)
-                return
-            end
-            task.wait(0.03)
         end
+        comboPendingClick = false
+        if flyanim.comboToken ~= startToken then return false end
+        return true
+    end
 
-        flyanim.combo4Frozen = false
-        pcall(function() t:AdjustSpeed(1) end)
-        t.Looped = false
-        task.spawn(function()
-            local to3 = tick() + 3
-            while t.IsPlaying and tick() < to3 do task.wait() end
-            finalizarCombo()
-        end)
-    end)
+    -- ── Paso 1 ────────────────────────────────────────────────────────────────
+    flyanim.comboStep = 1
+    _launchComboAnim(ANIM.combo1, 3.0)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+    if not waitStep(1) then return end
+
+    -- ── Paso 2 ────────────────────────────────────────────────────────────────
+    flyanim.comboStep = 2
+    local r = math.random(1, 2)
+    local chosenId2, chosenKey2
+    if r == 1 then chosenId2 = ANIM.combo2a; chosenKey2 = "a"
+    else            chosenId2 = ANIM.combo2b; chosenKey2 = "b" end
+    flyanim.combo2LastUsed = chosenKey2
+    _launchComboAnim(chosenId2, 3.0)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+    if not waitStep(2) then return end
+
+    -- ── Paso 3 ────────────────────────────────────────────────────────────────
+    flyanim.comboStep = 3
+    local chosenId3 = (flyanim.combo2LastUsed == "a") and ANIM.combo3b or ANIM.combo3a
+    _launchComboAnim(chosenId3, 3.0)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+    if not waitStep(3) then return end
+
+    -- ── Paso 4 ────────────────────────────────────────────────────────────────
+    flyanim.comboStep = 4
+    local spaceDown4 = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+
+    if spaceDown4 then
+        -- Combo 4 especial con espacio (sin cambios)
+        local t4s = getTrack(ANIM.combo4_space)
+        if t4s then
+            for id, track in pairs(flyanim.tracks) do
+                if id ~= ANIM.combo4_space and id ~= ANIM.levitacion and track and track.IsPlaying then
+                    pcall(function() track:Stop(0.05) end)
+                end
+            end
+            t4s.Looped = false; t4s.Priority = Enum.AnimationPriority.Action4
+            if t4s.IsPlaying then pcall(function() t4s:Stop(0) end) end
+            pcall(function() t4s:Play(0.05, 1, 1); t4s:AdjustSpeed(1.0) end)
+            flyanim.comboBusy = true
+            local timeout4 = tick() + 5
+            while t4s.IsPlaying and tick() < timeout4 do
+                task.wait(0.03)
+                if flyanim.comboToken ~= startToken then return end
+            end
+            flyanim.comboBusy = false
+            task.wait(0.3)
+        end
+        resetCombo()
+        finalizarCombo()
+        return
+    end
+
+    -- ── Combo 4 normal: animación completa rápida, pausa al 55%, remate muy rápido
+    --
+    -- Diseño de timing (duración total del paso 4 = 0.68s):
+    --   · La animación rbxassetid://2954124238 tiene su "golpe natural" alrededor
+    --     del frame 0.53s.  La corremos a velocidad alta para que ese trozo pase
+    --     rápido, luego la congelamos al 55% del largo total.
+    --   · Al 55% aplicamos la lógica de impacto (hitbox, comboBusy=false para que
+    --     el secuenciador continúe contando el tiempo restante hasta 0.68s).
+    --   · Tras la pausa, corremos lo que queda (55%→100%) a velocidad muy alta
+    --     (AdjustSpeed 15) para que el remate visual sea instantáneo.
+    -- ─────────────────────────────────────────────────────────────────────────
+    local t4 = getTrack(ANIM.combo4)
+    if not t4 then finalizarCombo(); return end
+
+    -- Parar otras tracks de combate (NO las normalTracks)
+    for id, track in pairs(flyanim.tracks) do
+        if id ~= ANIM.combo4 and id ~= ANIM.levitacion and track and track.IsPlaying then
+            pcall(function() track:Stop(0.05) end)
+        end
+    end
+
+    t4.Looped   = false
+    t4.Priority = Enum.AnimationPriority.Action4
+    if t4.IsPlaying then pcall(function() t4:Stop(0) end) end
+
+    -- Esperar a que el track tenga duración conocida (máx 2s)
+    pcall(function() t4:Play(0.05, 1, 1) end)
+    local toLoad = tick() + 2
+    while t4.Length == 0 and tick() < toLoad do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+    end
+
+    -- Fase 1: desde 0% hasta 55%, velocidad alta (el "golpe" natural de la anim ~0.53s pasa rápido)
+    pcall(function() t4:AdjustSpeed(4.0) end)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+    flyanim.combo4Frozen = false
+
+    local len4 = t4.Length
+    local PAUSE_PERC = 0.55  -- pausar aquí para aplicar la lógica de impacto
+    local timeout4 = tick() + 4
+    while t4.IsPlaying and tick() < timeout4 do
+        task.wait(0.016)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+        len4 = t4.Length
+        if len4 > 0 and t4.TimePosition >= len4 * PAUSE_PERC then break end
+    end
+    if flyanim.comboToken ~= startToken then flyanim.combo4Frozen = false; return end
+
+    -- ── PAUSA AL 55%: aplicar lógica de impacto ───────────────────────────────
+    flyanim.combo4Frozen = true
+    flyanim.comboBusy    = false   -- el secuenciador puede seguir contando el tiempo
+    pcall(function() t4:AdjustSpeed(0) end)
+    if len4 > 0 then pcall(function() t4.TimePosition = len4 * PAUSE_PERC end) end
+
+    -- Aquí es donde el tiempo restante del paso 4 (0.68s total menos lo ya transcurrido)
+    -- "corre" — el waitStep(4) ya consumió ~0s porque lo llamamos después.
+    -- Calculamos el tiempo que queda hasta completar 0.68s desde que empezó el paso 4.
+    -- (No usamos waitStep aquí porque queremos la ventana de click al mismo tiempo)
+    -- Esperar el click pendiente o que expire el tiempo del paso
+    local stepDur4  = COMBO_STEP_DURATION[4]   -- 0.68s
+    local pauseDeadline = tick() + (stepDur4 * (1 - PAUSE_PERC) + 0.08)  -- tiempo restante + buffer
+    while not comboPendingClick and tick() < pauseDeadline do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+    end
+    flyanim.combo4Frozen = false
+    comboPendingClick    = false
+    if flyanim.comboToken ~= startToken then return end
+
+    -- Fase 2: continuar desde 55% hasta el final muy rápido (remate visual instantáneo)
+    pcall(function() t4:AdjustSpeed(15) end)
+    t4.Looped = false
+    local timeout4b = tick() + 2
+    while t4.IsPlaying and tick() < timeout4b do
+        task.wait(0.016)
+        if flyanim.comboToken ~= startToken then return end
+    end
+
+    resetCombo()
+    finalizarCombo()
 end
 
 local function handleComboClick()
     if not flyanim.enabled then return end
     if flyanim.turboPreImpulsoActivo then return end
-    if flyanim.comboBusy then return end
+    if flyanim.isBlocking then return end
 
-    local now  = tick()
-    local step = flyanim.comboStep
-
-    if flyanim.combo4Frozen then
-        flyanim.combo4Frozen = false
+    -- Si el combo ya está corriendo y esperando un click, registrarlo como pendiente
+    if flyanim.comboPlaying then
+        if flyanim.comboBusy then
+            -- Aún en el período de 0.75s: ignorar (el combo lo aceptará cuando baje comboBusy)
+            return
+        end
+        -- Registrar click pendiente (el secuenciador lo consumirá)
+        comboPendingClick = true
+        flyanim.comboLastClick = tick()
         return
     end
 
-    local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-    local isCombo4SpaceAttempt = (step == 3 and spaceDown)
-    local minGap = isCombo4SpaceAttempt and COMBO4_SPACE_MIN_GAP or COMBO_MIN_GAP
-
-    if now - flyanim.comboLastClick < minGap then return end
-
-    if flyanim.comboAnimStartTime > 0 and (now - flyanim.comboAnimStartTime) < COMBO_ANIM_MIN_DURATION then return end
-
-    if step >= 1 then
-        if now - flyanim.comboLastClick > COMBO_CHAIN_WINDOW then
-            if not flyanim.comboPlaying then
-                resetCombo()
-                step = 0
-            else
-                return
-            end
-        end
-    end
-
-    local nextStep = step + 1
-    flyanim.comboStep      = nextStep
-    flyanim.comboLastClick = now
+    -- Iniciar combo nuevo
+    local now = tick()
+    if now - flyanim.comboLastClick < COMBO_MIN_GAP then return end
 
     flyanim.comboToken = (flyanim.comboToken or 0) + 1
     local myToken = flyanim.comboToken
@@ -3064,88 +3036,14 @@ local function handleComboClick()
         flyanim.blockCancelledByCombo = true
     end
 
-    if nextStep == 1 then
-        flyanim.comboPlaying = true
-        startComboC0Lock()
-        playComboAnimRaw(ANIM.combo1, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 1 then
-                task.wait(0.05)
-                if flyanim.comboStep == 1 and flyanim.comboToken == myToken then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
+    flyanim.comboPlaying    = true
+    flyanim.comboLastClick  = now
+    comboPendingClick       = false
+    startComboC0Lock()
 
-    elseif nextStep == 2 then
-        local r = math.random(1, 2)
-        local chosenId, chosenKey
-        if r == 1 then chosenId = ANIM.combo2a; chosenKey = "a"
-        else chosenId = ANIM.combo2b; chosenKey = "b" end
-        flyanim.combo2LastUsed = chosenKey
-        playComboAnimRaw(chosenId, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 2 then
-                task.wait(0.05)
-                if flyanim.comboStep == 2 and flyanim.comboToken == myToken then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
-
-    elseif nextStep == 3 then
-        local chosenId
-        if flyanim.combo2LastUsed == "a" then chosenId = ANIM.combo3b
-        else chosenId = ANIM.combo3a end
-        playComboAnimRaw(chosenId, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 3 then
-                task.wait(0.1)
-                if flyanim.comboStep == 3 and flyanim.comboToken == myToken then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
-
-    elseif nextStep == 4 then
-        if spaceDown then
-            flyanim.comboBusy = true
-            local t = getTrack(ANIM.combo4_space)
-            if t then
-                for id, track in pairs(flyanim.tracks) do
-                    if id ~= ANIM.combo4_space and id ~= ANIM.levitacion and track and track.IsPlaying then
-                        pcall(function() track:Stop(0.05) end)
-                    end
-                end
-                for key, track in pairs(flyanim.normalTracks) do
-                    if key ~= "levitacion" then
-                        pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-                    end
-                end
-                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
-                if t.IsPlaying then pcall(function() t:Stop(0) end) end
-                pcall(function() t:Play(0.05, 1, 1); t:AdjustSpeed(1.0) end)
-                task.spawn(function()
-                    local timeout2 = tick() + 2
-                    while t.Length == 0 and tick() < timeout2 do task.wait() end
-                    flyanim.comboBusy = false
-                    task.spawn(function()
-                        t.Stopped:Wait()
-                        if flyanim.comboToken ~= myToken then return end
-                        resetCombo()
-                        task.wait(0.3)
-                        finalizarCombo()
-                    end)
-                end)
-            else
-                flyanim.comboBusy = false
-                resetCombo(); finalizarCombo()
-            end
-        else
-            ejecutarPuno4()
-            flyanim.comboStep = 0
-        end
-    end
+    task.spawn(function()
+        runComboSequencer(myToken)
+    end)
 end
 
 local COMBO_HOLD_INTERVAL = 0.10
@@ -3159,7 +3057,7 @@ local function startComboListener()
     flyanim.combo4Frozen = false
     flyanim.comboToken   = 0
     flyanim.mouseHeld    = false
-    flyanim.comboAnimStartTime = 0
+    comboPendingClick    = false
 
     flyanim.comboConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() or not flyanim.enabled then return end
@@ -3178,6 +3076,8 @@ local function startComboListener()
         end
     end)
 
+    -- Hold: mientras se mantiene el botón presionado y el combo no está ocupado,
+    -- registrar clicks periódicos (para encadenar sin soltar)
     local lastHoldFire = 0
     flyanim.comboHoldConn = RunService.Heartbeat:Connect(function()
         if not flyanim.enabled then return end
@@ -3185,10 +3085,14 @@ local function startComboListener()
         if isTyping() then return end
         local now = tick()
         if now - lastHoldFire < COMBO_HOLD_INTERVAL then return end
-        if flyanim.comboBusy then return end
-        if now - flyanim.comboLastClick < COMBO_MIN_GAP then return end
         lastHoldFire = now
-        handleComboClick()
+        -- Solo registrar si el combo ya está corriendo y espera un click
+        if not flyanim.comboPlaying then return end
+        if flyanim.comboBusy then return end
+        if not comboPendingClick then
+            comboPendingClick = true
+            flyanim.comboLastClick = now
+        end
     end)
 
     flyanim._comboEndConn = comboEndConn
@@ -3204,7 +3108,7 @@ local function stopComboListener()
     flyanim.comboBusy    = false
     flyanim.combo4Frozen = false
     flyanim.mouseHeld    = false
-    flyanim.comboAnimStartTime = 0
+    comboPendingClick    = false
 end
 
 -- ============================================================
@@ -3826,6 +3730,7 @@ local function _flyOn()
     local char = lplr.Character; if not char then return end
     -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
     if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
+    stopLandingWatcher()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
@@ -3836,6 +3741,10 @@ local function _flyOn()
     _landBaseRef = nil; _landOverlayRef = nil
     -- Cancelar cualquier tween de compensación de altura en curso
     heightTweenToken = heightTweenToken + 1
+    -- Nueva sesion de vuelo: incrementar sessionToken para que los guards
+    -- que inicien ahora tengan un token fresco y no colisionen con restos
+    -- de una sesion anterior que pudo quedar en un tick de transicion.
+    flyanim.sessionToken = (flyanim.sessionToken or 0) + 1
     flyanim.enabled = true
     flyanim.mode = "normal"; flyanim.speed = BASE_SPEED
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
@@ -3855,10 +3764,17 @@ local function _flyOn()
     if hum then
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        -- Sacar al personaje de freefall/caída inmediatamente
         hum.PlatformStand = false
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        -- NO llamar GettingUp aquí: empuja hacia arriba antes de que existan
+        -- los motores de vuelo, causando el rebote. _flyMakeMotors ancla la física.
     end
+    -- Limpiar tracks de la sesión anterior (doLanding puede haber dejado
+    -- flyanim.tracks={} y normalTracks con referencias muertas).
+    -- Parar todo lo que aún esté sonando antes de reconstruir el animator.
+    for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.normalTracks = {}
+    for _, t in pairs(flyanim.tracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.tracks = {}
     setupAnimator(char)
     _flyMakeMotors(); _flyBuildGui(); startIdleWatcher(); startComboListener()
     flyanim._normalPlayId = 1
@@ -3867,7 +3783,11 @@ local function _flyOn()
     startAnomalyProtection(); startAnimBlockLoop(); startTeleportGuard()
 
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
+    local _tpMoveSession = flyanim.sessionToken
     flyanim.tpMoveConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= _tpMoveSession then
+            flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return
+        end
         if not flyanim.enabled then
             flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return
         end
@@ -3914,6 +3834,26 @@ local function _flyOn()
             if targetChar2 then
                 local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
                 if targetRoot2 then
+                    -- Micro-TP: si no hay suelo bajo el jugador y está 10+ studs por debajo del target
+                    local noFloor = false
+                    do
+                        local rpCheck = RaycastParams.new()
+                        rpCheck.FilterType = Enum.RaycastFilterType.Exclude
+                        local cc2 = lplr.Character
+                        if cc2 then rpCheck.FilterDescendantsInstances = {cc2} end
+                        local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
+                        noFloor = (hitCheck == nil)
+                    end
+                    local heightDiff = targetRoot2.Position.Y - root2.Position.Y
+                    if noFloor and heightDiff > 10 and flyanim.enabled then
+                        -- Micro-TP: posicionarse justo junto al target
+                        local toTarget = targetRoot2.Position - root2.Position
+                        local newPos = targetRoot2.Position - (toTarget.Unit * 5)
+                        pcall(function()
+                            root2.CFrame = CFrame.new(newPos, targetRoot2.Position)
+                        end)
+                    end
+
                     local toTarget3D = targetRoot2.Position - root2.Position
                     local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
                     local vertDiff   = math.abs(toTarget3D.Y)
@@ -3960,7 +3900,9 @@ local function _flyOn()
     end)
 
     if flyanim.rsConn then flyanim.rsConn:Disconnect() end
+    local _rsSession = flyanim.sessionToken
     flyanim.rsConn = RunService.RenderStepped:Connect(function(dt)
+        if flyanim.sessionToken ~= _rsSession then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         if not flyanim.enabled then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         local cc   = lplr.Character
         local root = cc and cc:FindFirstChild("HumanoidRootPart")
@@ -4067,6 +4009,154 @@ local function _flyOn()
     end)
 end
 
+-- ============================================================
+-- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
+-- ============================================================
+-- Cuando se detecta suelo inminente:
+--   · Zerear TODAS las velocidades en Y inmediatamente (HRP + cuerpo)
+--   · BodyVelocity solo en eje Y con empuje suave hacia abajo durante 0.1s
+--     → elimina CUALQUIER impulso contrario (rebote, GettingUp, Freefall)
+--   · PlatformStand=true + bloquear GettingUp/Jumping ese tiempo
+--   · Al soltarse: zerear Y de nuevo y forzar Landed limpiamente
+local function omniAntiBounceLand(hrp, hum)
+    if not hrp or not hum then return end
+
+    -- Paso 1: silenciar TODAS las velocidades en Y inmediatamente
+    pcall(function()
+        local vx = hrp.AssemblyLinearVelocity.X
+        local vz = hrp.AssemblyLinearVelocity.Z
+        hrp.AssemblyLinearVelocity  = Vector3.new(vx, 0, vz)  -- conservar XZ, zerear Y
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        -- Silenciar partes del cuerpo para evitar rebotes de física ragdoll
+        local char = lplr.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part ~= hrp then
+                    part.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+        end
+    end)
+
+    -- Paso 2: bloqueo de eje Y durante 0.1s con leve empuje hacia abajo
+    -- MaxForce solo en Y para no interferir con el movimiento horizontal
+    local downForce = Instance.new("BodyVelocity")
+    downForce.Velocity  = Vector3.new(0, -2, 0)   -- pequeño empuje para pegar al suelo
+    downForce.MaxForce  = Vector3.new(0, 9e9, 0)   -- solo eje Y
+    downForce.Parent    = hrp
+    hum.PlatformStand   = true
+    -- Bloquear estados que generan impulso hacia arriba
+    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
+
+    task.delay(0.1, function()
+        pcall(function() downForce:Destroy() end)
+        if hum and hum.Parent then
+            -- Zerear Y una última vez antes de restaurar
+            if hrp and hrp.Parent then
+                local vx2 = hrp.AssemblyLinearVelocity.X
+                local vz2 = hrp.AssemblyLinearVelocity.Z
+                hrp.AssemblyLinearVelocity  = Vector3.new(vx2, 0, vz2)
+                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
+            hum.PlatformStand = false
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Landed) end)
+        end
+    end)
+end
+
+-- ============================================================
+-- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
+-- ============================================================
+-- Se activa en _flyOff() cuando hay altura >= 10 studs.
+-- La detección se basa en raycast hacia abajo: si hay suelo dentro
+-- del rango de sondeo y el personaje cae, aplica omniAntiBounceLand.
+-- IMPORTANTE: También actúa si velY >= 0 pero el suelo está muy cerca
+-- (personaje quedó flotando bajo por el kick de caída inicial).
+local _landingWatchConn = nil
+local _landingWatchToken = 0
+
+stopLandingWatcher = function()
+    _landingWatchToken = _landingWatchToken + 1
+    if _landingWatchConn then
+        _landingWatchConn:Disconnect()
+        _landingWatchConn = nil
+    end
+end
+
+startLandingWatcher = function()
+    stopLandingWatcher()
+    local myToken = _landingWatchToken
+
+    _landingWatchConn = RunService.Heartbeat:Connect(function()
+        -- Sólo activo mientras esperamos el aterrizaje
+        if not flyanim.waitingLand then
+            stopLandingWatcher()
+            return
+        end
+        if _landingWatchToken ~= myToken then return end
+
+        local char = lplr.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then return end
+
+        local velY = hrp.AssemblyLinearVelocity.Y
+
+        -- Raycast hacia el suelo: distancia de sondeo escalada con velocidad de caída.
+        -- Si está cayendo rápido, sondamos más lejos para tener tiempo de reacción.
+        -- Si está casi estático o sube levemente, sondamos distancia mínima fija.
+        local probeDistance
+        if velY < -2 then
+            probeDistance = math.clamp(math.abs(velY) * 0.08, 2.5, 7.0)
+        else
+            probeDistance = 2.0  -- siempre sondear una distancia mínima
+        end
+
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = {char}
+        local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
+
+        if hit then
+            -- Hay suelo dentro del rango de sondeo → aplicar anti-rebote.
+            -- Destruir también cualquier BodyForce/BodyVelocity residual del vuelo
+            -- que pudiera estar generando fuerzas hacia arriba en este momento.
+            stopLandingWatcher()
+
+            -- Limpiar motores residuales del vuelo ANTES del anti-rebote
+            -- (pueden quedar instancias huérfanas creadas por gyroProtection)
+            pcall(function()
+                for _, v in ipairs(hrp:GetChildren()) do
+                    if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                    or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
+                    or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
+                        v:Destroy()
+                    end
+                end
+            end)
+
+            -- Inhibir el Animate script del juego ahora, antes de que
+            -- el estado Landed se dispare y active la animación por defecto
+            local animScriptPre = char and char:FindFirstChild("Animate")
+            if animScriptPre then
+                pcall(function() animScriptPre.Disabled = true end)
+                -- Re-habilitar tras 0.25s si doLanding no tomó el control
+                task.delay(0.25, function()
+                    if not flyanim.waitingLand and animScriptPre and animScriptPre.Parent then
+                        pcall(function() animScriptPre.Disabled = false end)
+                    end
+                end)
+            end
+
+            omniAntiBounceLand(hrp, hum)
+        end
+    end)
+end
+
 local function _flyOff()
     local char = lplr.Character
 
@@ -4083,8 +4173,13 @@ local function _flyOff()
     flyanim.gyroProtectionActive = false
 
     -- ── PASO 0B: Invalidar TODOS los tokens inmediatamente ──
-    -- Esto hace que cualquier coroutine/loop que compruebe su token
-    -- sepa que debe terminar, ANTES de que enabled cambie.
+    -- sessionToken es lo PRIMERO: invalida los guards de seguridad (teleportGuard,
+    -- anomalyProtection, antiImpulse, animBlockLoop) en el mismo tick, antes de
+    -- que corran sus callbacks de Heartbeat/Stepped. Sin esto, pueden ejecutar
+    -- un tick extra con datos de la sesion anterior y forzar velocidad 0 cuando
+    -- ya no esta volando.
+    flyanim.sessionToken          = (flyanim.sessionToken          or 0) + 1
+    -- Invalidar el resto de tokens de coroutines y loops internos
     flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken  or 0) + 1
     flyanim.turboPreImpulsoActivo = false
     flyanim.idleWatchToken        = (flyanim.idleWatchToken        or 0) + 1
@@ -4095,8 +4190,12 @@ local function _flyOff()
     heightTweenToken              = heightTweenToken + 1
 
     -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
-    -- No esperar a los guards internos (que solo actúan en el próximo tick).
-    -- Orden: primero los RenderStepped/Heartbeat que modifican C0, luego el resto.
+    -- CRITICO: Limpiar las posiciones de seguridad ANTES de desconectar,
+    -- para que aunque un guard corra un tick mas, no tenga posicion a la que devolver.
+    flyanim.lastSafePos  = nil
+    flyanim.lastSafeTime = 0
+    flyanim.lastKnownPos = nil
+    flyanim.isTeleportGuardActive = false
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
     if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
     if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
@@ -4117,7 +4216,10 @@ local function _flyOff()
     do
         local _earlyChar = lplr.Character
         local _earlyRoot = _earlyChar and _earlyChar:FindFirstChild("HumanoidRootPart")
-        if _earlyRoot then cleanupMotors(_earlyRoot) end
+        -- preserveVelY=true: conservar velocidad Y para que la caida libre funcione.
+        -- cleanupMotors sin este flag zeroa Y tambien, haciendo que el personaje
+        -- quede estatico en el aire hasta que GettingUp lo empuje hacia arriba.
+        if _earlyRoot then cleanupMotors(_earlyRoot, true) end
         flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
     end
     if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
@@ -4228,11 +4330,12 @@ local function _flyOff()
         return
     end
 
-    -- Deshabilitar GettingUp ANTES de quitar PlatformStand:
-    -- cuando PlatformStand pasa de true→false en el aire, Roblox dispara GettingUp
-    -- automáticamente, que empuja al personaje hacia arriba ("pararse").
-    -- Deshabilitándolo evitamos ese rebote. Se vuelve a habilitar después.
+    -- Deshabilitar estados que empujan hacia arriba ANTES de quitar PlatformStand.
+    -- GettingUp y Jumping pueden causar un impulso vertical hacia arriba cuando
+    -- PlatformStand pasa de true->false en el aire. Se re-habilitan tras Freefall.
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, false)
     hum.PlatformStand = false
     hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
@@ -4243,25 +4346,78 @@ local function _flyOff()
         end
     end
 
-    -- Alinear orientación (quitar inclinación del vuelo) y asegurar vel 0
-    -- cleanupMotors ya zereó la velocidad en PASO 0C; solo alineamos CFrame
+    -- ── Limpieza completa de motores residuales ───────────────────────────────
+    -- cleanupMotors() en PASO 0C ya destruyó bg/bv/bf, pero pueden quedar
+    -- instancias creadas por gyroProtection (backupGyro) u otros sistemas.
+    -- Las destruimos TODAS aquí para evitar el efecto "lego" (personaje con
+    -- resistencia angular residual que hace que caiga de lado con física rara).
+    if rootCurrent then
+        pcall(function()
+            for _, v in ipairs(rootCurrent:GetChildren()) do
+                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
+                or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
+                    v:Destroy()
+                end
+            end
+        end)
+    end
+
+    -- Alinear orientación (quitar inclinación del vuelo).
+    -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
+    -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
     if rootCurrent then
         local _, ry, _ = rootCurrent.CFrame:ToOrientation()
         pcall(function()
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            -- Zerear solo X/Z para evitar que el personaje salga disparado lateralmente.
+            -- NO tocar Y: cleanupMotors(preserveVelY) ya la manejó.
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
 
+    -- Restablecer también los miembros del personaje (las partes del cuerpo pueden
+    -- tener velocidad angular residual del vuelo que causa el efecto "lego").
+    if charCurrent then
+        pcall(function()
+            for _, part in ipairs(charCurrent:GetDescendants()) do
+                if part:IsA("BasePart") and part ~= rootCurrent then
+                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+        end)
+    end
+
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
-    -- Re-habilitar GettingUp ahora que el estado Freefall ya está establecido.
-    -- El personaje podrá pararse normalmente cuando toque el suelo.
-    task.defer(function()
+
+    -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
+    -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
+    -- Freefall esté asentado, causando el rebote hacia arriba.
+    task.delay(0.12, function()
         if hum and hum.Parent then
             hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
         end
     end)
+
+    -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
+    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
+    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
+    if rootCurrent then
+        task.delay(0.01, function()
+            if not rootCurrent or not rootCurrent.Parent then return end
+            if flyanim.enabled then return end  -- ya reactivó el vuelo
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            if velY > 0.5 then
+                pcall(function()
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
+                end)
+            end
+        end)
+    end
 
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
@@ -4294,24 +4450,51 @@ local function _flyOff()
 
     flyanim.waitingLand = true
     if flyanim.landConn then flyanim.landConn:Disconnect() end
-    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
-        if not flyanim.waitingLand then flyanim.landConn:Disconnect(); flyanim.landConn=nil; return end
-        if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running
-        or newState == Enum.HumanoidStateType.RunningNoPhysics or newState == Enum.HumanoidStateType.Dead then
-            flyanim.waitingLand = false
-            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-            if newState ~= Enum.HumanoidStateType.Dead then
-                flyanim.landingHeight   = capturedHeight
-                flyanim.landingVelocity = capturedVelocity
-                flyanim.landingVelocityCapture = capturedVelocity
-                doLanding(lplr.Character)
-            else
-                local deadChar = lplr.Character
-                local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
-                if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-                flyanim.landingHeight = nil
-            end
+    startLandingWatcher()
+
+    local function finalizarAterrizaje(newState)
+        if not flyanim.waitingLand then return end
+        flyanim.waitingLand = false
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+        if newState ~= Enum.HumanoidStateType.Dead then
+            flyanim.landingHeight   = capturedHeight
+            flyanim.landingVelocity = capturedVelocity
+            flyanim.landingVelocityCapture = capturedVelocity
+            doLanding(lplr.Character)
+        else
+            local deadChar = lplr.Character
+            local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
+            if animSc then animSc.Disabled = false; flyanim.animScript = nil end
+            flyanim.landingHeight = nil
         end
+    end
+
+    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
+        if not flyanim.waitingLand then
+            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+            return
+        end
+        if newState == Enum.HumanoidStateType.Landed
+        or newState == Enum.HumanoidStateType.Running
+        or newState == Enum.HumanoidStateType.RunningNoPhysics
+        or newState == Enum.HumanoidStateType.Dead then
+            finalizarAterrizaje(newState)
+        end
+    end)
+
+    -- Timeout de seguridad: si en 10 segundos no aterriza, forzar restauracion
+    task.delay(10, function()
+        if not flyanim.waitingLand then return end
+        flyanim.waitingLand = false
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+        local animSc = lplr.Character and lplr.Character:FindFirstChild("Animate") or flyanim.animScript
+        if animSc then animSc.Disabled = false; flyanim.animScript = nil end
+        local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
+        if humFinal and humFinal.Parent then
+            humFinal.PlatformStand = false
+            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+        flyanim.landingHeight = nil
     end)
 end
 
@@ -4499,6 +4682,18 @@ local function _connectGlobal()
             flyanim.fKeyHeld = true
             if not flyanim.blockCancelledByCombo then
                 if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
+                    -- Si hay combo activo, cancelarlo inmediatamente con fade rápido
+                    if flyanim.comboPlaying then
+                        flyanim.comboToken = (flyanim.comboToken or 0) + 1
+                        for _, track in pairs(flyanim.tracks) do
+                            pcall(function() if track and track.IsPlaying then track:Stop(0.08) end end)
+                        end
+                        flyanim.comboPlaying = false
+                        flyanim.comboBusy    = false
+                        flyanim.combo4Frozen = false
+                        resetCombo()
+                        stopComboC0Lock()
+                    end
                     startBlocking()
                 end
             end
@@ -4545,6 +4740,7 @@ local function _connectGlobal()
         if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
         destroyWhiteFlash()
         local cam = workspace.CurrentCamera; if cam then cam.FieldOfView=70 end
+        stopLandingWatcher()
         flyanim.mode="normal"; flyanim.speed=BASE_SPEED; flyanim.isMoving=false
         flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
         flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
@@ -4577,6 +4773,7 @@ local function _connectGlobal()
         flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
         c0DesiredCFrame = nil
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
+        flyanim.sessionToken = (flyanim.sessionToken or 0) + 1  -- invalidar guards de sesion anterior al respawn
         _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
