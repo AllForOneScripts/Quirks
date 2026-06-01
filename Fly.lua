@@ -1,4 +1,4 @@
-print("version 1.22 fly")
+print("version 1.23 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -147,8 +147,38 @@ local LOCK_ROTATION_SMOOTH = 0.8
 -- Límite de coordenadas para detectar teletransporte anómalo
 local COORD_SANITY_LIMIT = 50000
 
+-- ============================================================
+-- SISTEMA DE ACCIÓN NO ANÓMALA (TrustedAction)
+-- Ventana retroactiva: cubre DESDE _trustedFrom HASTA _trustedUntil.
+-- Así funciona aunque el TP ocurra ligeramente antes de la llamada.
+-- ============================================================
+local _trustedFrom   = 0   -- tick() desde el que la ventana es válida (retroactivo)
+local _trustedUntil  = 0   -- tick() hasta el que los guards están suspendidos
+local _trustedReason = ""
 
+local TRUSTED_LOOKBACK = 0.15  -- ventana retroactiva en segundos
 
+local function isTrustedAction()
+    local now = tick()
+    return now >= _trustedFrom and now < _trustedUntil
+end
+
+-- Fuerza actualización de las posiciones seguras con la posición actual.
+-- Se llama desde TrustedAction para que los guards no reviertan el TP.
+local function _flushSafePos()
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local pos = root.Position
+    -- Sólo actualizar si la posición no es absurda
+    if math.abs(pos.X) < COORD_SANITY_LIMIT
+    and math.abs(pos.Y) < COORD_SANITY_LIMIT
+    and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+        flyanim.lastSafePos  = pos
+        flyanim.lastSafeTime = tick()
+        flyanim.lastKnownPos = pos
+    end
+end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -428,6 +458,13 @@ local function startTeleportGuard()
         end
 
         local pos = root.Position
+
+        -- Si hay una acción marcada como legítima, actualizar posición segura sin corregir
+        if isTrustedAction() then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+            return
+        end
 
         -- Detectar coordenadas absolutamente absurdas (caída al void, etc.)
         local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
@@ -1733,6 +1770,12 @@ local function startAnomalyProtection()
         local vel = root.AssemblyLinearVelocity
         local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
+
+        -- Si hay una acción marcada como legítima, actualizar lastKnownPos sin corregir
+        if isTrustedAction() then
+            flyanim.lastKnownPos = root.Position
+            return
+        end
 
         -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
