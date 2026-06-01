@@ -3989,39 +3989,64 @@ end
 -- ============================================================
 -- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
--- Replica la secuencia de Fly_v1_31 doLanding():
---   · Zerear velocidades al instante
---   · BodyVelocity de fuerza máxima durante exactamente un frame
---   · PlatformStand=true ese frame para que no aplique GettingUp/Freefall
---   · Destruir BV y restaurar PlatformStand=false en task.defer
---   · Forzar estado Landed para que el personaje quede parado limpiamente
+-- Al detectar suelo inminente:
+--   · Cancela TODOS los impulsos en Y al instante
+--   · Fuerza el body completamente recto (upright) con un BodyGyro
+--     de maxTorque muy alto durante el impacto, eliminando cualquier
+--     inclinacion residual del vuelo que cause rebotes laterales
+--   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
+--     para "pegar" al suelo y absorber el impacto sin afectar XZ
+--   · Destruye todo y restaura el estado normal al terminar
+local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
+
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    -- Zerear velocidad Y inmediatamente, conservando XZ para no romper el movimiento
+    -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
     pcall(function()
         local v = hrp.AssemblyLinearVelocity
+        -- Zerear Y por completo; conservar XZ para no interrumpir el movimiento
         hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    -- BodyVelocity solo en eje Y durante 0.1s con leve empuje hacia abajo.
-    -- MaxForce solo en Y para no interferir con el movimiento horizontal.
-    -- NO llamamos hum:ChangeState(Landed) aquí: eso dispararía finalizarAterrizaje
-    -- antes de tocar el suelo real, causando que doLanding corra en el aire y
-    -- GettingUp genere el rebote. Dejamos que el motor de física detecte Landed solo.
+    -- Paso 2: BodyGyro de alta potencia para alinear el body completamente
+    -- Esto elimina la inclinacion residual del vuelo (turbo/mega usan CFrame.Angles)
+    -- que hace que al impactar el suelo la fisica calcule fuerzas de reaccion
+    -- laterales y salga el personaje disparado hacia los lados.
+    local uprightGyro = Instance.new("BodyGyro")
+    do
+        local _, ry, _ = hrp.CFrame:ToOrientation()
+        -- CFrame completamente vertical: solo conservar rotacion Y (yaw), anular pitch/roll
+        uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+        uprightGyro.P         = 999999
+        uprightGyro.MaxTorque = Vector3.new(999999, 999999, 999999)
+        uprightGyro.Parent    = hrp
+    end
+    -- Forzar la orientacion del HRP inmediatamente tambien via CFrame
+    pcall(function()
+        local _, ry, _ = hrp.CFrame:ToOrientation()
+        local currentPos = hrp.Position
+        hrp.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, ry, 0)
+    end)
+
+    -- Paso 3: BodyVelocity que bloquea el eje Y durante GROUND_STICK_TIME
+    -- MaxForce solo en Y: no toca XZ, el personaje puede moverse normalmente
+    -- Velocity Y = 0 para absorber rebotes y mantenerlo pegado al suelo
     local bv = Instance.new("BodyVelocity")
-    bv.Velocity  = Vector3.new(0, -2, 0)
+    bv.Velocity  = Vector3.new(0, 0, 0)
     bv.MaxForce  = Vector3.new(0, 9e9, 0)
     bv.Parent    = hrp
+
     hum.PlatformStand = true
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
 
-    task.delay(0.1, function()
+    task.delay(GROUND_STICK_TIME, function()
         pcall(function() bv:Destroy() end)
+        pcall(function() uprightGyro:Destroy() end)
         if not hum or not hum.Parent then return end
-        -- Zerear Y una última vez antes de soltar
+        -- Zerear Y una ultima vez al soltar
         if hrp and hrp.Parent then
             local v2 = hrp.AssemblyLinearVelocity
             hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
@@ -4030,8 +4055,7 @@ local function omniAntiBounceLand(hrp, hum)
         hum.PlatformStand = false
         hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
         hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-        -- No llamar ChangeState aquí. El motor de física detectará Landed
-        -- en el siguiente frame cuando el personaje contacte el suelo.
+        -- El motor de fisica detectara Landed en el siguiente frame
     end)
 end
 
@@ -4300,18 +4324,22 @@ local function _flyOff()
         end
     end
 
-    -- Alinear orientación (quitar inclinación del vuelo).
-    -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
-    -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
+    -- Alinear orientación (quitar inclinación del vuelo) ANTES de Freefall.
+    -- Es critico que el HRP quede completamente recto (sin pitch/roll) en este momento:
+    -- si el body tiene inclinacion residual del turbo/mega (CFrame.Angles), al entrar
+    -- en Freefall la fisica calcula fuerzas de contacto laterales al tocar el suelo
+    -- que disparan el personaje hacia los lados (el "rebote loco").
     if rootCurrent then
         local _, ry, _ = rootCurrent.CFrame:ToOrientation()
         pcall(function()
+            -- Forzar CFrame completamente vertical: solo yaw, sin pitch ni roll
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-            -- Zerear solo X/Z para evitar que el personaje salga disparado lateralmente.
-            -- NO tocar Y: cleanupMotors(preserveVelY) ya la manejó.
+            -- Zerear velocidad angular para que no haya torques residuales
+            rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            -- Zerear XZ tambien: al salir del vuelo solo debe haber caida libre en Y.
+            -- La velocidad Y ya fue preservada por cleanupMotors(preserveVelY=true).
             local velY = rootCurrent.AssemblyLinearVelocity.Y
             rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
-            rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
 
