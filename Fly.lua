@@ -1,4 +1,4 @@
-print("version 1.38 fly")
+print("version 1.39 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -452,7 +452,17 @@ local function startTeleportGuard()
                       or (pos.Y < -5000)  -- caída al void
                       or (pos ~= pos)     -- NaN check
 
-        if isInsane then
+        -- Detectar TP forzado externo: movimiento > 1500 studs en un solo frame
+        -- y sin dash activo. TPs propios (del usuario) son legítimos aunque sean grandes.
+        local isForcedTP = false
+        if not isInsane and flyanim.lastSafePos and flyanim.dashTimer <= 0 then
+            local delta = (pos - flyanim.lastSafePos).Magnitude
+            if delta > 1500 then
+                isForcedTP = true
+            end
+        end
+
+        if isInsane or isForcedTP then
             local safePos = flyanim.lastSafePos
             if safePos then
                 local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
@@ -516,9 +526,9 @@ local function cleanupMotors(root, preserveVelY)
     if preserveVelY then
         local currentVelY = 0
         pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
-        -- Si está quieto o subiendo, aplicar pequeño impulso hacia abajo
-        -- para que Freefall empiece correctamente sin flotar
-        local finalVelY = (currentVelY > 0) and -4 or currentVelY
+        -- Si está quieto (velY == 0) o subiendo (velY > 0), aplicar
+        -- pequeño impulso hacia abajo para que Freefall arranque correctamente.
+        local finalVelY = (currentVelY >= 0) and -4 or currentVelY
         pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, finalVelY, 0) end)
     else
         pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
@@ -1753,18 +1763,9 @@ local function startAnomalyProtection()
             isAnomaly = true
         end
 
-        if flyanim.lastKnownPos and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            local posDelta = (root.Position - flyanim.lastKnownPos).Magnitude
-            local maxLegitMove = (BASE_SPEED * TURBO_MULT + flyanim.DASH_SPEED) * dt * 3
-            -- Ignorar delta de posición cuando hay velocidad vertical grande (caída libre)
-            local isFallingFast = vel.Y < -30
-            if not isFallingFast and posDelta > math.max(ANOMALY_TELEPORT_STUDS, maxLegitMove) then
-                -- Solo es anomalía si no es un dash activo
-                if flyanim.dashTimer <= 0 then
-                    isAnomaly = true
-                end
-            end
-        end
+        -- (bloque posDelta eliminado: el sistema de anomalías ya no revierte
+        -- teletransportes por distancia, eso lo maneja el teleportGuard con su
+        -- umbral de 1500 studs. Aquí solo se actúa sobre speed absurda o ragdoll.)
 
         if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
             isAnomaly = true
@@ -4224,25 +4225,29 @@ local function _flyOff()
     end
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
-    -- Re-habilitar estados que fueron desactivados. Se hace en task.defer para
-    -- que Freefall ya este establecido antes de que puedan dispararse de nuevo.
-    task.defer(function()
+
+    -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
+    -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
+    -- Freefall esté asentado, causando el rebote hacia arriba.
+    task.delay(0.12, function()
         if hum and hum.Parent then
             hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
         end
     end)
-    -- KICK DE CAÍDA: aplicar impulso hacia abajo solo si el personaje está quieto
-    -- o subiendo al apagar el vuelo. NO aplicar si ya cae normalmente.
+
+    -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
+    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
+    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
     if rootCurrent then
-        task.defer(function()
+        task.delay(0.01, function()
             if not rootCurrent or not rootCurrent.Parent then return end
+            if flyanim.enabled then return end  -- ya reactivó el vuelo
             local velY = rootCurrent.AssemblyLinearVelocity.Y
-            -- Solo forzar caída si está subiendo o casi estático
-            if velY > 1 then
+            if velY > 0.5 then
                 pcall(function()
-                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -8, 0)
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
                 end)
             end
         end)
