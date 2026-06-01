@@ -1,4 +1,4 @@
-print("version 1.30 fly")
+print("version 1.31 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4228,6 +4228,11 @@ local function _flyOff()
         return
     end
 
+    -- Deshabilitar GettingUp ANTES de quitar PlatformStand:
+    -- cuando PlatformStand pasa de true→false en el aire, Roblox dispara GettingUp
+    -- automáticamente, que empuja al personaje hacia arriba ("pararse").
+    -- Deshabilitándolo evitamos ese rebote. Se vuelve a habilitar después.
+    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
     hum.PlatformStand = false
     hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
@@ -4250,6 +4255,13 @@ local function _flyOff()
     end
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
+    -- Re-habilitar GettingUp ahora que el estado Freefall ya está establecido.
+    -- El personaje podrá pararse normalmente cuando toque el suelo.
+    task.defer(function()
+        if hum and hum.Parent then
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+        end
+    end)
 
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
@@ -4258,8 +4270,11 @@ local function _flyOff()
         local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
+            -- GettingUp ya fue deshabilitado arriba; re-habilitarlo ahora que
+            -- PlatformStand ya es false y no puede causar el rebote hacia arriba.
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum.PlatformStand = false
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
         flyanim.landingHeight = nil
         return
