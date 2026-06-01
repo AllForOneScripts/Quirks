@@ -1,4 +1,4 @@
-print("version 1.33 fly")
+print("version 1.34 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -397,6 +397,11 @@ local flyanim = {
     lastSafeTime     = 0,
     teleportGuardConn = nil,
     isTeleportGuardActive = false,
+
+    -- Token de sesión: se incrementa en _flyOff() para invalidar INSTANTÁNEAMENTE
+    -- cualquier callback de Heartbeat/Stepped que corra un tick extra tras el apagado.
+    -- Cada guard captura su sessionToken al iniciar y lo comprueba ANTES de actuar.
+    sessionToken = 0,
 }
 
 -- ============================================================
@@ -441,7 +446,19 @@ local function startTeleportGuard()
     flyanim.lastSafeTime = tick()
     flyanim.isTeleportGuardActive = true
 
+    -- Capturar sessionToken: si _flyOff lo incrementa, este guard
+    -- se apaga en el mismo tick sin actuar sobre datos de sesion anterior.
+    local mySession = flyanim.sessionToken
+
     flyanim.teleportGuardConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.teleportGuardConn then
+                flyanim.teleportGuardConn:Disconnect()
+                flyanim.teleportGuardConn = nil
+            end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
         if not flyanim.enabled then
             if flyanim.teleportGuardConn then
                 flyanim.teleportGuardConn:Disconnect()
@@ -1666,7 +1683,12 @@ end
 
 local function startAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+    local mySession = flyanim.sessionToken
     flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
         if not flyanim.enabled then
             if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
             return
@@ -1759,7 +1781,13 @@ end
 local function startAnomalyProtection()
     if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
     flyanim.lastKnownPos = nil
+    local mySession = flyanim.sessionToken
     flyanim.anomalyConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
         if not flyanim.enabled then
             if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
             flyanim.lastKnownPos = nil
@@ -1941,7 +1969,12 @@ local function startAnimBlockLoop()
     ownAnimIds[CAIDA_BASE_ID]    = true
     ownAnimIds[CAIDA_OVERLAY_ID] = true
 
+    local mySession = flyanim.sessionToken
     flyanim.animBlockRenderConn = RunService.RenderStepped:Connect(function()
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
+            return
+        end
         if not flyanim.enabled then
             if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
             return
@@ -3828,6 +3861,10 @@ local function _flyOn()
     _landBaseRef = nil; _landOverlayRef = nil
     -- Cancelar cualquier tween de compensación de altura en curso
     heightTweenToken = heightTweenToken + 1
+    -- Nueva sesion de vuelo: incrementar sessionToken para que los guards
+    -- que inicien ahora tengan un token fresco y no colisionen con restos
+    -- de una sesion anterior que pudo quedar en un tick de transicion.
+    flyanim.sessionToken = (flyanim.sessionToken or 0) + 1
     flyanim.enabled = true
     flyanim.mode = "normal"; flyanim.speed = BASE_SPEED
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
@@ -3859,7 +3896,11 @@ local function _flyOn()
     startAnomalyProtection(); startAnimBlockLoop(); startTeleportGuard()
 
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
+    local _tpMoveSession = flyanim.sessionToken
     flyanim.tpMoveConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= _tpMoveSession then
+            flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return
+        end
         if not flyanim.enabled then
             flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return
         end
@@ -3952,7 +3993,9 @@ local function _flyOn()
     end)
 
     if flyanim.rsConn then flyanim.rsConn:Disconnect() end
+    local _rsSession = flyanim.sessionToken
     flyanim.rsConn = RunService.RenderStepped:Connect(function(dt)
+        if flyanim.sessionToken ~= _rsSession then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         if not flyanim.enabled then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         local cc   = lplr.Character
         local root = cc and cc:FindFirstChild("HumanoidRootPart")
@@ -4075,8 +4118,13 @@ local function _flyOff()
     flyanim.gyroProtectionActive = false
 
     -- ── PASO 0B: Invalidar TODOS los tokens inmediatamente ──
-    -- Esto hace que cualquier coroutine/loop que compruebe su token
-    -- sepa que debe terminar, ANTES de que enabled cambie.
+    -- sessionToken es lo PRIMERO: invalida los guards de seguridad (teleportGuard,
+    -- anomalyProtection, antiImpulse, animBlockLoop) en el mismo tick, antes de
+    -- que corran sus callbacks de Heartbeat/Stepped. Sin esto, pueden ejecutar
+    -- un tick extra con datos de la sesion anterior (lastSafePos, lastKnownPos)
+    -- y teleportar al personaje o forzar velocidad 0 cuando ya no esta volando.
+    flyanim.sessionToken          = (flyanim.sessionToken          or 0) + 1
+    -- Invalidar el resto de tokens de coroutines y loops internos
     flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken  or 0) + 1
     flyanim.turboPreImpulsoActivo = false
     flyanim.idleWatchToken        = (flyanim.idleWatchToken        or 0) + 1
@@ -4599,6 +4647,7 @@ local function _connectGlobal()
         flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
         c0DesiredCFrame = nil
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
+        flyanim.sessionToken = (flyanim.sessionToken or 0) + 1  -- invalidar guards de sesion anterior al respawn
         _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
