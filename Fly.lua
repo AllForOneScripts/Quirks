@@ -1,4 +1,4 @@
-print("version 1.42 fly")
+print("version 1.44 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2646,24 +2646,26 @@ end
 -- termina limpiamente sin depender de onStopped.
 -- ============================================================
 
-local COMBO_ANIM_DURATION  = 0.75   -- tiempo mínimo que debe pasar antes de aceptar el siguiente golpe
-local COMBO_PENDING_WINDOW = 1.5    -- si pasa más de esto sin click, el combo termina (= COMBO_CHAIN_WINDOW)
+-- Duración mínima por paso antes de aceptar el siguiente golpe
+-- Paso 1: 0.47s | Paso 2: 0.47s | Paso 3: 0.53s | Paso 4: 0.68s
+local COMBO_STEP_DURATION  = {0.47, 0.47, 0.53, 0.68}
+local COMBO_ANIM_DURATION  = 0.47   -- fallback genérico (ya no lo usa el secuenciador principal)
+-- Si pasa más de 1s sin click, el combo termina
+local COMBO_PENDING_WINDOW = 1.0
 
 -- Señal de "click pendiente": el secuenciador la consume cuando comboBusy=false
 local comboPendingClick = false
 
 local function _launchComboAnim(animId, speed)
-    -- Para todas las animaciones excepto levitacion
+    -- Solo parar animaciones de combate (flyanim.tracks), NUNCA las normalTracks
+    -- (levitación, estatica, idle, movimiento) para que no se rompa el sistema de animación
     for id, track in pairs(flyanim.tracks) do
         if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
         end
     end
-    for key, track in pairs(flyanim.normalTracks) do
-        if key ~= "levitacion" then
-            pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-        end
-    end
+    -- NO tocar flyanim.normalTracks aqui: esas son las animaciones del vuelo normal
+    -- y pararlas rompe la animacion de idle/levitacion al terminar el combo
 
     local t = getTrack(animId)
     if not t then return end
@@ -2753,102 +2755,70 @@ local function finalizarCombo()
 end
 
 -- Secuenciador del combo: corre en su propio task y maneja toda la secuencia
+-- Duraciones por paso: 0.47s / 0.47s / 0.53s / 0.68s
+-- Cancelación si no hay click en 1s tras cada paso.
 local function runComboSequencer(startToken)
-    -- Paso 1
+    -- ── Helper: esperar duración de paso y luego aguardar click ──────────────
+    local function waitStep(stepIdx)
+        local dur = COMBO_STEP_DURATION[stepIdx] or 0.47
+        local stepStart = tick()
+        while tick() - stepStart < dur do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then return false end
+        end
+        flyanim.comboBusy = false
+
+        local waitStart = tick()
+        while not comboPendingClick do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then return false end
+            if tick() - waitStart > COMBO_PENDING_WINDOW then
+                finalizarCombo(); return false
+            end
+        end
+        comboPendingClick = false
+        if flyanim.comboToken ~= startToken then return false end
+        return true
+    end
+
+    -- ── Paso 1 ────────────────────────────────────────────────────────────────
     flyanim.comboStep = 1
     _launchComboAnim(ANIM.combo1, 3.0)
     flyanim.comboBusy = true
     comboPendingClick = false
+    if not waitStep(1) then return end
 
-    local stepStart = tick()
-    while tick() - stepStart < COMBO_ANIM_DURATION do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-    end
-    flyanim.comboBusy = false
-
-    -- Esperar siguiente click (max 1.5s)
-    local waitStart = tick()
-    while not comboPendingClick do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-        if tick() - waitStart > COMBO_PENDING_WINDOW then
-            finalizarCombo(); return
-        end
-    end
-    comboPendingClick = false
-    if flyanim.comboToken ~= startToken then return end
-
-    -- Paso 2
+    -- ── Paso 2 ────────────────────────────────────────────────────────────────
     flyanim.comboStep = 2
     local r = math.random(1, 2)
     local chosenId2, chosenKey2
     if r == 1 then chosenId2 = ANIM.combo2a; chosenKey2 = "a"
-    else chosenId2 = ANIM.combo2b; chosenKey2 = "b" end
+    else            chosenId2 = ANIM.combo2b; chosenKey2 = "b" end
     flyanim.combo2LastUsed = chosenKey2
     _launchComboAnim(chosenId2, 3.0)
     flyanim.comboBusy = true
     comboPendingClick = false
+    if not waitStep(2) then return end
 
-    stepStart = tick()
-    while tick() - stepStart < COMBO_ANIM_DURATION do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-    end
-    flyanim.comboBusy = false
-
-    waitStart = tick()
-    while not comboPendingClick do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-        if tick() - waitStart > COMBO_PENDING_WINDOW then
-            finalizarCombo(); return
-        end
-    end
-    comboPendingClick = false
-    if flyanim.comboToken ~= startToken then return end
-
-    -- Paso 3
+    -- ── Paso 3 ────────────────────────────────────────────────────────────────
     flyanim.comboStep = 3
     local chosenId3 = (flyanim.combo2LastUsed == "a") and ANIM.combo3b or ANIM.combo3a
     _launchComboAnim(chosenId3, 3.0)
     flyanim.comboBusy = true
     comboPendingClick = false
+    if not waitStep(3) then return end
 
-    stepStart = tick()
-    while tick() - stepStart < COMBO_ANIM_DURATION do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-    end
-    flyanim.comboBusy = false
-
-    waitStart = tick()
-    while not comboPendingClick do
-        task.wait(0.02)
-        if flyanim.comboToken ~= startToken then return end
-        if tick() - waitStart > COMBO_PENDING_WINDOW then
-            finalizarCombo(); return
-        end
-    end
-    comboPendingClick = false
-    if flyanim.comboToken ~= startToken then return end
-
-    -- Paso 4
+    -- ── Paso 4 ────────────────────────────────────────────────────────────────
     flyanim.comboStep = 4
     local spaceDown4 = UserInputService:IsKeyDown(Enum.KeyCode.Space)
 
     if spaceDown4 then
-        -- Combo 4 especial con espacio
+        -- Combo 4 especial con espacio (sin cambios)
         local t4s = getTrack(ANIM.combo4_space)
         if t4s then
             for id, track in pairs(flyanim.tracks) do
                 if id ~= ANIM.combo4_space and id ~= ANIM.levitacion and track and track.IsPlaying then
                     pcall(function() track:Stop(0.05) end)
-                end
-            end
-            for key, track in pairs(flyanim.normalTracks) do
-                if key ~= "levitacion" then
-                    pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
                 end
             end
             t4s.Looped = false; t4s.Priority = Enum.AnimationPriority.Action4
@@ -2865,67 +2835,97 @@ local function runComboSequencer(startToken)
         end
         resetCombo()
         finalizarCombo()
-    else
-        -- Combo 4 normal: congelar al 25% y esperar click para el remate
-        local t4 = getTrack(ANIM.combo4)
-        if not t4 then finalizarCombo(); return end
-        for id, track in pairs(flyanim.tracks) do
-            if id ~= ANIM.combo4 and id ~= ANIM.levitacion and track and track.IsPlaying then
-                pcall(function() track:Stop(0.05) end)
-            end
-        end
-        for key, track in pairs(flyanim.normalTracks) do
-            if key ~= "levitacion" then
-                pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-            end
-        end
-        t4.Looped   = false
-        t4.Priority = Enum.AnimationPriority.Action4
-        if t4.IsPlaying then pcall(function() t4:Stop(0) end) end
-        pcall(function() t4:Play(0.05, 1, 1); t4:AdjustSpeed(3.0) end)
-        flyanim.comboBusy = true
-        comboPendingClick = false
-
-        -- Esperar que llegue al 25%
-        local timeout4 = tick() + 3
-        while t4.IsPlaying and tick() < timeout4 do
-            task.wait(0.02)
-            if flyanim.comboToken ~= startToken then return end
-            local len4 = t4.Length
-            if len4 > 0 and t4.TimePosition >= len4 * 0.25 then break end
-        end
-        if flyanim.comboToken ~= startToken then return end
-
-        -- Congelar al 25%
-        flyanim.combo4Frozen = true
-        flyanim.comboBusy = false
-        pcall(function() t4:AdjustSpeed(0) end)
-        if t4.Length > 0 then pcall(function() t4.TimePosition = t4.Length * 0.25 end) end
-
-        -- Esperar click para el remate (max 0.3s como antes)
-        local freezeStart = tick()
-        while not comboPendingClick and tick() - freezeStart < 0.3 do
-            task.wait(0.02)
-            if flyanim.comboToken ~= startToken then
-                flyanim.combo4Frozen = false; return
-            end
-        end
-        flyanim.combo4Frozen = false
-        comboPendingClick = false
-        if flyanim.comboToken ~= startToken then return end
-
-        -- Lanzar remate
-        pcall(function() t4:AdjustSpeed(10) end)
-        t4.Looped = false
-        local timeout4b = tick() + 3
-        while t4.IsPlaying and tick() < timeout4b do
-            task.wait(0.03)
-            if flyanim.comboToken ~= startToken then return end
-        end
-        resetCombo()
-        finalizarCombo()
         return
     end
+
+    -- ── Combo 4 normal: animación completa rápida, pausa al 55%, remate muy rápido
+    --
+    -- Diseño de timing (duración total del paso 4 = 0.68s):
+    --   · La animación rbxassetid://2954124238 tiene su "golpe natural" alrededor
+    --     del frame 0.53s.  La corremos a velocidad alta para que ese trozo pase
+    --     rápido, luego la congelamos al 55% del largo total.
+    --   · Al 55% aplicamos la lógica de impacto (hitbox, comboBusy=false para que
+    --     el secuenciador continúe contando el tiempo restante hasta 0.68s).
+    --   · Tras la pausa, corremos lo que queda (55%→100%) a velocidad muy alta
+    --     (AdjustSpeed 15) para que el remate visual sea instantáneo.
+    -- ─────────────────────────────────────────────────────────────────────────
+    local t4 = getTrack(ANIM.combo4)
+    if not t4 then finalizarCombo(); return end
+
+    -- Parar otras tracks de combate (NO las normalTracks)
+    for id, track in pairs(flyanim.tracks) do
+        if id ~= ANIM.combo4 and id ~= ANIM.levitacion and track and track.IsPlaying then
+            pcall(function() track:Stop(0.05) end)
+        end
+    end
+
+    t4.Looped   = false
+    t4.Priority = Enum.AnimationPriority.Action4
+    if t4.IsPlaying then pcall(function() t4:Stop(0) end) end
+
+    -- Esperar a que el track tenga duración conocida (máx 2s)
+    pcall(function() t4:Play(0.05, 1, 1) end)
+    local toLoad = tick() + 2
+    while t4.Length == 0 and tick() < toLoad do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+    end
+
+    -- Fase 1: desde 0% hasta 55%, velocidad alta (el "golpe" natural de la anim ~0.53s pasa rápido)
+    pcall(function() t4:AdjustSpeed(4.0) end)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+    flyanim.combo4Frozen = false
+
+    local len4 = t4.Length
+    local PAUSE_PERC = 0.55  -- pausar aquí para aplicar la lógica de impacto
+    local timeout4 = tick() + 4
+    while t4.IsPlaying and tick() < timeout4 do
+        task.wait(0.016)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+        len4 = t4.Length
+        if len4 > 0 and t4.TimePosition >= len4 * PAUSE_PERC then break end
+    end
+    if flyanim.comboToken ~= startToken then flyanim.combo4Frozen = false; return end
+
+    -- ── PAUSA AL 55%: aplicar lógica de impacto ───────────────────────────────
+    flyanim.combo4Frozen = true
+    flyanim.comboBusy    = false   -- el secuenciador puede seguir contando el tiempo
+    pcall(function() t4:AdjustSpeed(0) end)
+    if len4 > 0 then pcall(function() t4.TimePosition = len4 * PAUSE_PERC end) end
+
+    -- Aquí es donde el tiempo restante del paso 4 (0.68s total menos lo ya transcurrido)
+    -- "corre" — el waitStep(4) ya consumió ~0s porque lo llamamos después.
+    -- Calculamos el tiempo que queda hasta completar 0.68s desde que empezó el paso 4.
+    -- (No usamos waitStep aquí porque queremos la ventana de click al mismo tiempo)
+    -- Esperar el click pendiente o que expire el tiempo del paso
+    local stepDur4  = COMBO_STEP_DURATION[4]   -- 0.68s
+    local pauseDeadline = tick() + (stepDur4 * (1 - PAUSE_PERC) + 0.08)  -- tiempo restante + buffer
+    while not comboPendingClick and tick() < pauseDeadline do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then
+            flyanim.combo4Frozen = false; return
+        end
+    end
+    flyanim.combo4Frozen = false
+    comboPendingClick    = false
+    if flyanim.comboToken ~= startToken then return end
+
+    -- Fase 2: continuar desde 55% hasta el final muy rápido (remate visual instantáneo)
+    pcall(function() t4:AdjustSpeed(15) end)
+    t4.Looped = false
+    local timeout4b = tick() + 2
+    while t4.IsPlaying and tick() < timeout4b do
+        task.wait(0.016)
+        if flyanim.comboToken ~= startToken then return end
+    end
+
+    resetCombo()
+    finalizarCombo()
 end
 
 local function handleComboClick()
@@ -3653,6 +3653,7 @@ local function _flyOn()
     local char = lplr.Character; if not char then return end
     -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
     if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
+    stopLandingWatcher()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
@@ -3931,6 +3932,90 @@ local function _flyOn()
     end)
 end
 
+-- ============================================================
+-- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
+-- ============================================================
+-- Replica la secuencia de Fly_v1_31 doLanding():
+--   · Zerear velocidades al instante
+--   · BodyVelocity de fuerza máxima durante exactamente un frame
+--   · PlatformStand=true ese frame para que no aplique GettingUp/Freefall
+--   · Destruir BV y restaurar PlatformStand=false en task.defer
+--   · Forzar estado Landed para que el personaje quede parado limpiamente
+local function omniAntiBounceLand(hrp, hum)
+    if not hrp or not hum then return end
+    -- Paso 1: silenciar velocidad inmediatamente
+    pcall(function() hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+    pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
+    -- Paso 2: pulso bloqueante de un frame
+    local quickBounce = Instance.new("BodyVelocity")
+    quickBounce.Velocity  = Vector3.new(0, 0, 0)
+    quickBounce.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
+    quickBounce.Parent    = hrp
+    hum.PlatformStand     = true
+    task.defer(function()
+        pcall(function() quickBounce:Destroy() end)
+        if hum and hum.Parent then
+            hum.PlatformStand = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Landed) end)
+        end
+    end)
+end
+
+-- ============================================================
+-- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
+-- ============================================================
+-- Se activa en _flyOff() cuando hay altura >= 10 studs.
+-- Cada Heartbeat lanza un raycast de 5 studs hacia abajo;
+-- si detecta suelo a <= 2.5 studs aplica omniAntiBounceLand
+-- para evitar el rebote al caer.
+local _landingWatchConn = nil
+local _landingWatchToken = 0
+
+local function stopLandingWatcher()
+    _landingWatchToken = _landingWatchToken + 1
+    if _landingWatchConn then
+        _landingWatchConn:Disconnect()
+        _landingWatchConn = nil
+    end
+end
+
+local function startLandingWatcher()
+    stopLandingWatcher()
+    local myToken = _landingWatchToken
+
+    _landingWatchConn = RunService.Heartbeat:Connect(function()
+        -- Sólo activo mientras esperamos el aterrizaje
+        if not flyanim.waitingLand then
+            stopLandingWatcher()
+            return
+        end
+        if _landingWatchToken ~= myToken then return end
+
+        local char = lplr.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then return end
+
+        -- Solo actuar si el personaje está cayendo (velY negativa)
+        local velY = hrp.AssemblyLinearVelocity.Y
+        if velY >= -2 then return end
+
+        -- Raycast hacia el suelo: distancia de sondeo escalada con la velocidad de caída
+        -- A mayor velocidad, sondamos más lejos para tener más tiempo de reacción
+        local probeDistance = math.clamp(math.abs(velY) * 0.08, 2.0, 6.0)
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = {char}
+        local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
+
+        if hit then
+            -- Hay suelo dentro del rango de sondeo → aplicar anti-rebote ahora
+            stopLandingWatcher()
+            omniAntiBounceLand(hrp, hum)
+        end
+    end)
+end
+
 local function _flyOff()
     local char = lplr.Character
 
@@ -4195,6 +4280,7 @@ local function _flyOff()
 
     flyanim.waitingLand = true
     if flyanim.landConn then flyanim.landConn:Disconnect() end
+    startLandingWatcher()
 
     local function finalizarAterrizaje(newState)
         if not flyanim.waitingLand then return end
@@ -4484,6 +4570,7 @@ local function _connectGlobal()
         if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
         destroyWhiteFlash()
         local cam = workspace.CurrentCamera; if cam then cam.FieldOfView=70 end
+        stopLandingWatcher()
         flyanim.mode="normal"; flyanim.speed=BASE_SPEED; flyanim.isMoving=false
         flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
         flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
