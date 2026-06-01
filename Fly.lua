@@ -774,9 +774,8 @@ local function setupDamageDetector()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     flyanim.damageConn = hum.HealthChanged:Connect(function(newHealth)
-        -- HealthChanged ya trae el nuevo valor; cualquier reducción de HP cuenta como daño
-        -- (hum.Health en este momento ya ES newHealth, no el valor anterior)
-        if newHealth < hum.MaxHealth then  -- si no tiene HP máximo, fue golpeado
+        local oldHealth = hum.Health
+        if newHealth < oldHealth then
             flyanim.lastDamageTime = tick()
             if flyanim.isBlocking then
                 flyanim.isBlocking = false
@@ -1675,11 +1674,9 @@ local lastMotorReset    = 0
 local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
 
 -- ── Silent motor reset (fake fly-off / fly-on invisible) ──────────────────
--- Se activa cuando el juego "suelta" la hitbox sin que el jugador lo pida.
--- DURACIÓN EXACTA: 0.1s. Destruye y recrea los body movers restaurando el
--- estado de Physics. La DETECCIÓN se basa en desincronía cámara/hitbox:
--- cuando mi vista no coincide con donde está mi HRP en el juego, algo externo
--- movió la hitbox (el servidor, un estado de fisíca forzado, etc.).
+-- Se activa cuando el juego "suelta" la hitbox sin que el jugador lo pida:
+-- destruye y recrea los body movers en el mismo frame, restaurando el estado
+-- de Physics sin que el jugador note ningún parpadeo ni interrupción.
 local function silentMotorReset()
     local now = tick()
     if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
@@ -1723,19 +1720,6 @@ local function silentMotorReset()
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
-
-    -- Duración exacta de 0.1s: tras ese tiempo los motores quedan estables
-    task.delay(0.1, function()
-        if not flyanim.enabled then return end
-        local r2 = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
-        if r2 then
-            -- Asegurar que sigue en modo Physics tras el reset
-            local h2 = lplr.Character:FindFirstChildOfClass("Humanoid")
-            if h2 and h2:GetState() ~= Enum.HumanoidStateType.Physics then
-                pcall(function() h2:ChangeState(Enum.HumanoidStateType.Physics) end)
-            end
-        end
     end)
 end
 
@@ -1785,13 +1769,6 @@ local function startAnomalyProtection()
         local state = hum:GetState()
 
         -- ── Detección de hitbox caída ─────────────────────────────────────────
-        -- Solo actuar si el vuelo está activo Y no estamos en período de aterrizaje.
-        -- Durante waitingLand, Freefall/GettingUp/FallingDown son estados NORMALES
-        -- de la caída post-flyOff. Si silentMotorReset() los interrumpe aquí,
-        -- recrea los motores, re-ancora la física → el personaje sube, vuelve a
-        -- caer → bucle infinito de rebote.
-        if flyanim.waitingLand then return end
-
         -- Mientras volamos, el estado DEBE ser Physics. Si detectamos Freefall,
         -- GettingUp, FallingDown o Ragdoll sin que nosotros lo hayamos pedido,
         -- es señal de que el juego "soltó" la hitbox. Hacemos un reset silencioso.
@@ -2703,8 +2680,8 @@ local function doLanding(char)
     local hum2 = char:FindFirstChildOfClass("Humanoid")
     if hum2 then
         hum2.PlatformStand = false
-        pcall(function() hum2:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        task.wait(0.08)
+        -- NO llamar GettingUp aquí: genera impulso hacia arriba que causa el rebote.
+        -- Ir directamente a Landed → Running.
         pcall(function() hum2:ChangeState(Enum.HumanoidStateType.Landed) end)
         task.wait(0.05)
         pcall(function() hum2:ChangeState(Enum.HumanoidStateType.Running) end)
@@ -4012,59 +3989,49 @@ end
 -- ============================================================
 -- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
--- Cuando se detecta suelo inminente:
---   · Zerear TODAS las velocidades en Y inmediatamente (HRP + cuerpo)
---   · BodyVelocity solo en eje Y con empuje suave hacia abajo durante 0.1s
---     → elimina CUALQUIER impulso contrario (rebote, GettingUp, Freefall)
---   · PlatformStand=true + bloquear GettingUp/Jumping ese tiempo
---   · Al soltarse: zerear Y de nuevo y forzar Landed limpiamente
+-- Replica la secuencia de Fly_v1_31 doLanding():
+--   · Zerear velocidades al instante
+--   · BodyVelocity de fuerza máxima durante exactamente un frame
+--   · PlatformStand=true ese frame para que no aplique GettingUp/Freefall
+--   · Destruir BV y restaurar PlatformStand=false en task.defer
+--   · Forzar estado Landed para que el personaje quede parado limpiamente
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    -- Paso 1: silenciar TODAS las velocidades en Y inmediatamente
+    -- Zerear velocidad Y inmediatamente, conservando XZ para no romper el movimiento
     pcall(function()
-        local vx = hrp.AssemblyLinearVelocity.X
-        local vz = hrp.AssemblyLinearVelocity.Z
-        hrp.AssemblyLinearVelocity  = Vector3.new(vx, 0, vz)  -- conservar XZ, zerear Y
+        local v = hrp.AssemblyLinearVelocity
+        hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        -- Silenciar partes del cuerpo para evitar rebotes de física ragdoll
-        local char = lplr.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") and part ~= hrp then
-                    part.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end
-            end
-        end
     end)
 
-    -- Paso 2: bloqueo de eje Y durante 0.1s con leve empuje hacia abajo
-    -- MaxForce solo en Y para no interferir con el movimiento horizontal
-    local downForce = Instance.new("BodyVelocity")
-    downForce.Velocity  = Vector3.new(0, -2, 0)   -- pequeño empuje para pegar al suelo
-    downForce.MaxForce  = Vector3.new(0, 9e9, 0)   -- solo eje Y
-    downForce.Parent    = hrp
-    hum.PlatformStand   = true
-    -- Bloquear estados que generan impulso hacia arriba
+    -- BodyVelocity solo en eje Y durante 0.1s con leve empuje hacia abajo.
+    -- MaxForce solo en Y para no interferir con el movimiento horizontal.
+    -- NO llamamos hum:ChangeState(Landed) aquí: eso dispararía finalizarAterrizaje
+    -- antes de tocar el suelo real, causando que doLanding corra en el aire y
+    -- GettingUp genere el rebote. Dejamos que el motor de física detecte Landed solo.
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity  = Vector3.new(0, -2, 0)
+    bv.MaxForce  = Vector3.new(0, 9e9, 0)
+    bv.Parent    = hrp
+    hum.PlatformStand = true
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
 
     task.delay(0.1, function()
-        pcall(function() downForce:Destroy() end)
-        if hum and hum.Parent then
-            -- Zerear Y una última vez antes de restaurar
-            if hrp and hrp.Parent then
-                local vx2 = hrp.AssemblyLinearVelocity.X
-                local vz2 = hrp.AssemblyLinearVelocity.Z
-                hrp.AssemblyLinearVelocity  = Vector3.new(vx2, 0, vz2)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end
-            hum.PlatformStand = false
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Landed) end)
+        pcall(function() bv:Destroy() end)
+        if not hum or not hum.Parent then return end
+        -- Zerear Y una última vez antes de soltar
+        if hrp and hrp.Parent then
+            local v2 = hrp.AssemblyLinearVelocity
+            hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
+        hum.PlatformStand = false
+        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+        -- No llamar ChangeState aquí. El motor de física detectará Landed
+        -- en el siguiente frame cuando el personaje contacte el suelo.
     end)
 end
 
@@ -4072,10 +4039,9 @@ end
 -- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
 -- ============================================================
 -- Se activa en _flyOff() cuando hay altura >= 10 studs.
--- La detección se basa en raycast hacia abajo: si hay suelo dentro
--- del rango de sondeo y el personaje cae, aplica omniAntiBounceLand.
--- IMPORTANTE: También actúa si velY >= 0 pero el suelo está muy cerca
--- (personaje quedó flotando bajo por el kick de caída inicial).
+-- Cada Heartbeat lanza un raycast de 5 studs hacia abajo;
+-- si detecta suelo a <= 2.5 studs aplica omniAntiBounceLand
+-- para evitar el rebote al caer.
 local _landingWatchConn = nil
 local _landingWatchToken = 0
 
@@ -4092,7 +4058,6 @@ startLandingWatcher = function()
     local myToken = _landingWatchToken
 
     _landingWatchConn = RunService.Heartbeat:Connect(function()
-        -- Sólo activo mientras esperamos el aterrizaje
         if not flyanim.waitingLand then
             stopLandingWatcher()
             return
@@ -4104,17 +4069,11 @@ startLandingWatcher = function()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum then return end
 
+        -- Sondear siempre, no solo cuando velY < -2.
+        -- Si el personaje está casi estático tras el kick de caída puede tener
+        -- velY cercana a 0 y aun así estar a punto de tocar el suelo.
         local velY = hrp.AssemblyLinearVelocity.Y
-
-        -- Raycast hacia el suelo: distancia de sondeo escalada con velocidad de caída.
-        -- Si está cayendo rápido, sondamos más lejos para tener tiempo de reacción.
-        -- Si está casi estático o sube levemente, sondamos distancia mínima fija.
-        local probeDistance
-        if velY < -2 then
-            probeDistance = math.clamp(math.abs(velY) * 0.08, 2.5, 7.0)
-        else
-            probeDistance = 2.0  -- siempre sondear una distancia mínima
-        end
+        local probeDistance = math.clamp(math.abs(velY) * 0.1 + 2.5, 2.5, 8.0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -4122,13 +4081,10 @@ startLandingWatcher = function()
         local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
 
         if hit then
-            -- Hay suelo dentro del rango de sondeo → aplicar anti-rebote.
-            -- Destruir también cualquier BodyForce/BodyVelocity residual del vuelo
-            -- que pudiera estar generando fuerzas hacia arriba en este momento.
             stopLandingWatcher()
 
-            -- Limpiar motores residuales del vuelo ANTES del anti-rebote
-            -- (pueden quedar instancias huérfanas creadas por gyroProtection)
+            -- Limpiar cualquier motor residual del vuelo antes del anti-bounce.
+            -- Si quedó algún BodyForce/BodyGyro huérfano sigue empujando hacia arriba.
             pcall(function()
                 for _, v in ipairs(hrp:GetChildren()) do
                     if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
@@ -4139,12 +4095,10 @@ startLandingWatcher = function()
                 end
             end)
 
-            -- Inhibir el Animate script del juego ahora, antes de que
-            -- el estado Landed se dispare y active la animación por defecto
+            -- Inhibir Animate antes del impacto para que doLanding controle la animación
             local animScriptPre = char and char:FindFirstChild("Animate")
             if animScriptPre then
                 pcall(function() animScriptPre.Disabled = true end)
-                -- Re-habilitar tras 0.25s si doLanding no tomó el control
                 task.delay(0.25, function()
                     if not flyanim.waitingLand and animScriptPre and animScriptPre.Parent then
                         pcall(function() animScriptPre.Disabled = false end)
@@ -4346,23 +4300,6 @@ local function _flyOff()
         end
     end
 
-    -- ── Limpieza completa de motores residuales ───────────────────────────────
-    -- cleanupMotors() en PASO 0C ya destruyó bg/bv/bf, pero pueden quedar
-    -- instancias creadas por gyroProtection (backupGyro) u otros sistemas.
-    -- Las destruimos TODAS aquí para evitar el efecto "lego" (personaje con
-    -- resistencia angular residual que hace que caiga de lado con física rara).
-    if rootCurrent then
-        pcall(function()
-            for _, v in ipairs(rootCurrent:GetChildren()) do
-                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
-                or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
-                or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
-                    v:Destroy()
-                end
-            end
-        end)
-    end
-
     -- Alinear orientación (quitar inclinación del vuelo).
     -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
     -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
@@ -4375,18 +4312,6 @@ local function _flyOff()
             local velY = rootCurrent.AssemblyLinearVelocity.Y
             rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        end)
-    end
-
-    -- Restablecer también los miembros del personaje (las partes del cuerpo pueden
-    -- tener velocidad angular residual del vuelo que causa el efecto "lego").
-    if charCurrent then
-        pcall(function()
-            for _, part in ipairs(charCurrent:GetDescendants()) do
-                if part:IsA("BasePart") and part ~= rootCurrent then
-                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end
-            end
         end)
     end
 
