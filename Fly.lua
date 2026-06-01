@@ -1,4 +1,4 @@
-print("version 1.52 fly")
+print("version 1.53 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2187,6 +2187,8 @@ local function sonicBoomEffect(intensity)
                 if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
             end
             p.Parent = workspace
+            -- [FIX D1] Destroy garantizado independiente del tween — no se puede cancelar accidentalmente
+            task.delay(r.fadeDelay + r.fadeDur + 0.12, function() pcall(function() p:Destroy() end) end)
             local sg = Instance.new("SurfaceGui", p)
             sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
             sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
@@ -2205,7 +2207,6 @@ local function sonicBoomEffect(intensity)
                 TweenService:Create(outer, TweenInfo.new(r.fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
                 TweenService:Create(inner, TweenInfo.new(r.fadeDur*0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
             end)
-            task.delay(r.fadeDelay + r.fadeDur + 0.08, function() pcall(function() p:Destroy() end) end)
         end)
     end
     task.spawn(function()
@@ -2214,6 +2215,8 @@ local function sonicBoomEffect(intensity)
         local bb = Instance.new("BillboardGui")
         bb.Adornee=root; bb.AlwaysOnTop=true; bb.LightInfluence=0
         bb.Size=UDim2.new(0,startPx,0,startPx); bb.ResetOnSpawn=false; bb.Parent=root
+        -- [FIX D1] Destroy del BillboardGui garantizado siempre
+        task.delay(0.30, function() pcall(function() bb:Destroy() end) end)
         local img = Instance.new("ImageLabel", bb)
         img.Image=SHOCKWAVE_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
         img.ImageColor3=WHITE; img.ImageTransparency=0; img.ScaleType=Enum.ScaleType.Fit
@@ -2222,7 +2225,6 @@ local function sonicBoomEffect(intensity)
         task.wait(0.04)
         if not img or not img.Parent then return end
         TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
     end)
 end
 
@@ -2242,26 +2244,17 @@ local function spawnLandingEffects(position, velocity)
     local soundVol      = 0.30 + t * 0.55
 
     -- Parámetros cinemáticos de humo épico:
-    -- Arranca casi opaco (presencia fuerte) y desvanece muy lentamente
-    local smokeAlphaStart = 0.02 + t * 0.06   -- casi sólido al aparecer
-    local smokeAlphaEnd   = 0.82 + t * 0.14   -- desvanece a casi transparente
-    local smokeDuration   = 1.10 + t * 0.60   -- dura más en caídas épicas
+    local smokeAlphaStart = 0.02 + t * 0.06
+    local smokeAlphaEnd   = 0.82 + t * 0.14
+    local smokeDuration   = 1.10 + t * 0.60
 
-    local numRocks = math.floor(4 + t * 24)
-    numRocks = math.min(numRocks, 28)
+    local numRocks = math.min(math.floor(4 + t * 24), 28)
 
-    -- ── Delay para esperar que el personaje esté EN el suelo ────────────────
-    -- El personaje llega a Landed y luego se llama spawnLandingEffects;
-    -- el HRP aún puede estar unos studs sobre la superficie real.
-    -- Esperamos 1 frame para que la física siente al personaje y luego
-    -- hacemos el raycast desde la posición ya asentada.
-    local EFFECT_DELAY = 0.06   -- segundos de espera antes de spawnear efectos
+    local EFFECT_DELAY = 0.06
 
     task.spawn(function()
         task.wait(EFFECT_DELAY)
 
-        -- Recalcular groundPos desde la posición actual del personaje
-        -- (puede haber cambiado ligeramente tras el asentamiento)
         local char = lplr.Character
         local hrpNow = char and char:FindFirstChild("HumanoidRootPart")
         local samplePos = hrpNow and hrpNow.Position or position
@@ -2276,10 +2269,9 @@ local function spawnLandingEffects(position, velocity)
         end
         local groundPos = Vector3.new(samplePos.X, groundY, samplePos.Z)
 
-        -- Colores de polvo épico (ligeramente más oscuros y saturados)
         local DUST_COLOR        = Color3.fromRGB(160, 152, 140)
         local DUST_COLOR_INNER  = Color3.fromRGB(200, 192, 182)
-        local DUST_COLOR_BILLOW = Color3.fromRGB(120, 112, 100)   -- capa de billow oscura
+        local DUST_COLOR_BILLOW = Color3.fromRGB(120, 112, 100)
 
         -- Sonido
         local snd = Instance.new("Sound")
@@ -2291,99 +2283,102 @@ local function spawnLandingEffects(position, velocity)
         snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
 
-        -- ── CAPA 0: flash de impacto (anillo fino e instantáneo) ─────────────
-        -- Aparece y se disuelve muy rápido para dar el "golpe" visual
+        -- ── CAPA 0: flash de impacto ─────────────────────────────────────────
         task.spawn(function()
             local flashSize = smokeScale * 6
             local pf = Instance.new("Part")
-            pf.Anchored = true; pf.CanCollide = false; pf.CanTouch = false; pf.CastShadow = false
-            pf.Transparency = 1; pf.Size = Vector3.new(flashSize, flashSize, 0.05)
-            pf.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-            pf.Parent = workspace
+            pf.Anchored=true; pf.CanCollide=false; pf.CanTouch=false; pf.CastShadow=false
+            pf.Transparency=1; pf.Size=Vector3.new(flashSize, flashSize, 0.05)
+            pf.CFrame=CFrame.new(groundPos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            pf.Parent=workspace
+            -- [FIX D1] Destroy garantizado independiente del tween
+            task.delay(0.30, function() pcall(function() pf:Destroy() end) end)
             local sgf = Instance.new("SurfaceGui", pf)
-            sgf.Adornee = pf; sgf.Face = Enum.NormalId.Front; sgf.AlwaysOnTop = false
-            sgf.LightInfluence = 0; sgf.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sgf.PixelsPerStud = 40
+            sgf.Adornee=pf; sgf.Face=Enum.NormalId.Front; sgf.AlwaysOnTop=false
+            sgf.LightInfluence=0; sgf.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sgf.PixelsPerStud=40
             local imgf = Instance.new("ImageLabel", sgf)
-            imgf.Image = SMOKE_RING_TEX; imgf.Size = UDim2.new(1,0,1,0); imgf.BackgroundTransparency = 1
-            imgf.ImageColor3 = Color3.fromRGB(230, 225, 218); imgf.ImageTransparency = 0.0; imgf.ScaleType = Enum.ScaleType.Fit
+            imgf.Image=SMOKE_RING_TEX; imgf.Size=UDim2.new(1,0,1,0); imgf.BackgroundTransparency=1
+            imgf.ImageColor3=Color3.fromRGB(230,225,218); imgf.ImageTransparency=0.0; imgf.ScaleType=Enum.ScaleType.Fit
             local flashPeak = flashSize * (3.5 + t * 1.5)
             TweenService:Create(pf, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = Vector3.new(flashPeak, flashPeak, 0.05)}):Play()
+                {Size=Vector3.new(flashPeak, flashPeak, 0.05)}):Play()
             TweenService:Create(imgf, TweenInfo.new(0.22, Enum.EasingStyle.Expo, Enum.EasingDirection.In),
-                {ImageTransparency = 1}):Play()
-            task.delay(0.25, function() pcall(function() pf:Destroy() end) end)
+                {ImageTransparency=1}):Play()
         end)
 
-        -- ── CAPA 1: anillo principal de humo épico (grande, lento, persistente) ─
+        -- ── CAPA 1: anillo principal de humo épico ───────────────────────────
         task.spawn(function()
             local ringSize = smokeScale * 10
             local p = Instance.new("Part")
-            p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CastShadow = false
-            p.Transparency = 1; p.Size = Vector3.new(ringSize, ringSize, 0.05)
-            p.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.14, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-            p.Parent = workspace
+            p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false
+            p.Transparency=1; p.Size=Vector3.new(ringSize, ringSize, 0.05)
+            p.CFrame=CFrame.new(groundPos + Vector3.new(0, 0.14, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p.Parent=workspace
+            -- [FIX D1] Destroy garantizado — tiempo de vida = duración del tween + margen
+            task.delay(smokeDuration + 0.10, function() pcall(function() p:Destroy() end) end)
             local sg = Instance.new("SurfaceGui", p)
-            sg.Adornee = p; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = false
-            sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 40
+            sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false
+            sg.LightInfluence=0; sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=40
             local img = Instance.new("ImageLabel", sg)
-            img.Image = SMOKE_RING_TEX; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
-            img.ImageColor3 = DUST_COLOR; img.ImageTransparency = smokeAlphaStart; img.ScaleType = Enum.ScaleType.Fit
+            img.Image=SMOKE_RING_TEX; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
+            img.ImageColor3=DUST_COLOR; img.ImageTransparency=smokeAlphaStart; img.ScaleType=Enum.ScaleType.Fit
             local peakSize = ringSize * (3.2 + t * 2.5)
             TweenService:Create(p, TweenInfo.new(smokeDuration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
+                {Size=Vector3.new(peakSize, peakSize, 0.05)}):Play()
             TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd}):Play()
-            task.delay(smokeDuration + 0.05, function() pcall(function() p:Destroy() end) end)
+                {ImageTransparency=smokeAlphaEnd}):Play()
         end)
 
-        -- ── CAPA 2: anillo de billow oscuro (sale antes, da profundidad) ──────
+        -- ── CAPA 2: anillo de billow oscuro ──────────────────────────────────
         task.spawn(function()
             task.wait(0.03)
             local ringSize2 = smokeScale * 7
             local p2 = Instance.new("Part")
-            p2.Anchored = true; p2.CanCollide = false; p2.CanTouch = false; p2.CastShadow = false
-            p2.Transparency = 1; p2.Size = Vector3.new(ringSize2, ringSize2, 0.05)
-            p2.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.10, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-            p2.Parent = workspace
-            local sg2 = Instance.new("SurfaceGui", p2)
-            sg2.Adornee = p2; sg2.Face = Enum.NormalId.Front; sg2.AlwaysOnTop = false
-            sg2.LightInfluence = 0; sg2.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud = 40
-            local img2 = Instance.new("ImageLabel", sg2)
-            img2.Image = SMOKE_RING_TEX; img2.Size = UDim2.new(1,0,1,0); img2.BackgroundTransparency = 1
-            img2.ImageColor3 = DUST_COLOR_BILLOW
-            img2.ImageTransparency = smokeAlphaStart + 0.08; img2.ScaleType = Enum.ScaleType.Fit
+            p2.Anchored=true; p2.CanCollide=false; p2.CanTouch=false; p2.CastShadow=false
+            p2.Transparency=1; p2.Size=Vector3.new(ringSize2, ringSize2, 0.05)
+            p2.CFrame=CFrame.new(groundPos + Vector3.new(0, 0.10, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p2.Parent=workspace
             local dur2 = smokeDuration * 0.75
+            -- [FIX D1] Destroy garantizado
+            task.delay(dur2 + 0.10, function() pcall(function() p2:Destroy() end) end)
+            local sg2 = Instance.new("SurfaceGui", p2)
+            sg2.Adornee=p2; sg2.Face=Enum.NormalId.Front; sg2.AlwaysOnTop=false
+            sg2.LightInfluence=0; sg2.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud=40
+            local img2 = Instance.new("ImageLabel", sg2)
+            img2.Image=SMOKE_RING_TEX; img2.Size=UDim2.new(1,0,1,0); img2.BackgroundTransparency=1
+            img2.ImageColor3=DUST_COLOR_BILLOW
+            img2.ImageTransparency=smokeAlphaStart + 0.08; img2.ScaleType=Enum.ScaleType.Fit
             local peakSize2 = ringSize2 * (2.4 + t * 1.8)
             TweenService:Create(p2, TweenInfo.new(dur2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = Vector3.new(peakSize2, peakSize2, 0.05)}):Play()
+                {Size=Vector3.new(peakSize2, peakSize2, 0.05)}):Play()
             TweenService:Create(img2, TweenInfo.new(dur2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd + 0.08}):Play()
-            task.delay(dur2 + 0.05, function() pcall(function() p2:Destroy() end) end)
+                {ImageTransparency=smokeAlphaEnd + 0.08}):Play()
         end)
 
-        -- ── CAPA 3: anillo interior luminoso (da sensación de explosión de aire) ─
+        -- ── CAPA 3: anillo interior luminoso ─────────────────────────────────
         task.spawn(function()
             task.wait(0.07)
             local ringSize3 = smokeScale * 4
             local p3 = Instance.new("Part")
-            p3.Anchored = true; p3.CanCollide = false; p3.CanTouch = false; p3.CastShadow = false
-            p3.Transparency = 1; p3.Size = Vector3.new(ringSize3, ringSize3, 0.05)
-            p3.CFrame = CFrame.new(groundPos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-            p3.Parent = workspace
-            local sg3 = Instance.new("SurfaceGui", p3)
-            sg3.Adornee = p3; sg3.Face = Enum.NormalId.Front; sg3.AlwaysOnTop = false
-            sg3.LightInfluence = 0; sg3.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg3.PixelsPerStud = 40
-            local img3 = Instance.new("ImageLabel", sg3)
-            img3.Image = SMOKE_RING_TEX; img3.Size = UDim2.new(1,0,1,0); img3.BackgroundTransparency = 1
-            img3.ImageColor3 = DUST_COLOR_INNER
-            img3.ImageTransparency = smokeAlphaStart - 0.01; img3.ScaleType = Enum.ScaleType.Fit
+            p3.Anchored=true; p3.CanCollide=false; p3.CanTouch=false; p3.CastShadow=false
+            p3.Transparency=1; p3.Size=Vector3.new(ringSize3, ringSize3, 0.05)
+            p3.CFrame=CFrame.new(groundPos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(math.rad(90), 0, 0)
+            p3.Parent=workspace
             local dur3 = smokeDuration * 0.55
+            -- [FIX D1] Destroy garantizado
+            task.delay(dur3 + 0.10, function() pcall(function() p3:Destroy() end) end)
+            local sg3 = Instance.new("SurfaceGui", p3)
+            sg3.Adornee=p3; sg3.Face=Enum.NormalId.Front; sg3.AlwaysOnTop=false
+            sg3.LightInfluence=0; sg3.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg3.PixelsPerStud=40
+            local img3 = Instance.new("ImageLabel", sg3)
+            img3.Image=SMOKE_RING_TEX; img3.Size=UDim2.new(1,0,1,0); img3.BackgroundTransparency=1
+            img3.ImageColor3=DUST_COLOR_INNER
+            img3.ImageTransparency=smokeAlphaStart - 0.01; img3.ScaleType=Enum.ScaleType.Fit
             local peakSize3 = ringSize3 * (2.0 + t * 1.4)
             TweenService:Create(p3, TweenInfo.new(dur3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = Vector3.new(peakSize3, peakSize3, 0.05)}):Play()
+                {Size=Vector3.new(peakSize3, peakSize3, 0.05)}):Play()
             TweenService:Create(img3, TweenInfo.new(dur3, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = 1}):Play()
-            task.delay(dur3 + 0.05, function() pcall(function() p3:Destroy() end) end)
+                {ImageTransparency=smokeAlphaEnd - 0.06}):Play()
         end)
 
         -- ── Piedrecitas ───────────────────────────────────────────────────────
@@ -2400,10 +2395,10 @@ local function spawnLandingEffects(position, velocity)
                         rock.Size        = Vector3.new(rockSize, rockSize, rockSize)
                         rock.Material    = Enum.Material.SmoothPlastic
                         rock.Color       = ROCK_BASE:Lerp(Color3.fromRGB(160,155,148), math.random() * 0.4)
-                        rock.CanCollide  = false; rock.CanTouch = false; rock.CastShadow = false; rock.Anchored = false
+                        rock.CanCollide  = false; rock.CanTouch=false; rock.CastShadow=false; rock.Anchored=false
                         local angle = ((spawned + i) / numRocks) * math.pi * 2 + math.random() * 0.9
                         local radius = 0.25 + math.random() * 0.75
-                        rock.CFrame  = CFrame.new(
+                        rock.CFrame = CFrame.new(
                             groundPos.X + math.cos(angle) * radius,
                             groundPos.Y + 0.05,
                             groundPos.Z + math.sin(angle) * radius
@@ -2413,11 +2408,12 @@ local function spawnLandingEffects(position, velocity)
                         local power = (3.5 + t * 9) * (0.65 + math.random() * 0.7)
                         rock.AssemblyLinearVelocity = outDir * power
                         local fadeTime = 0.35 + math.random() * 0.35
+                        -- [FIX D1] Destroy garantizado independiente del tween de transparencia
+                        task.delay(fadeTime + 0.15, function() pcall(function() rock:Destroy() end) end)
                         task.delay(0.04, function()
                             if not rock or not rock.Parent then return end
                             TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                                {Transparency = 1}):Play()
-                            task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
+                                {Transparency=1}):Play()
                         end)
                     end)
                 end
@@ -2589,8 +2585,6 @@ end
 local _landAnimToken = 0
 local _landBaseRef    = nil
 local _landOverlayRef = nil
--- Token global para cancelar el ancla de suelo (omniAntiBounceLand) desde _flyOn o respawn
-local _groundAnchorToken = 0
 
 local function doLanding(char)
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -3830,9 +3824,6 @@ local function _flyOn()
     -- que inicien ahora tengan un token fresco y no colisionen con restos
     -- de una sesion anterior que pudo quedar en un tick de transicion.
     flyanim.sessionToken = (flyanim.sessionToken or 0) + 1
-    -- Cancelar cualquier ancla de suelo activa (el jugador reactivo el vuelo
-    -- antes de que terminen los 0.75s de la fase Y del ancla).
-    _groundAnchorToken = _groundAnchorToken + 1
     flyanim.enabled = true
     flyanim.mode = "normal"; flyanim.speed = BASE_SPEED
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
@@ -4100,73 +4091,169 @@ end
 -- ============================================================
 -- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
--- Al detectar suelo inminente:
---   · Cancela TODOS los impulsos en Y al instante
---   · Fuerza el body completamente recto (upright) con un BodyGyro
---     de maxTorque muy alto durante el impacto, eliminando cualquier
---     inclinacion residual del vuelo que cause rebotes laterales
---   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
---     para "pegar" al suelo y absorber el impacto sin afectar XZ
---   · Destruye todo y restaura el estado normal al terminar
+-- [D2] Gravedad Inversa: ApplyImpulse para cancelar momentum en Y físicamente
+-- [D3] Micro-anclaje de 0.05s para matar residuos matemáticos del motor
+-- [D4] BodyPosition solo en eje Y durante 0.75s (anti bounce-back / crater)
+-- [D5] BodyGyro firme + cancelación instantánea por Salto
+local GROUND_STICK_TIME = 0.35   -- mantenido por compatibilidad
+local IMPACT_LOCK_TIME  = 0.05   -- [D3] duración del micro-anclaje
+local Y_RESTRICT_TIME   = 0.75   -- [D4] ventana de restricción de eje Y
 
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    _groundAnchorToken = _groundAnchorToken + 1
-    local myAnchorToken = _groundAnchorToken
+    -- Token de sesión capturado: invalida motores si hay respawn/muerte
+    local capturedSession = flyanim.sessionToken
 
-    -- Alinear orientacion: solo conservar yaw, quitar pitch/roll residual del vuelo
+    -- ── [D2] GRAVEDAD INVERSA ──────────────────────────────────────────────
+    -- Calcula el impulso necesario para cancelar el momentum de caída en Y
+    -- exactamente a cero usando la fórmula: impulso = masa × |velY|
+    -- Así la detención es física, no artificial (sin "Mega Pausa").
     pcall(function()
-        local _, ry, _ = hrp.CFrame:ToOrientation()
-        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+        local velY = hrp.AssemblyLinearVelocity.Y
+        local mass = hrp.AssemblyMass
+        if velY < 0 then
+            -- Impulso hacia arriba que cancela exactamente el momentum de caída
+            hrp:ApplyImpulse(Vector3.new(0, mass * math.abs(velY), 0))
+        end
+        -- Conservar XZ reducido pero sin cortar en seco (evita deslizamiento extraño)
+        local v = hrp.AssemblyLinearVelocity
+        hrp.AssemblyLinearVelocity  = Vector3.new(v.X * 0.05, math.max(v.Y, 0), v.Z * 0.05)
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end)
+
+    -- Desactivar estados conflictivos antes del anclaje
+    pcall(function()
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
+    end)
+
+    -- ── [D3] MICRO-ANCLAJE ABSOLUTO DE 0.05s ──────────────────────────────
+    -- Mata cualquier residuo matemático del motor de físicas: rebote elástico,
+    -- fricción de contacto, impulso de estado GettingUp, etc.
+    -- Imperceptible visualmente pero decisivo para la estabilidad.
+    pcall(function()
+        hrp.Anchored = true
         hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    -- BodyGyro suave para mantener al personaje recto durante el aterrizaje
-    local uprightGyro = Instance.new("BodyGyro")
-    local _, ry2, _ = hrp.CFrame:ToOrientation()
-    uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry2, 0)
-    uprightGyro.P         = 3000
-    uprightGyro.MaxTorque = Vector3.new(3000, 3000, 3000)
-    uprightGyro.Parent    = hrp
-
-    -- BodyVelocity solo en Y: absorbe el rebote sin bloquear XZ ni la fisica del humanoid
-    local bvY = Instance.new("BodyVelocity")
-    bvY.Velocity = Vector3.new(0, 0, 0)
-    bvY.MaxForce = Vector3.new(0, 4000, 0)
-    bvY.Parent   = hrp
-
-    -- Listener de salto: cancela el ancla al instante si se salta
-    local jumpConn
-    jumpConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        if input.KeyCode == Enum.KeyCode.Space then
-            _groundAnchorToken = _groundAnchorToken + 1
-            if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
-            pcall(function() bvY:Destroy() end)
-            pcall(function() uprightGyro:Destroy() end)
+    task.delay(IMPACT_LOCK_TIME, function()
+        -- Validar sesión: si hubo respawn/muerte, no continuar
+        if flyanim.sessionToken ~= capturedSession then
+            pcall(function() hrp.Anchored = false end)
+            return
         end
-    end)
+        -- Desanclar y zerear velocidades antes de instalar restricciones
+        pcall(function()
+            hrp.Anchored = false
+            hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
 
-    -- Ancla Y durante 0.75s; cancela antes si el token cambia (salto, _flyOn, respawn)
-    local STICK_Y_TIME = 0.75
-    local elapsed = 0
-    local STEP = 0.05
-    task.spawn(function()
-        while elapsed < STICK_Y_TIME do
-            task.wait(STEP)
-            elapsed = elapsed + STEP
-            if myAnchorToken ~= _groundAnchorToken then
-                if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
-                pcall(function() bvY:Destroy() end)
-                pcall(function() uprightGyro:Destroy() end)
-                return
+        if not hrp.Parent or not hum.Parent then return end
+
+        -- ── [D4] RESTRICCIÓN DE EJE Y — BodyPosition solo en Y ───────────────
+        -- MaxForce X=0 Z=0: el jugador puede moverse libremente en horizontal.
+        -- MaxForce Y=huge: impide cualquier desplazamiento vertical no deseado
+        -- (bounce-back, GettingUp que empuja hacia arriba, etc.)
+        local groundY = hrp.Position.Y
+        do
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            local char = lplr.Character
+            if char then rp.FilterDescendantsInstances = {char} end
+            local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -3, 0), rp)
+            -- +3 studs = altura del HRP sobre el suelo (centro del personaje)
+            if hit then groundY = hit.Position.Y + 3 end
+        end
+
+        local bpY = Instance.new("BodyPosition")
+        bpY.Position = Vector3.new(hrp.Position.X, groundY, hrp.Position.Z)
+        bpY.MaxForce = Vector3.new(0, math.huge, 0)
+        bpY.P        = 50000
+        bpY.D        = 2500
+        bpY.Parent   = hrp
+
+        -- ── [D5] POSTURA FIRME — BodyGyro de MaxTorque masivo ────────────────
+        -- Mantiene el UpVector perfectamente vertical durante toda la ventana.
+        -- Solo conserva el Yaw actual; anula Pitch y Roll completamente.
+        local _, ry, _ = hrp.CFrame:ToOrientation()
+        local bgyro = Instance.new("BodyGyro")
+        bgyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+        bgyro.P         = 999999
+        bgyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bgyro.Parent    = hrp
+        pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
+
+        -- Debris como seguro extra: destruye aunque el script explote a mitad
+        game:GetService("Debris"):AddItem(bpY,   Y_RESTRICT_TIME + 0.5)
+        game:GetService("Debris"):AddItem(bgyro, Y_RESTRICT_TIME + 0.5)
+
+        -- Función de limpieza a prueba de balas (idempotente)
+        local cleaned = false
+        local function cleanupAll()
+            if cleaned then return end
+            cleaned = true
+            pcall(function() bpY:Destroy() end)
+            pcall(function() bgyro:Destroy() end)
+            if hum and hum.Parent then
+                pcall(function()
+                    hum.PlatformStand = false
+                    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+                    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+                end)
             end
         end
-        if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
-        pcall(function() bvY:Destroy() end)
-        pcall(function() uprightGyro:Destroy() end)
+
+        -- Destrucción garantizada al expirar la ventana de 0.75s
+        task.delay(Y_RESTRICT_TIME, function()
+            if flyanim.sessionToken ~= capturedSession then cleanupAll(); return end
+            cleanupAll()
+        end)
+
+        -- ── [D5] CANCELACIÓN POR SALTO ────────────────────────────────────────
+        -- Si el jugador pulsa Espacio dentro de la ventana de 0.75s,
+        -- destruimos bpY y bgyro al instante para que salte con naturalidad
+        -- sin pelear contra las restricciones.
+        local jumpConn
+        local humJumpConn
+        jumpConn = UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if input.KeyCode ~= Enum.KeyCode.Space then return end
+            pcall(function() jumpConn:Disconnect() end)
+            pcall(function() humJumpConn:Disconnect() end)
+            cleanupAll()
+        end)
+        humJumpConn = hum.Jumping:Connect(function(isActive)
+            if not isActive then return end
+            pcall(function() jumpConn:Disconnect() end)
+            pcall(function() humJumpConn:Disconnect() end)
+            cleanupAll()
+        end)
+        -- Limpiar listeners cuando expire la ventana
+        task.delay(Y_RESTRICT_TIME + 0.1, function()
+            pcall(function() jumpConn:Disconnect() end)
+            pcall(function() humJumpConn:Disconnect() end)
+        end)
+
+        -- Heartbeat: sincronizar X/Z del BodyPosition con el HRP en cada frame
+        -- para no interferir con el movimiento horizontal del jugador
+        local bpSyncConn
+        bpSyncConn = RunService.Heartbeat:Connect(function()
+            if cleaned then bpSyncConn:Disconnect(); return end
+            if flyanim.sessionToken ~= capturedSession then
+                bpSyncConn:Disconnect(); cleanupAll(); return
+            end
+            if not bpY or not bpY.Parent then bpSyncConn:Disconnect(); return end
+            pcall(function()
+                bpY.Position = Vector3.new(hrp.Position.X, groundY, hrp.Position.Z)
+            end)
+        end)
+        task.delay(Y_RESTRICT_TIME + 0.2, function()
+            pcall(function() bpSyncConn:Disconnect() end)
+        end)
     end)
 end
 
@@ -4204,11 +4291,15 @@ startLandingWatcher = function()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum then return end
 
-        -- Sondear siempre, no solo cuando velY < -2.
-        -- Si el personaje está casi estático tras el kick de caída puede tener
-        -- velY cercana a 0 y aun así estar a punto de tocar el suelo.
         local velY = hrp.AssemblyLinearVelocity.Y
-        local probeDistance = math.clamp(math.abs(velY) * 0.1 + 2.5, 2.5, 8.0)
+
+        -- [D2] probeDistance adaptativa: a mayor velocidad de caída, sondeamos más
+        -- lejos para tener tiempo de aplicar ApplyImpulse ANTES del impacto real.
+        -- Rango: mínimo 2.5 studs, máximo 10.0 studs, escalado con |velY|.
+        -- Esto reemplaza la "Mega Pausa": en lugar de detener la velocidad
+        -- artificialmente lejos del suelo, ahora detectamos antes y la cancelamos
+        -- físicamente con gravedad inversa en el momento justo.
+        local probeDistance = math.clamp(math.abs(velY) * 0.12 + 2.5, 2.5, 10.0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -4241,6 +4332,9 @@ startLandingWatcher = function()
                 end)
             end
 
+            -- [D2] omniAntiBounceLand aplica ApplyImpulse de gravedad inversa primero,
+            -- luego el micro-anclaje [D3], y finalmente instala las restricciones [D4][D5].
+            -- El personaje llega al suelo con momentum Y = 0 de forma completamente física.
             omniAntiBounceLand(hrp, hum)
         end
     end)
@@ -4473,21 +4567,17 @@ local function _flyOff()
         end
     end)
 
-    -- KICK DE CAÍDA PROPORCIONAL: aplicar velocidad descendente proporcional a la altura
-    -- para que la caída se sienta natural desde el primer frame, sin pausa flotante.
-    -- Formula: -(4 + altura * 0.18), clampado entre -4 (ras de suelo) y -40 (200+ studs).
-    -- El omniAntiBounceLand cancelará esa velocidad exactamente al detectar el suelo.
+    -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
+    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
+    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
     if rootCurrent then
-        local kickHeight = flyanim.landingHeight or 0
-        local kickVelY = -math.clamp(4 + kickHeight * 0.18, 4, 40)
         task.delay(0.01, function()
             if not rootCurrent or not rootCurrent.Parent then return end
             if flyanim.enabled then return end  -- ya reactivó el vuelo
-            -- Solo aplicar si la velocidad actual no es ya suficientemente negativa
-            local currentVelY = rootCurrent.AssemblyLinearVelocity.Y
-            if currentVelY > kickVelY then
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            if velY > 0.5 then
                 pcall(function()
-                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, kickVelY, 0)
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
                 end)
             end
         end)
@@ -4848,7 +4938,6 @@ local function _connectGlobal()
         c0DesiredCFrame = nil
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
         flyanim.sessionToken = (flyanim.sessionToken or 0) + 1  -- invalidar guards de sesion anterior al respawn
-        _groundAnchorToken = _groundAnchorToken + 1  -- cancelar ancla de suelo si hay una activa
         _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
