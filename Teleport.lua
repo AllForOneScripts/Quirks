@@ -4,7 +4,7 @@ local _conn = nil
 local _lplr = nil
 local _keys = nil
 
-local ALTURA_EXTRA = 7
+local ALTURA_EXTRA = 5
 
 function M.Start(Keys, lplr)
     _keys = Keys
