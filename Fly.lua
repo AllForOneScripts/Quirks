@@ -4695,46 +4695,6 @@ function M.GetFlyKey()  return flyanim.flyKey  end
 function M.GetLockKey() return flyanim.lockKey end
 function M.IsEnabled()  return flyanim.enabled end
 
--- ============================================================
--- TrustedAction / Bypass
--- Marca una ventana de tiempo como "acción legítima" para que
--- los sistemas anti-anomalía y anti-teleport no interfieran.
---
--- Sin argumentos → bypass inmediato de 0.5s (caso más común).
--- Con duración   → bypass de N segundos.
---
--- La ventana es RETROACTIVA: cubre los últimos 150ms antes de la
--- llamada, por lo que funciona aunque el TP ya haya ocurrido.
---
--- ── EJEMPLOS ──────────────────────────────────────────────
---
--- Desde el hub (F + Click Derecho → salto 1500 studs):
---   Fly.Bypass()          -- llamar lo antes posible tras detectar el input
---   root.CFrame = ...     -- el TP puede ocurrir antes o después, da igual
---
--- Teleport a coordenadas lejanas:
---   Fly.Bypass(2)         -- 2 s de gracia si el TP tarda
---   root.CFrame = CFrame.new(destino)
---
--- Alias más descriptivos disponibles:
---   Fly.TrustedAction()   -- igual que Bypass()
---   Fly.NotifyTeleport()  -- igual que Bypass()
--- ============================================================
-function M.Bypass(duration, reason)
-    duration = tonumber(duration) or 0.5
-    duration = math.clamp(duration, 0.05, 30)
-    local now = tick()
-    _trustedFrom   = now - TRUSTED_LOOKBACK  -- retroactivo 150ms
-    _trustedUntil  = now + duration
-    _trustedReason = reason or "bypass"
-    -- Flush inmediato: actualizar safe pos con la posición actual
-    -- para que los guards no reviertan nada mientras la ventana está activa.
-    _flushSafePos()
-    -- Segundo flush diferido: captura la posición DESPUÉS del TP
-    task.defer(_flushSafePos)
-    task.delay(duration * 0.5, _flushSafePos)
-end
-
 M.TrustedAction  = M.Bypass
 M.NotifyTeleport = M.Bypass
 
