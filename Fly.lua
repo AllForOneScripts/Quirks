@@ -1,4 +1,4 @@
-print("version 1.34 fly")
+print("version 1.35 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -590,7 +590,7 @@ local function setNoclip(state)
     end
 end
 
-local function cleanupMotors(root)
+local function cleanupMotors(root, preserveVelY)
     if not root then return end
     for _, v in ipairs(root:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
@@ -599,7 +599,15 @@ local function cleanupMotors(root)
             pcall(function() v:Destroy() end)
         end
     end
-    pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+    -- preserveVelY=true: conservar velocidad Y para que la caída libre funcione.
+    -- Se usa al apagar el fly para no "congelar" al personaje en el aire.
+    if preserveVelY then
+        local currentVelY = 0
+        pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
+        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, currentVelY, 0) end)
+    else
+        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
+    end
     pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
 end
 
@@ -4161,7 +4169,10 @@ local function _flyOff()
     do
         local _earlyChar = lplr.Character
         local _earlyRoot = _earlyChar and _earlyChar:FindFirstChild("HumanoidRootPart")
-        if _earlyRoot then cleanupMotors(_earlyRoot) end
+        -- preserveVelY=true: conservar velocidad Y para que la caida libre funcione.
+        -- cleanupMotors sin este flag zeroa Y tambien, haciendo que el personaje
+        -- quede estatico en el aire hasta que GettingUp lo empuje hacia arriba.
+        if _earlyRoot then cleanupMotors(_earlyRoot, true) end
         flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
     end
     if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
@@ -4272,11 +4283,12 @@ local function _flyOff()
         return
     end
 
-    -- Deshabilitar GettingUp ANTES de quitar PlatformStand:
-    -- cuando PlatformStand pasa de true→false en el aire, Roblox dispara GettingUp
-    -- automáticamente, que empuja al personaje hacia arriba ("pararse").
-    -- Deshabilitándolo evitamos ese rebote. Se vuelve a habilitar después.
+    -- Deshabilitar estados que empujan hacia arriba ANTES de quitar PlatformStand.
+    -- GettingUp y Jumping pueden causar un impulso vertical hacia arriba cuando
+    -- PlatformStand pasa de true->false en el aire. Se re-habilitan tras Freefall.
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, false)
     hum.PlatformStand = false
     hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
@@ -4287,25 +4299,57 @@ local function _flyOff()
         end
     end
 
-    -- Alinear orientación (quitar inclinación del vuelo) y asegurar vel 0
-    -- cleanupMotors ya zereó la velocidad en PASO 0C; solo alineamos CFrame
+    -- Alinear orientación (quitar inclinación del vuelo).
+    -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
+    -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
     if rootCurrent then
         local _, ry, _ = rootCurrent.CFrame:ToOrientation()
         pcall(function()
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            -- Zerear solo X/Z para evitar que el personaje salga disparado lateralmente.
+            -- NO tocar Y: cleanupMotors(preserveVelY) ya la manejó.
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
-    -- Re-habilitar GettingUp ahora que el estado Freefall ya está establecido.
-    -- El personaje podrá pararse normalmente cuando toque el suelo.
+    -- Re-habilitar estados que fueron desactivados. Se hace en task.defer para
+    -- que Freefall ya este establecido antes de que puedan dispararse de nuevo.
     task.defer(function()
         if hum and hum.Parent then
             hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
         end
     end)
+    -- KICK DE CAÍDA: aplicar impulso hacia abajo para activar la fisica de gravedad.
+    -- Se aplica en task.defer (frame siguiente) para que Freefall ya este activo.
+    -- Tambien se repite en el frame +2 para anular cualquier push de GettingUp residual.
+    if rootCurrent then
+        task.defer(function()
+            if not rootCurrent or not rootCurrent.Parent then return end
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            -- Si el personaje sube (velY > 1) o esta estatico, forzar caida
+            if velY > -2 then
+                pcall(function()
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -15, 0)
+                end)
+            end
+            -- Segunda aplicacion en el frame siguiente para anular GettingUp residual
+            task.defer(function()
+                if not rootCurrent or not rootCurrent.Parent then return end
+                -- Solo intervenir si el personaje sigue subiendo o casi estatico
+                local velY2 = rootCurrent.AssemblyLinearVelocity.Y
+                if velY2 > -1 then
+                    pcall(function()
+                        rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -15, 0)
+                    end)
+                end
+            end)
+        end)
+    end
 
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
