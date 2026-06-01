@@ -1,4 +1,4 @@
-print("version 1.28 fly")
+print("version 1.30 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4111,6 +4111,15 @@ local function _flyOff()
     if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
     if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
     if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
+    -- Destruir los body movers INMEDIATAMENTE aquí, en el mismo frame que rsConn/tpMoveConn,
+    -- para que el BodyForce anti-gravedad no tenga ni un frame extra de efecto.
+    -- cleanupMotors también zeroa AssemblyLinearVelocity/AngularVelocity al instante.
+    do
+        local _earlyChar = lplr.Character
+        local _earlyRoot = _earlyChar and _earlyChar:FindFirstChild("HumanoidRootPart")
+        if _earlyRoot then cleanupMotors(_earlyRoot) end
+        flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
+    end
     if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
     if flyanim.lockRenderConn      then flyanim.lockRenderConn:Disconnect();      flyanim.lockRenderConn      = nil end
     if flyanim.damageConn          then flyanim.damageConn:Disconnect();          flyanim.damageConn          = nil end
@@ -4204,13 +4213,8 @@ local function _flyOff()
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
 
-    if rootCurrent then
-        cleanupMotors(rootCurrent)
-        local _, ry, _ = rootCurrent.CFrame:ToOrientation()
-        rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-    end
-
-    flyanim.bg=nil; flyanim.bv=nil; flyanim.bf=nil; flyanim.mode="normal"; flyanim.speed=BASE_SPEED
+    -- bg/bv/bf ya son nil desde PASO 0C (cleanupMotors corrió ahí)
+    flyanim.mode="normal"; flyanim.speed=BASE_SPEED
     _flyDestroyGui()
     -- stopLockSystem ya desconectó lockConn y lockRenderConn en PASO 0C,
     -- pero llamarlo limpia lockActive, lockedTarget, lockIconGui, lockHighlight
@@ -4234,21 +4238,15 @@ local function _flyOff()
         end
     end
 
-    -- CAMBIO SALVAJE: zerear TODA la velocidad del HRP (incluyendo Y positivo que provoca el rebote)
-    -- y mantener un BodyVelocity que fuerce velocidad cero por 2 frames antes de soltarlo
+    -- Alinear orientación (quitar inclinación del vuelo) y asegurar vel 0
+    -- cleanupMotors ya zereó la velocidad en PASO 0C; solo alineamos CFrame
     if rootCurrent then
-        pcall(function() rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
-        pcall(function() rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-        local zeroLock = Instance.new("BodyVelocity")
-        zeroLock.Velocity  = Vector3.new(0, 0, 0)
-        zeroLock.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
-        zeroLock.Parent    = rootCurrent
-        task.wait()
-        task.wait()
-        pcall(function() zeroLock:Destroy() end)
-        pcall(function() rootCurrent.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
-    else
-        task.wait()
+        local _, ry, _ = rootCurrent.CFrame:ToOrientation()
+        pcall(function()
+            rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
+            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
     end
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
