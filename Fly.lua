@@ -1,4 +1,4 @@
-print("version 1.48 fly")
+print("version 1.49 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2591,6 +2591,9 @@ local _landAnimToken = 0
 local _landBaseRef    = nil
 local _landOverlayRef = nil
 
+-- Token para cancelar el ancla de suelo desde salto o _flyOn
+local _groundAnchorToken = 0
+
 local function doLanding(char)
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
@@ -4111,9 +4114,6 @@ end
 --   · Destruye todo limpiamente al terminar.
 local GROUND_STICK_TIME = 0.75   -- segundos anclado solo en Y tras el impacto
 
--- Token global para poder cancelar el ancla desde salto
-local _groundAnchorToken = 0
-
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
@@ -4547,8 +4547,8 @@ local function _flyOff()
         end
     end)
 
-    local capturedHeight   = flyanim.landingHeight
-    local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
+    local capturedHeight   = flyanim.landingHeight or 0
+    local capturedVelocity = math.max(flyanim.landingVelocity or 0, flyanim.landingVelocityCapture or 0)
 
     -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
     -- aplicar impulso hacia abajo proporcional a la altura para que la caída
@@ -4563,7 +4563,7 @@ local function _flyOff()
                 -- Calcular kick proporcional a la altura: más alto → más kick inicial
                 -- Esto elimina la pausa flotante sin afectar el aterrizaje
                 -- (omniAntiBounceLand cancela exactamente esta velocidad antes del suelo)
-                local kickHeight = math.clamp(capturedHeight or 0, 0, 200)
+                local kickHeight = math.clamp(capturedHeight, 0, 200)
                 local kickSpeed  = -(4 + kickHeight * 0.18)  -- entre -4 y -40 según altura
                 pcall(function()
                     rootCurrent.AssemblyLinearVelocity = Vector3.new(
