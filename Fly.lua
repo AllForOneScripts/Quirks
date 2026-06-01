@@ -1,4 +1,4 @@
-print("version 1.36 fly")
+print("version 1.38 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -144,8 +144,10 @@ local DEFAULT_TURBO = 6.0
 
 local LOCK_ROTATION_SMOOTH = 0.8
 
--- Límite de coordenadas para detectar posiciones absurdas (void, etc.)
+-- Límite de coordenadas para detectar teletransporte anómalo
 local COORD_SANITY_LIMIT = 50000
+
+
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -404,7 +406,85 @@ end
 -- absurdas y lo devuelve a la última posición segura conocida
 -- ============================================================
 
-local function startTeleportGuard() end  -- eliminado
+local function startTeleportGuard()
+    if flyanim.teleportGuardConn then
+        flyanim.teleportGuardConn:Disconnect()
+        flyanim.teleportGuardConn = nil
+    end
+    flyanim.lastSafePos  = nil
+    flyanim.lastSafeTime = tick()
+    flyanim.isTeleportGuardActive = true
+
+    local mySession = flyanim.sessionToken
+
+    flyanim.teleportGuardConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.teleportGuardConn then
+                flyanim.teleportGuardConn:Disconnect()
+                flyanim.teleportGuardConn = nil
+            end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+        if not flyanim.enabled then
+            if flyanim.teleportGuardConn then
+                flyanim.teleportGuardConn:Disconnect()
+                flyanim.teleportGuardConn = nil
+            end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+        if not flyanim.isTeleportGuardActive then return end
+
+        local char = lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then
+            flyanim.lastSafePos = nil
+            return
+        end
+
+        local pos = root.Position
+
+        -- Solo corregir coordenadas absolutamente absurdas (caída al void, NaN)
+        local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
+                      or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
+                      or (math.abs(pos.Z) > COORD_SANITY_LIMIT)
+                      or (pos.Y < -5000)  -- caída al void
+                      or (pos ~= pos)     -- NaN check
+
+        if isInsane then
+            local safePos = flyanim.lastSafePos
+            if safePos then
+                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
+                pcall(function()
+                    root.CFrame = targetCF
+                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local camCF = cam.CFrame
+                    task.defer(function()
+                        if cam and cam.Parent then
+                            cam.CFrame = camCF
+                        end
+                    end)
+                end
+                flyanim.dashTimer = 0
+                flyanim.dashVel   = Vector3.new(0, 0, 0)
+                if not root:FindFirstChildOfClass("BodyGyro") then
+                    pcall(_flyMakeMotors)
+                end
+            end
+            return
+        end
+
+        -- Actualizar posición segura siempre que las coords sean razonables
+        flyanim.lastSafePos  = pos
+        flyanim.lastSafeTime = tick()
+    end)
+end
+
 local function stopTeleportGuard()
     flyanim.isTeleportGuardActive = false
     if flyanim.teleportGuardConn then
@@ -431,12 +511,15 @@ local function cleanupMotors(root, preserveVelY)
             pcall(function() v:Destroy() end)
         end
     end
-    -- preserveVelY=true: conservar velocidad Y para que la caída libre funcione.
-    -- Se usa al apagar el fly para no "congelar" al personaje en el aire.
+    -- preserveVelY=true: conservar velocidad Y o aplicar mínimo hacia abajo
+    -- para que la gravedad tome efecto inmediatamente al apagar el vuelo.
     if preserveVelY then
         local currentVelY = 0
         pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
-        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, currentVelY, 0) end)
+        -- Si está quieto o subiendo, aplicar pequeño impulso hacia abajo
+        -- para que Freefall empiece correctamente sin flotar
+        local finalVelY = (currentVelY > 0) and -4 or currentVelY
+        pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, finalVelY, 0) end)
     else
         pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
     end
@@ -1518,10 +1601,54 @@ local function updateAnimForMovement()
 end
 
 -- ============================================================
--- ANTI IMPULSO (eliminado)
+-- ANTI IMPULSO
 -- ============================================================
 
-local function startAntiImpulse() end  -- eliminado
+local function startAntiImpulse()
+    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+    local mySession = flyanim.sessionToken
+    flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
+        if not flyanim.enabled then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
+        local char = lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        -- Protección adicional contra velocidades absurdas
+        local vel = root.AssemblyLinearVelocity
+        local speed = vel.Magnitude
+        local maxAllowed = math.max(
+            BASE_SPEED * TURBO_MULT * 2,
+            flyanim.DASH_SPEED * 1.5,
+            flyanim.TURBO_DASH_SPEED * 1.5,
+            flyanim.BACK_DASH_SPEED * 1.2
+        )
+        if speed > maxAllowed * 2 and flyanim.dashTimer <= 0 then
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
+        end
+
+        local bv = flyanim.bv
+        if not bv or not bv.Parent then return end
+        local expectedVel = bv.velocity
+        local actualVel   = root.AssemblyLinearVelocity
+        local diff = (actualVel - expectedVel).Magnitude
+        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
+        local bg = flyanim.bg
+        if bg then
+            local targetAngular  = Vector3.new(0,0,0)
+            local currentAngular = root.AssemblyAngularVelocity
+            if (currentAngular - targetAngular).Magnitude > 5 then
+                root.AssemblyAngularVelocity = targetAngular
+            end
+        end
+    end)
+end
 
 local function stopAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
@@ -3911,8 +4038,8 @@ local function _flyOff()
     -- sessionToken es lo PRIMERO: invalida los guards de seguridad (teleportGuard,
     -- anomalyProtection, antiImpulse, animBlockLoop) en el mismo tick, antes de
     -- que corran sus callbacks de Heartbeat/Stepped. Sin esto, pueden ejecutar
-    -- un tick extra con datos de la sesion anterior (lastSafePos, lastKnownPos)
-    -- y teleportar al personaje o forzar velocidad 0 cuando ya no esta volando.
+    -- un tick extra con datos de la sesion anterior y forzar velocidad 0 cuando
+    -- ya no esta volando.
     flyanim.sessionToken          = (flyanim.sessionToken          or 0) + 1
     -- Invalidar el resto de tokens de coroutines y loops internos
     flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken  or 0) + 1
@@ -3945,20 +4072,16 @@ local function _flyOff()
     if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
     if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
     if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
-    -- Destruir los body movers INMEDIATAMENTE aquí, en el mismo frame que rsConn/tpMoveConn.
-    -- CRÍTICO: zerear la velocidad Y COMPLETAMENTE antes de soltar al humanoid.
-    -- El BodyForce anti-gravedad puede haberle dado al personaje velY > 0 en su último frame.
-    -- Si no se zeroa aquí, GettingUp o Freefall heredan esa velocidad y el personaje sube.
+    -- Destruir los body movers INMEDIATAMENTE aquí, en el mismo frame que rsConn/tpMoveConn,
+    -- para que el BodyForce anti-gravedad no tenga ni un frame extra de efecto.
+    -- cleanupMotors también zeroa AssemblyLinearVelocity/AngularVelocity al instante.
     do
         local _earlyChar = lplr.Character
         local _earlyRoot = _earlyChar and _earlyChar:FindFirstChild("HumanoidRootPart")
-        if _earlyRoot then
-            -- Primero destruir motores (elimina BodyForce, BodyVelocity, BodyGyro)
-            cleanupMotors(_earlyRoot)  -- SIN preserveVelY: zerear todo incluyendo Y
-            -- Luego aplicar velocidad Y neutra para caída libre limpia
-            pcall(function() _earlyRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
-            pcall(function() _earlyRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-        end
+        -- preserveVelY=true: conservar velocidad Y para que la caida libre funcione.
+        -- cleanupMotors sin este flag zeroa Y tambien, haciendo que el personaje
+        -- quede estatico en el aire hasta que GettingUp lo empuje hacia arriba.
+        if _earlyRoot then cleanupMotors(_earlyRoot, true) end
         flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
     end
     if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
@@ -4086,13 +4209,16 @@ local function _flyOff()
     end
 
     -- Alinear orientación (quitar inclinación del vuelo).
-    -- La velocidad Y ya está en 0 desde PASO 0C.
+    -- preserveVelY=true en cleanupMotors ya conservó la velocidad Y correctamente.
     -- Aquí solo alineamos el CFrame y zereamos velocidad angular.
     if rootCurrent then
         local _, ry, _ = rootCurrent.CFrame:ToOrientation()
         pcall(function()
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            -- Zerear solo X/Z para evitar que el personaje salga disparado lateralmente.
+            -- NO tocar Y: cleanupMotors(preserveVelY) ya la manejó.
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
@@ -4107,6 +4233,20 @@ local function _flyOff()
             hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
         end
     end)
+    -- KICK DE CAÍDA: aplicar impulso hacia abajo solo si el personaje está quieto
+    -- o subiendo al apagar el vuelo. NO aplicar si ya cae normalmente.
+    if rootCurrent then
+        task.defer(function()
+            if not rootCurrent or not rootCurrent.Parent then return end
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            -- Solo forzar caída si está subiendo o casi estático
+            if velY > 1 then
+                pcall(function()
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -8, 0)
+                end)
+            end
+        end)
+    end
 
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
