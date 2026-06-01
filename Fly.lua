@@ -1,4 +1,4 @@
-print("version 1.27 fly")
+print("version 1.28 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4121,6 +4121,8 @@ local function _flyOff()
     if dashConnection              then dashConnection:Disconnect();               dashConnection              = nil end
     if flyanim.idleTimer           then task.cancel(flyanim.idleTimer);           flyanim.idleTimer           = nil end
     if flyanim.spaceHoldTimerAdv   then task.cancel(flyanim.spaceHoldTimerAdv);   flyanim.spaceHoldTimerAdv   = nil end
+    -- Cancelar timers de gyroProtection que pudieran recrear motores post-apagado
+    if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer); flyanim.gyroProtectionTimer = nil end
 
     -- ── PASO 1: Medir altura antes de apagar ──
     clearC0Desired()
@@ -4183,6 +4185,8 @@ local function _flyOff()
     stopAntiImpulse(); stopBrakeSystem(); stopMegaTurboUpListener()
     stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
     stopTeleportGuard(); detenerWatchdogAltura()
+    -- Limpiar estado del combo (conns ya desconectadas en PASO 0C)
+    stopComboListener()
     setNoclip(false)
 
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
@@ -4263,8 +4267,17 @@ local function _flyOff()
         return
     end
 
-    -- animConn ya fue desconectado en PASO 0C.
-    -- El animScript del juego lo rehabilita doLanding() al terminar.
+    -- FIX BUG PRINCIPAL: Reactivar animScript INMEDIATAMENTE para que las animaciones
+    -- normales (caída libre, etc.) aparezcan durante el freefall ANTES de aterrizar.
+    -- Antes solo se reactivaba en doLanding() → el personaje caía completamente sin animaciones.
+    -- doLanding() lo desactivará temporalmente para la secuencia épica y lo vuelve a activar.
+    do
+        local animScriptEarly = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+        if animScriptEarly then
+            animScriptEarly.Disabled = false
+            flyanim.animScript = animScriptEarly  -- doLanding() necesita esta referencia
+        end
+    end
 
     flyanim.waitingLand = true
     if flyanim.landConn then flyanim.landConn:Disconnect() end
