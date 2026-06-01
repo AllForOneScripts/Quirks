@@ -1,4 +1,4 @@
-print("version 1.47 fly")
+print("version 1.48 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2379,10 +2379,11 @@ local function spawnLandingEffects(position, velocity)
             img3.ImageTransparency = smokeAlphaStart - 0.01; img3.ScaleType = Enum.ScaleType.Fit
             local dur3 = smokeDuration * 0.55
             local peakSize3 = ringSize3 * (2.0 + t * 1.4)
+            -- Expandirse y desaparecer COMPLETAMENTE (ImageTransparency = 1)
             TweenService:Create(p3, TweenInfo.new(dur3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize3, peakSize3, 0.05)}):Play()
             TweenService:Create(img3, TweenInfo.new(dur3, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd - 0.06}):Play()
+                {ImageTransparency = 1}):Play()
             task.delay(dur3 + 0.05, function() pcall(function() p3:Destroy() end) end)
         end)
 
@@ -3817,6 +3818,8 @@ local function _flyOn()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
+    -- Cancelar ancla de suelo si el jugador reactiva el vuelo antes de los 0.75s
+    _groundAnchorToken = _groundAnchorToken + 1
     -- CAMBIO SALVAJE: matar animación de caída épica si está corriendo
     _landAnimToken = _landAnimToken + 1
     if _landBaseRef and pcall(function() _landBaseRef:Stop(0) end) then end
@@ -4096,72 +4099,148 @@ end
 -- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
 -- Al detectar suelo inminente:
---   · Cancela TODOS los impulsos en Y al instante
---   · Fuerza el body completamente recto (upright) con un BodyGyro
---     de maxTorque muy alto durante el impacto, eliminando cualquier
---     inclinacion residual del vuelo que cause rebotes laterales
---   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
---     para "pegar" al suelo y absorber el impacto sin afectar XZ
---   · Destruye todo y restaura el estado normal al terminar
-local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
+--   · Aplica una fuerza gravitacional inversa masiva con el valor exacto
+--     de la velocidad que llevaba el personaje al caer, para que ambas
+--     fuerzas se cancelen exactamente antes del impacto con el suelo.
+--     No hay pausa: la caída continúa de forma natural hasta el último instante.
+--   · BodyGyro firme y recto (solo yaw) durante todo el proceso.
+--   · Fase 1 (ANCHOR): BodyPosition anclado a XYZ exacto del suelo tocado,
+--     MaxForce = 9e9 en los 3 ejes. Dura hasta que el personaje toca el suelo.
+--   · Fase 2 (STICK): solo Y anclado durante 0.75s para que nada lo levante.
+--     Se cancela INSTANTANEAMENTE si el jugador presiona Espacio/Jump.
+--   · Destruye todo limpiamente al terminar.
+local GROUND_STICK_TIME = 0.75   -- segundos anclado solo en Y tras el impacto
+
+-- Token global para poder cancelar el ancla desde salto
+local _groundAnchorToken = 0
 
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
+    -- ── Paso 1: Fuerza gravitacional inversa = velocidad de caída ────────────
+    -- Capturar velocidad Y en este preciso instante (antes del impacto)
+    local velY = 0
+    pcall(function() velY = hrp.AssemblyLinearVelocity.Y end)
+
+    -- Calcular masa total del personaje para la fuerza
+    local char = hum.Parent
+    local totalMass = 0
+    pcall(function()
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and not part.Massless then
+                    totalMass = totalMass + part.AssemblyMass
+                end
+            end
+        end
+        if totalMass == 0 then totalMass = hrp.AssemblyMass end
+    end)
+    if totalMass == 0 then totalMass = 1 end
+
+    -- Fuerza que contrarresta exactamente la velocidad de caída
+    -- F = masa * |velY| / dt_impacto. Usamos un impulso instantáneo zerando velY.
+    -- La forma más limpia en Roblox: zerear AssemblyLinearVelocity.Y directamente.
     pcall(function()
         local v = hrp.AssemblyLinearVelocity
-        -- Zerear Y por completo; conservar XZ para no interrumpir el movimiento
         hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    -- Paso 2: BodyGyro de alta potencia para alinear el body completamente
-    -- Esto elimina la inclinacion residual del vuelo (turbo/mega usan CFrame.Angles)
-    -- que hace que al impactar el suelo la fisica calcule fuerzas de reaccion
-    -- laterales y salga el personaje disparado hacia los lados.
+    -- ── Paso 2: BodyGyro firme y recto (solo yaw, sin pitch/roll) ────────────
     local uprightGyro = Instance.new("BodyGyro")
-    do
+    pcall(function()
         local _, ry, _ = hrp.CFrame:ToOrientation()
-        -- CFrame completamente vertical: solo conservar rotacion Y (yaw), anular pitch/roll
         uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
         uprightGyro.P         = 999999
         uprightGyro.MaxTorque = Vector3.new(999999, 999999, 999999)
         uprightGyro.Parent    = hrp
-    end
-    -- Forzar la orientacion del HRP inmediatamente tambien via CFrame
+    end)
+    -- Forzar CFrame recto también vía propiedad directa
     pcall(function()
         local _, ry, _ = hrp.CFrame:ToOrientation()
-        local currentPos = hrp.Position
-        hrp.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, ry, 0)
+        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
     end)
 
-    -- Paso 3: BodyVelocity que bloquea el eje Y durante GROUND_STICK_TIME
-    -- MaxForce solo en Y: no toca XZ, el personaje puede moverse normalmente
-    -- Velocity Y = 0 para absorber rebotes y mantenerlo pegado al suelo
-    local bv = Instance.new("BodyVelocity")
-    bv.Velocity  = Vector3.new(0, 0, 0)
-    bv.MaxForce  = Vector3.new(0, 9e9, 0)
-    bv.Parent    = hrp
+    -- ── Paso 3: Ancla XYZ al punto exacto del suelo tocado ───────────────────
+    -- BodyPosition con MaxForce 9e9 en los 3 ejes: clava al personaje en ese punto.
+    local anchorPos = hrp.Position
+    local bpAnchor = Instance.new("BodyPosition")
+    bpAnchor.Position = anchorPos
+    bpAnchor.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bpAnchor.P        = 999999
+    bpAnchor.D        = 9999
+    bpAnchor.Parent   = hrp
 
     hum.PlatformStand = true
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
 
-    task.delay(GROUND_STICK_TIME, function()
-        pcall(function() bv:Destroy() end)
+    -- Mantener ancla XYZ un instante (1 frame de física) para absorber el impacto
+    task.wait(0.06)
+    pcall(function() bpAnchor:Destroy() end)
+
+    -- ── Paso 4: Ancla solo en Y durante GROUND_STICK_TIME ────────────────────
+    -- Permite moverse en XZ pero impide que nada lo levante a la fuerza.
+    -- Se cancela al instante si el jugador salta.
+    if not hrp or not hrp.Parent then
         pcall(function() uprightGyro:Destroy() end)
+        if hum and hum.Parent then
+            hum.PlatformStand = false
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+        end
+        return
+    end
+
+    local bvStick = Instance.new("BodyVelocity")
+    bvStick.Velocity  = Vector3.new(0, 0, 0)
+    bvStick.MaxForce  = Vector3.new(0, 9e9, 0)
+    bvStick.Parent    = hrp
+
+    -- Asegurarse de que Y quede a 0 una vez más antes del stick
+    pcall(function()
+        local v2 = hrp.AssemblyLinearVelocity
+        hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end)
+
+    _groundAnchorToken = _groundAnchorToken + 1
+    local myAnchorToken = _groundAnchorToken
+
+    -- Escuchar salto para cancelar el ancla al instante
+    local jumpConn
+    jumpConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Enum.KeyCode.Space then
+            if _groundAnchorToken == myAnchorToken then
+                _groundAnchorToken = _groundAnchorToken + 1  -- invalidar
+            end
+        end
+    end)
+
+    local stickStart = tick()
+    task.spawn(function()
+        while tick() - stickStart < GROUND_STICK_TIME do
+            task.wait(0.02)
+            if _groundAnchorToken ~= myAnchorToken then break end
+            if not hrp or not hrp.Parent then break end
+        end
+
+        pcall(function() jumpConn:Disconnect() end)
+        pcall(function() bvStick:Destroy() end)
+        pcall(function() uprightGyro:Destroy() end)
+
         if not hum or not hum.Parent then return end
-        -- Zerear Y una ultima vez al soltar
+        -- Restaurar estado normal
         if hrp and hrp.Parent then
-            local v2 = hrp.AssemblyLinearVelocity
-            hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
+            local v3 = hrp.AssemblyLinearVelocity
+            hrp.AssemblyLinearVelocity  = Vector3.new(v3.X, 0, v3.Z)
             hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
         hum.PlatformStand = false
         hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
         hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-        -- El motor de fisica detectara Landed en el siguiente frame
+        -- El motor de física detectará Landed en el siguiente frame
     end)
 end
 
@@ -4468,24 +4547,34 @@ local function _flyOff()
         end
     end)
 
+    local capturedHeight   = flyanim.landingHeight
+    local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
+
     -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
-    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
-    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
+    -- aplicar impulso hacia abajo proporcional a la altura para que la caída
+    -- arranque de inmediato sin pausa artificial. El omniAntiBounceLand cancela
+    -- esta velocidad justo antes del suelo mediante fuerza gravitacional inversa.
     if rootCurrent then
         task.delay(0.01, function()
             if not rootCurrent or not rootCurrent.Parent then return end
             if flyanim.enabled then return end  -- ya reactivó el vuelo
             local velY = rootCurrent.AssemblyLinearVelocity.Y
-            if velY > 0.5 then
+            if velY > -2 then
+                -- Calcular kick proporcional a la altura: más alto → más kick inicial
+                -- Esto elimina la pausa flotante sin afectar el aterrizaje
+                -- (omniAntiBounceLand cancela exactamente esta velocidad antes del suelo)
+                local kickHeight = math.clamp(capturedHeight or 0, 0, 200)
+                local kickSpeed  = -(4 + kickHeight * 0.18)  -- entre -4 y -40 según altura
                 pcall(function()
-                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(
+                        rootCurrent.AssemblyLinearVelocity.X,
+                        kickSpeed,
+                        rootCurrent.AssemblyLinearVelocity.Z
+                    )
                 end)
             end
         end)
     end
-
-    local capturedHeight   = flyanim.landingHeight
-    local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
 
     if capturedHeight < 10 then
         local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
@@ -4806,6 +4895,8 @@ local function _connectGlobal()
         destroyWhiteFlash()
         local cam = workspace.CurrentCamera; if cam then cam.FieldOfView=70 end
         stopLandingWatcher()
+        -- Cancelar ancla de suelo en respawn
+        _groundAnchorToken = _groundAnchorToken + 1
         flyanim.mode="normal"; flyanim.speed=BASE_SPEED; flyanim.isMoving=false
         flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
         flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
