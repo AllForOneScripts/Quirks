@@ -1,4 +1,4 @@
-print("version 1.40 fly")
+print("version 1.41 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -445,24 +445,9 @@ local function startTeleportGuard()
 
         local pos = root.Position
 
-        -- Solo corregir coordenadas absolutamente absurdas (caída al void, NaN)
-        local isInsane = (math.abs(pos.X) > COORD_SANITY_LIMIT)
-                      or (math.abs(pos.Y) > COORD_SANITY_LIMIT)
-                      or (math.abs(pos.Z) > COORD_SANITY_LIMIT)
-                      or (pos.Y < -5000)  -- caída al void
-                      or (pos ~= pos)     -- NaN check
-
-        -- Detectar TP forzado externo: movimiento > 1500 studs en un solo frame
-        -- y sin dash activo. TPs propios (del usuario) son legítimos aunque sean grandes.
-        local isForcedTP = false
-        if not isInsane and flyanim.lastSafePos and flyanim.dashTimer <= 0 then
-            local delta = (pos - flyanim.lastSafePos).Magnitude
-            if delta > 1500 then
-                isForcedTP = true
-            end
-        end
-
-        if isInsane or isForcedTP then
+        -- ÚNICA condición de TP permitida: caer al void (Y <= -500)
+        -- Ninguna otra condición (delta de posición, velocidad absurda, etc.) activa el TP.
+        if pos.Y <= -500 then
             local safePos = flyanim.lastSafePos
             if safePos then
                 local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
@@ -490,8 +475,10 @@ local function startTeleportGuard()
         end
 
         -- Actualizar posición segura siempre que las coords sean razonables
-        flyanim.lastSafePos  = pos
-        flyanim.lastSafeTime = tick()
+        if math.abs(pos.X) < COORD_SANITY_LIMIT and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+        end
     end)
 end
 
@@ -1630,19 +1617,6 @@ local function startAntiImpulse()
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
 
-        -- Protección adicional contra velocidades absurdas
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
-        local maxAllowed = math.max(
-            BASE_SPEED * TURBO_MULT * 2,
-            flyanim.DASH_SPEED * 1.5,
-            flyanim.TURBO_DASH_SPEED * 1.5,
-            flyanim.BACK_DASH_SPEED * 1.2
-        )
-        if speed > maxAllowed * 2 and flyanim.dashTimer <= 0 then
-            pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
-        end
-
         local bv = flyanim.bv
         if not bv or not bv.Parent then return end
         local expectedVel = bv.velocity
@@ -1731,73 +1705,19 @@ local function startAnomalyProtection()
         if not root then flyanim.lastKnownPos = nil; return end
 
         local now = tick()
-        local vel = root.AssemblyLinearVelocity
-        local speed = vel.Magnitude
         local hum = char:FindFirstChildOfClass("Humanoid")
-
-        -- Detección de coordenadas absurdas (void/impulso extremo)
         local pos = root.Position
-        if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
-            if flyanim.lastKnownPos then
-                pcall(function()
-                    root.CFrame = CFrame.new(flyanim.lastKnownPos + Vector3.new(0, 5, 0))
-                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-                flyanim.dashTimer = 0
-                flyanim.dashVel   = Vector3.new(0, 0, 0)
-            end
-            return
-        end
 
-        local maxLegitSpeed = math.max(
-            BASE_SPEED * TURBO_MULT * 1.5,
-            flyanim.DASH_SPEED * 1.2,
-            flyanim.TURBO_DASH_SPEED * 1.2,
-            flyanim.BACK_DASH_SPEED * 1.1
-        )
+        -- Actualizar posición conocida
+        flyanim.lastKnownPos = pos
 
-        local isAnomaly = false
-
-        if speed > ANOMALY_SPEED_THRESHOLD and speed > maxLegitSpeed and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        -- (bloque posDelta eliminado: el sistema de anomalías ya no revierte
-        -- teletransportes por distancia, eso lo maneja el teleportGuard con su
-        -- umbral de 1500 studs. Aquí solo se actúa sobre speed absurda o ragdoll.)
-
+        -- Solo intervenir si hay ragdoll activo (no hacer TP por velocidad ni posición)
         if hum and hum:GetState() == Enum.HumanoidStateType.Ragdoll and now - lastAnomalyFix > ANOMALY_COOLDOWN then
-            isAnomaly = true
-        end
-
-        if isAnomaly then
             lastAnomalyFix = now
             flyanim.ragdollDetected = true
 
-            -- Capturar posición de cámara ANTES de mover el personaje
-            local cam = workspace.CurrentCamera
-            local camCF = cam and cam.CFrame
-
-            -- Si la posición actual es absurda y hay lastKnownPos, volver ahí
-            local recoverPos = flyanim.lastKnownPos and (flyanim.lastKnownPos + Vector3.new(0, 3, 0))
-
             pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0) end)
             pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-
-            if recoverPos then
-                pcall(function() root.CFrame = CFrame.new(recoverPos) end)
-            end
-
-            -- Restaurar cámara en el siguiente frame para evitar parpadeo/salto
-            if cam and camCF then
-                task.defer(function()
-                    if cam and cam.Parent then cam.CFrame = camCF end
-                end)
-            end
-
-            flyanim.dashTimer = 0
-            flyanim.dashVel   = Vector3.new(0, 0, 0)
 
             if hum then
                 pcall(function()
@@ -1821,38 +1741,11 @@ local function startAnomalyProtection()
                 if flyanim.bg then flyanim.bg.cframe = root.CFrame end
             end
 
-            -- Restaurar C0 según el modo actual
-            if flyanim.mode == "fast" and not flyanim.turboPreImpulsoActivo and not flyanim.turboRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            elseif flyanim.mode == "turbo" and not flyanim.megaRenderConn then
-                local rj = flyanim.rootJoint
-                local oc = flyanim.originalC0
-                if rj and oc then
-                    pcall(function()
-                        rj.C0 = oc
-                            * CFrame.new(0, ANIM_MEGA.COMPENSACION_ALTURA, 0)
-                            * CFrame.Angles(math.rad(ANIM_MEGA.INCLINACION_GRADOS), 0, 0)
-                    end)
-                end
-            else
-                restaurarC0Inmediato()
-            end
-
             task.defer(function()
                 if not flyanim.enabled then return end
                 flyanim.ragdollDetected = false
             end)
         end
-
-        flyanim.lastKnownPos = root.Position
     end)
 end
 
@@ -2748,6 +2641,12 @@ end
 -- SISTEMA DE COMBOS
 -- ============================================================
 
+-- Ventana de encadenamiento: si el último click fue hace menos de COMBO_CHAIN_WINDOW,
+-- el combo puede seguir avanzando aunque la animación anterior ya haya terminado.
+-- comboStepEndTime registra cuándo terminó la animación actual para saber si el
+-- siguiente click es "a tiempo" aunque llegue tarde.
+local COMBO_ANIM_DURATION = 0.75   -- duración mínima que debe completarse antes de aceptar el siguiente golpe
+
 local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
     local t = getTrack(animId)
     if not t then if onStopped then onStopped() end; return nil end
@@ -2777,15 +2676,12 @@ local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
         while t.Length == 0 and tick() < timeout do task.wait() end
         if t.Length > 0 and t.IsPlaying then pcall(function() t.TimePosition = 0 end) end
 
-        local minWait = COMBO_ANIM_MIN_DURATION
+        -- Esperar COMBO_ANIM_DURATION completo antes de permitir el siguiente golpe
         local elapsed = tick() - flyanim.comboAnimStartTime
-        if elapsed < minWait then task.wait(minWait - elapsed) end
-
-        local cancelFrame = t.Length * 0.40
-        local cancelTimeout = tick() + 2
-        while t.IsPlaying and t.TimePosition < cancelFrame and tick() < cancelTimeout do
-            task.wait()
+        if elapsed < COMBO_ANIM_DURATION then
+            task.wait(COMBO_ANIM_DURATION - elapsed)
         end
+
         flyanim.comboBusy = false
         if onCancelable then onCancelable() end
     end)
@@ -2909,7 +2805,7 @@ local function ejecutarPuno4()
         if flyanim.comboToken ~= myToken then return end
 
         local length    = t.Length
-        local target40  = length * 0.40
+        local target40  = length * 0.25  -- congelar al 25%
 
         timeout = tick() + 3
         while t.IsPlaying and t.TimePosition < target40 and tick() < timeout do
@@ -2959,6 +2855,8 @@ local function handleComboClick()
     if not flyanim.enabled then return end
     if flyanim.turboPreImpulsoActivo then return end
     if flyanim.comboBusy then return end
+    -- No iniciar combo si el escudo está activo
+    if flyanim.isBlocking then return end
 
     local now  = tick()
     local step = flyanim.comboStep
@@ -3013,7 +2911,9 @@ local function handleComboClick()
             if flyanim.comboToken ~= myToken then return end
             if flyanim.comboStep == 1 then
                 task.wait(0.05)
-                if flyanim.comboStep == 1 and flyanim.comboToken == myToken then
+                -- Solo resetear si la ventana de encadenamiento expiró
+                if flyanim.comboStep == 1 and flyanim.comboToken == myToken
+                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
                     resetCombo(); finalizarCombo()
                 end
             end
@@ -3029,7 +2929,8 @@ local function handleComboClick()
             if flyanim.comboToken ~= myToken then return end
             if flyanim.comboStep == 2 then
                 task.wait(0.05)
-                if flyanim.comboStep == 2 and flyanim.comboToken == myToken then
+                if flyanim.comboStep == 2 and flyanim.comboToken == myToken
+                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
                     resetCombo(); finalizarCombo()
                 end
             end
@@ -3043,7 +2944,8 @@ local function handleComboClick()
             if flyanim.comboToken ~= myToken then return end
             if flyanim.comboStep == 3 then
                 task.wait(0.1)
-                if flyanim.comboStep == 3 and flyanim.comboToken == myToken then
+                if flyanim.comboStep == 3 and flyanim.comboToken == myToken
+                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
                     resetCombo(); finalizarCombo()
                 end
             end
@@ -3871,6 +3773,26 @@ local function _flyOn()
             if targetChar2 then
                 local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
                 if targetRoot2 then
+                    -- Micro-TP: si no hay suelo bajo el jugador y está 10+ studs por debajo del target
+                    local noFloor = false
+                    do
+                        local rpCheck = RaycastParams.new()
+                        rpCheck.FilterType = Enum.RaycastFilterType.Exclude
+                        local cc2 = lplr.Character
+                        if cc2 then rpCheck.FilterDescendantsInstances = {cc2} end
+                        local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
+                        noFloor = (hitCheck == nil)
+                    end
+                    local heightDiff = targetRoot2.Position.Y - root2.Position.Y
+                    if noFloor and heightDiff > 10 and flyanim.enabled then
+                        -- Micro-TP: posicionarse justo junto al target
+                        local toTarget = targetRoot2.Position - root2.Position
+                        local newPos = targetRoot2.Position - (toTarget.Unit * 5)
+                        pcall(function()
+                            root2.CFrame = CFrame.new(newPos, targetRoot2.Position)
+                        end)
+                    end
+
                     local toTarget3D = targetRoot2.Position - root2.Position
                     local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
                     local vertDiff   = math.abs(toTarget3D.Y)
