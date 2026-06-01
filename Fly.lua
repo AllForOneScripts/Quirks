@@ -1,4 +1,4 @@
-print("version 1.39 fly")
+print("version 1.40 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -204,7 +204,7 @@ local ANIM_BLOQUEO = {
 
 local COMBO_MIN_GAP        = 0.08
 local COMBO4_SPACE_MIN_GAP = 0.20
-local COMBO_CHAIN_WINDOW   = 1.4
+local COMBO_CHAIN_WINDOW   = 1.5   -- ventana máxima entre golpes del mismo combo
 local COMBO_ANIM_MIN_DURATION = 0.18
 
 local flyanim = {
@@ -2910,7 +2910,6 @@ local function ejecutarPuno4()
 
         local length    = t.Length
         local target40  = length * 0.40
-        local target65  = length * 0.65
 
         timeout = tick() + 3
         while t.IsPlaying and t.TimePosition < target40 and tick() < timeout do
@@ -2918,18 +2917,13 @@ local function ejecutarPuno4()
             task.wait()
         end
         flyanim.comboBusy = false
-
-        timeout = tick() + 3
-        while t.IsPlaying and t.TimePosition < target65 and tick() < timeout do
-            if flyanim.comboToken ~= myToken then return end
-            task.wait()
-        end
         if not t.IsPlaying then finalizarCombo(); return end
         if flyanim.comboToken ~= myToken then return end
 
+        -- Congelar al 40% y esperar input o timeout
         flyanim.combo4Frozen = true
         pcall(function() t:AdjustSpeed(0) end)
-        pcall(function() t.TimePosition = target65 end)
+        pcall(function() t.TimePosition = target40 end)
 
         local waitStart = tick()
         while tick() - waitStart < 0.3 do
@@ -2984,12 +2978,17 @@ local function handleComboClick()
 
     if step >= 1 then
         if now - flyanim.comboLastClick > COMBO_CHAIN_WINDOW then
-            if not flyanim.comboPlaying then
-                resetCombo()
-                step = 0
-            else
-                return
+            -- Ventana expirada: resetear todo sin importar el estado actual
+            flyanim.comboToken = (flyanim.comboToken or 0) + 1
+            for _, track in pairs(flyanim.tracks) do
+                pcall(function() if track and track.IsPlaying then track:Stop(0.1) end end)
             end
+            flyanim.comboPlaying = false
+            flyanim.comboBusy    = false
+            flyanim.combo4Frozen = false
+            stopComboC0Lock()
+            resetCombo()
+            step = 0
         end
     end
 
@@ -3802,10 +3801,17 @@ local function _flyOn()
     if hum then
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        -- Sacar al personaje de freefall/caída inmediatamente
         hum.PlatformStand = false
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        -- NO llamar GettingUp aquí: empuja hacia arriba antes de que existan
+        -- los motores de vuelo, causando el rebote. _flyMakeMotors ancla la física.
     end
+    -- Limpiar tracks de la sesión anterior (doLanding puede haber dejado
+    -- flyanim.tracks={} y normalTracks con referencias muertas).
+    -- Parar todo lo que aún esté sonando antes de reconstruir el animator.
+    for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.normalTracks = {}
+    for _, t in pairs(flyanim.tracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.tracks = {}
     setupAnimator(char)
     _flyMakeMotors(); _flyBuildGui(); startIdleWatcher(); startComboListener()
     flyanim._normalPlayId = 1
@@ -4515,6 +4521,18 @@ local function _connectGlobal()
             flyanim.fKeyHeld = true
             if not flyanim.blockCancelledByCombo then
                 if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
+                    -- Si hay combo activo, cancelarlo inmediatamente con fade rápido
+                    if flyanim.comboPlaying then
+                        flyanim.comboToken = (flyanim.comboToken or 0) + 1
+                        for _, track in pairs(flyanim.tracks) do
+                            pcall(function() if track and track.IsPlaying then track:Stop(0.08) end end)
+                        end
+                        flyanim.comboPlaying = false
+                        flyanim.comboBusy    = false
+                        flyanim.combo4Frozen = false
+                        resetCombo()
+                        stopComboC0Lock()
+                    end
                     startBlocking()
                 end
             end
