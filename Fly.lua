@@ -1,4 +1,4 @@
-print("version 1.51 fly")
+print("version 1.52 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4112,118 +4112,61 @@ end
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    -- Incrementar token para invalidar cualquier ancla anterior que pudiera estar corriendo
     _groundAnchorToken = _groundAnchorToken + 1
     local myAnchorToken = _groundAnchorToken
 
-    -- ── BodyGyro firme y recto: P y MaxTorque muy altos, solo yaw preservado ──
-    -- Elimina inclinacion residual del vuelo (turbo/mega usan CFrame.Angles),
-    -- evitando que la fisica calcule fuerzas laterales al impactar el suelo.
-    local uprightGyro = Instance.new("BodyGyro")
-    do
-        local _, ry, _ = hrp.CFrame:ToOrientation()
-        uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
-        uprightGyro.P         = 999999
-        uprightGyro.MaxTorque = Vector3.new(999999, 999999, 999999)
-        uprightGyro.Parent    = hrp
-    end
-    -- Forzar orientacion via CFrame tambien (doble seguro)
+    -- Alinear orientacion: solo conservar yaw, quitar pitch/roll residual del vuelo
     pcall(function()
         local _, ry, _ = hrp.CFrame:ToOrientation()
         hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
-        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-    end)
-
-    -- ── FASE 1: Ancla XYZ completa (~1 frame, 60ms) ──────────────────────────
-    -- BodyPosition al punto exacto del suelo: ningun impulso puede mover al personaje.
-    -- Esto absorbe TODA la inercia de la caida en un instante.
-    local anchorPos = hrp.Position
-    local bpXYZ = Instance.new("BodyPosition")
-    bpXYZ.Position  = anchorPos
-    bpXYZ.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
-    bpXYZ.P         = 999999
-    bpXYZ.D         = 9999
-    bpXYZ.Parent    = hrp
-
-    -- Cero velocidades al instante
-    pcall(function()
         hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    hum.PlatformStand = true
-    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
+    -- BodyGyro suave para mantener al personaje recto durante el aterrizaje
+    local uprightGyro = Instance.new("BodyGyro")
+    local _, ry2, _ = hrp.CFrame:ToOrientation()
+    uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry2, 0)
+    uprightGyro.P         = 3000
+    uprightGyro.MaxTorque = Vector3.new(3000, 3000, 3000)
+    uprightGyro.Parent    = hrp
 
-    task.delay(0.06, function()
-        if myAnchorToken ~= _groundAnchorToken then
-            pcall(function() bpXYZ:Destroy() end)
-            pcall(function() uprightGyro:Destroy() end)
-            return
-        end
-        -- Destruir ancla XYZ
-        pcall(function() bpXYZ:Destroy() end)
+    -- BodyVelocity solo en Y: absorbe el rebote sin bloquear XZ ni la fisica del humanoid
+    local bvY = Instance.new("BodyVelocity")
+    bvY.Velocity = Vector3.new(0, 0, 0)
+    bvY.MaxForce = Vector3.new(0, 4000, 0)
+    bvY.Parent   = hrp
 
-        -- ── FASE 2: Ancla solo en Y durante 0.75s ────────────────────────────
-        -- BodyVelocity con MaxForce solo en Y: el personaje puede moverse en XZ
-        -- pero nada lo levantara a la fuerza. Velocity Y = 0.
-        if not hrp or not hrp.Parent then
-            pcall(function() uprightGyro:Destroy() end)
-            return
-        end
-
-        local bvY = Instance.new("BodyVelocity")
-        bvY.Velocity = Vector3.new(0, 0, 0)
-        bvY.MaxForce = Vector3.new(0, 9e9, 0)
-        bvY.Parent   = hrp
-
-        -- Listener de salto: libera el ancla al instante si se presiona Espacio
-        local jumpConn
-        jumpConn = UserInputService.InputBegan:Connect(function(input, gpe)
-            if gpe then return end
-            if input.KeyCode == Enum.KeyCode.Space then
-                _groundAnchorToken = _groundAnchorToken + 1  -- invalida el loop de espera
-                if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
-                pcall(function() bvY:Destroy() end)
-                pcall(function() uprightGyro:Destroy() end)
-                if hum and hum.Parent then
-                    hum.PlatformStand = false
-                    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-                end
-            end
-        end)
-
-        -- Loop de espera: cada 20ms comprueba el token; sale a los 0.75s o si fue cancelado
-        local STICK_Y_TIME = 0.75
-        local elapsed = 0
-        local STEP = 0.02
-        task.spawn(function()
-            while elapsed < STICK_Y_TIME do
-                task.wait(STEP)
-                elapsed = elapsed + STEP
-                if myAnchorToken ~= _groundAnchorToken then
-                    -- Fue cancelado por salto u otro evento
-                    if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
-                    pcall(function() bvY:Destroy() end)
-                    pcall(function() uprightGyro:Destroy() end)
-                    return
-                end
-            end
-            -- Tiempo agotado: liberar normalmente
+    -- Listener de salto: cancela el ancla al instante si se salta
+    local jumpConn
+    jumpConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Enum.KeyCode.Space then
+            _groundAnchorToken = _groundAnchorToken + 1
             if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
             pcall(function() bvY:Destroy() end)
             pcall(function() uprightGyro:Destroy() end)
-            if not hum or not hum.Parent then return end
-            -- Zerear Y una ultima vez al soltar
-            if hrp and hrp.Parent then
-                hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    end)
+
+    -- Ancla Y durante 0.75s; cancela antes si el token cambia (salto, _flyOn, respawn)
+    local STICK_Y_TIME = 0.75
+    local elapsed = 0
+    local STEP = 0.05
+    task.spawn(function()
+        while elapsed < STICK_Y_TIME do
+            task.wait(STEP)
+            elapsed = elapsed + STEP
+            if myAnchorToken ~= _groundAnchorToken then
+                if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
+                pcall(function() bvY:Destroy() end)
+                pcall(function() uprightGyro:Destroy() end)
+                return
             end
-            hum.PlatformStand = false
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-        end)
+        end
+        if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
+        pcall(function() bvY:Destroy() end)
+        pcall(function() uprightGyro:Destroy() end)
     end)
 end
 
