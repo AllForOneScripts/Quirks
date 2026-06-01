@@ -1,4 +1,4 @@
-print("version 1.32 fly")
+print("version 1.33 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2700,22 +2700,11 @@ local function doLanding(char)
         end)
     end
 
-    -- Anti-bounce: solo un pulso inicial, luego liberar
+    -- Solo zerear velocidad angular para evitar giros involuntarios al aterrizar.
+    -- NO usar BodyVelocity ni PlatformStand=true aqui: causan que el humanoid
+    -- quede suspendido en el aire y nunca llegue al estado Landed real.
     if root then
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
         pcall(function() root.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end)
-        local quickBounce = Instance.new("BodyVelocity")
-        quickBounce.Velocity  = Vector3.new(0, 0, 0)
-        quickBounce.MaxForce  = Vector3.new(9e9, 9e9, 9e9)
-        quickBounce.Parent    = root
-        humanoid.PlatformStand = true
-        task.defer(function()
-            pcall(function() quickBounce:Destroy() end)
-            if humanoid and humanoid.Parent then
-                humanoid.PlatformStand = false
-                pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
-            end
-        end)
     end
 
     -- Efectos de impacto: piedritas siempre, escaladas con velocidad/altura
@@ -4098,10 +4087,8 @@ local function _flyOff()
     heightTweenToken              = heightTweenToken + 1
 
     -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
-    -- No esperar a los guards internos (que solo actúan en el próximo tick).
-    -- Orden: primero los RenderStepped/Heartbeat que modifican C0, luego el resto.
-    -- CRÍTICO: Limpiar lastSafePos y lastKnownPos PRIMERO para que aunque los guards
-    -- corran un tick más antes de desconectarse, no tengan posición segura a la que devolver.
+    -- CRITICO: Limpiar las posiciones de seguridad ANTES de desconectar,
+    -- para que aunque un guard corra un tick mas, no tenga posicion a la que devolver.
     flyanim.lastSafePos  = nil
     flyanim.lastSafeTime = 0
     flyanim.lastKnownPos = nil
@@ -4206,6 +4193,7 @@ local function _flyOff()
     -- Limpiar estado del combo (conns ya desconectadas en PASO 0C)
     stopComboListener()
     setNoclip(false)
+
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
     destroyWhiteFlash()
     local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70 end
@@ -4302,24 +4290,50 @@ local function _flyOff()
 
     flyanim.waitingLand = true
     if flyanim.landConn then flyanim.landConn:Disconnect() end
-    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
-        if not flyanim.waitingLand then flyanim.landConn:Disconnect(); flyanim.landConn=nil; return end
-        if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running
-        or newState == Enum.HumanoidStateType.RunningNoPhysics or newState == Enum.HumanoidStateType.Dead then
-            flyanim.waitingLand = false
-            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-            if newState ~= Enum.HumanoidStateType.Dead then
-                flyanim.landingHeight   = capturedHeight
-                flyanim.landingVelocity = capturedVelocity
-                flyanim.landingVelocityCapture = capturedVelocity
-                doLanding(lplr.Character)
-            else
-                local deadChar = lplr.Character
-                local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
-                if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-                flyanim.landingHeight = nil
-            end
+
+    local function finalizarAterrizaje(newState)
+        if not flyanim.waitingLand then return end
+        flyanim.waitingLand = false
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+        if newState ~= Enum.HumanoidStateType.Dead then
+            flyanim.landingHeight   = capturedHeight
+            flyanim.landingVelocity = capturedVelocity
+            flyanim.landingVelocityCapture = capturedVelocity
+            doLanding(lplr.Character)
+        else
+            local deadChar = lplr.Character
+            local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
+            if animSc then animSc.Disabled = false; flyanim.animScript = nil end
+            flyanim.landingHeight = nil
         end
+    end
+
+    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
+        if not flyanim.waitingLand then
+            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+            return
+        end
+        if newState == Enum.HumanoidStateType.Landed
+        or newState == Enum.HumanoidStateType.Running
+        or newState == Enum.HumanoidStateType.RunningNoPhysics
+        or newState == Enum.HumanoidStateType.Dead then
+            finalizarAterrizaje(newState)
+        end
+    end)
+
+    -- Timeout de seguridad: si en 10 segundos no aterriza, forzar restauracion
+    task.delay(10, function()
+        if not flyanim.waitingLand then return end
+        flyanim.waitingLand = false
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+        local animSc = lplr.Character and lplr.Character:FindFirstChild("Animate") or flyanim.animScript
+        if animSc then animSc.Disabled = false; flyanim.animScript = nil end
+        local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
+        if humFinal and humFinal.Parent then
+            humFinal.PlatformStand = false
+            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+        flyanim.landingHeight = nil
     end)
 end
 
