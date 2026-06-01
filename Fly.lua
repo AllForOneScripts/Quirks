@@ -1,4 +1,4 @@
-print("version 1.31 fly")
+print("version 1.32 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -442,13 +442,15 @@ local function startTeleportGuard()
     flyanim.isTeleportGuardActive = true
 
     flyanim.teleportGuardConn = RunService.Stepped:Connect(function(_, dt)
-        if not flyanim.enabled or not flyanim.isTeleportGuardActive then
+        if not flyanim.enabled then
             if flyanim.teleportGuardConn then
                 flyanim.teleportGuardConn:Disconnect()
                 flyanim.teleportGuardConn = nil
             end
+            flyanim.isTeleportGuardActive = false
             return
         end
+        if not flyanim.isTeleportGuardActive then return end
 
         local char = lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1760,6 +1762,7 @@ local function startAnomalyProtection()
     flyanim.anomalyConn = RunService.Stepped:Connect(function(_, dt)
         if not flyanim.enabled then
             if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
             return
         end
         local char = lplr.Character
@@ -4097,6 +4100,12 @@ local function _flyOff()
     -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
     -- No esperar a los guards internos (que solo actúan en el próximo tick).
     -- Orden: primero los RenderStepped/Heartbeat que modifican C0, luego el resto.
+    -- CRÍTICO: Limpiar lastSafePos y lastKnownPos PRIMERO para que aunque los guards
+    -- corran un tick más antes de desconectarse, no tengan posición segura a la que devolver.
+    flyanim.lastSafePos  = nil
+    flyanim.lastSafeTime = 0
+    flyanim.lastKnownPos = nil
+    flyanim.isTeleportGuardActive = false
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
     if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
     if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
@@ -4197,7 +4206,6 @@ local function _flyOff()
     -- Limpiar estado del combo (conns ya desconectadas en PASO 0C)
     stopComboListener()
     setNoclip(false)
-
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn=nil end
     destroyWhiteFlash()
     local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70 end
