@@ -1,4 +1,4 @@
-print("version 1.41 fly")
+print("version 1.42 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -203,9 +203,6 @@ local ANIM_BLOQUEO = {
 }
 
 local COMBO_MIN_GAP        = 0.08
-local COMBO4_SPACE_MIN_GAP = 0.20
-local COMBO_CHAIN_WINDOW   = 1.5   -- ventana máxima entre golpes del mismo combo
-local COMBO_ANIM_MIN_DURATION = 0.18
 
 local flyanim = {
     enabled     = false,
@@ -2640,17 +2637,23 @@ end
 -- ============================================================
 -- SISTEMA DE COMBOS
 -- ============================================================
+--
+-- Diseño: un único "secuenciador" (task.spawn) vive durante todo el
+-- combo. Cada paso lanza la animación y luego bloquea 0.75s antes de
+-- aceptar el siguiente golpe. Si en esos 0.75s llega un click se
+-- registra como "pendiente" y se ejecuta inmediatamente al desbloquearse.
+-- Si pasados 1.5s (COMBO_CHAIN_WINDOW) no llegó ningún click, el combo
+-- termina limpiamente sin depender de onStopped.
+-- ============================================================
 
--- Ventana de encadenamiento: si el último click fue hace menos de COMBO_CHAIN_WINDOW,
--- el combo puede seguir avanzando aunque la animación anterior ya haya terminado.
--- comboStepEndTime registra cuándo terminó la animación actual para saber si el
--- siguiente click es "a tiempo" aunque llegue tarde.
-local COMBO_ANIM_DURATION = 0.75   -- duración mínima que debe completarse antes de aceptar el siguiente golpe
+local COMBO_ANIM_DURATION  = 0.75   -- tiempo mínimo que debe pasar antes de aceptar el siguiente golpe
+local COMBO_PENDING_WINDOW = 1.5    -- si pasa más de esto sin click, el combo termina (= COMBO_CHAIN_WINDOW)
 
-local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
-    local t = getTrack(animId)
-    if not t then if onStopped then onStopped() end; return nil end
+-- Señal de "click pendiente": el secuenciador la consume cuando comboBusy=false
+local comboPendingClick = false
 
+local function _launchComboAnim(animId, speed)
+    -- Para todas las animaciones excepto levitacion
     for id, track in pairs(flyanim.tracks) do
         if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
@@ -2662,43 +2665,20 @@ local function playComboAnimRaw(animId, speed, onStopped, onCancelable)
         end
     end
 
+    local t = getTrack(animId)
+    if not t then return end
     t.Looped   = false
     t.Priority = Enum.AnimationPriority.Action4
     if t.IsPlaying then pcall(function() t:Stop(0) end) end
     pcall(function() t:Play(0.05, 1, 1) end)
     pcall(function() t:AdjustSpeed(speed or 3.0) end)
-
-    flyanim.comboAnimStartTime = tick()
-    flyanim.comboBusy = true
-
-    task.spawn(function()
-        local timeout = tick() + 2
-        while t.Length == 0 and tick() < timeout do task.wait() end
-        if t.Length > 0 and t.IsPlaying then pcall(function() t.TimePosition = 0 end) end
-
-        -- Esperar COMBO_ANIM_DURATION completo antes de permitir el siguiente golpe
-        local elapsed = tick() - flyanim.comboAnimStartTime
-        if elapsed < COMBO_ANIM_DURATION then
-            task.wait(COMBO_ANIM_DURATION - elapsed)
-        end
-
-        flyanim.comboBusy = false
-        if onCancelable then onCancelable() end
-    end)
-
-    if onStopped then
-        task.spawn(function()
-            t.Stopped:Wait()
-            onStopped()
-        end)
-    end
-    return t
 end
 
 local function resetCombo()
     flyanim.comboStep      = 0
     flyanim.comboLastClick = 0
     flyanim.combo2LastUsed = nil
+    comboPendingClick      = false
 end
 
 local function startComboC0Lock()
@@ -2731,6 +2711,7 @@ local function finalizarCombo()
     flyanim.comboPlaying = false
     flyanim.comboBusy    = false
     flyanim.combo4Frozen = false
+    comboPendingClick    = false
 
     stopComboC0Lock()
 
@@ -2738,7 +2719,7 @@ local function finalizarCombo()
 
     for id, track in pairs(flyanim.tracks) do
         if id ~= ANIM.levitacion and track and track.IsPlaying then
-            pcall(function() track:Stop(0.1) end)
+            pcall(function() track:Stop(0.12) end)
         end
     end
 
@@ -2771,128 +2752,202 @@ local function finalizarCombo()
     end
 end
 
-local function ejecutarPuno4()
-    local animId  = ANIM.combo4
-    local myToken = flyanim.comboToken
-    local t = getTrack(animId)
-    if not t then finalizarCombo(); return end
-
-    for id, track in pairs(flyanim.tracks) do
-        if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
-            pcall(function() track:Stop(0.05) end)
-        end
-    end
-    for key, track in pairs(flyanim.normalTracks) do
-        if key ~= "levitacion" then
-            pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-        end
-    end
-
-    t.Looped   = false
-    t.Priority = Enum.AnimationPriority.Action4
-    if t.IsPlaying then pcall(function() t:Stop(0) end) end
-    pcall(function() t:Play(0.05, 1, 1) end)
-    pcall(function() t:AdjustSpeed(3.0) end)
-
-    flyanim.comboAnimStartTime = tick()
+-- Secuenciador del combo: corre en su propio task y maneja toda la secuencia
+local function runComboSequencer(startToken)
+    -- Paso 1
+    flyanim.comboStep = 1
+    _launchComboAnim(ANIM.combo1, 3.0)
     flyanim.comboBusy = true
+    comboPendingClick = false
 
-    task.spawn(function()
-        local timeout = tick() + 3
-        while t.Length == 0 and tick() < timeout do task.wait() end
-        if t.Length == 0 then finalizarCombo(); return end
+    local stepStart = tick()
+    while tick() - stepStart < COMBO_ANIM_DURATION do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+    end
+    flyanim.comboBusy = false
 
-        if flyanim.comboToken ~= myToken then return end
-
-        local length    = t.Length
-        local target40  = length * 0.25  -- congelar al 25%
-
-        timeout = tick() + 3
-        while t.IsPlaying and t.TimePosition < target40 and tick() < timeout do
-            if flyanim.comboToken ~= myToken then return end
-            task.wait()
+    -- Esperar siguiente click (max 1.5s)
+    local waitStart = tick()
+    while not comboPendingClick do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+        if tick() - waitStart > COMBO_PENDING_WINDOW then
+            finalizarCombo(); return
         end
-        flyanim.comboBusy = false
-        if not t.IsPlaying then finalizarCombo(); return end
-        if flyanim.comboToken ~= myToken then return end
+    end
+    comboPendingClick = false
+    if flyanim.comboToken ~= startToken then return end
 
-        -- Congelar al 40% y esperar input o timeout
+    -- Paso 2
+    flyanim.comboStep = 2
+    local r = math.random(1, 2)
+    local chosenId2, chosenKey2
+    if r == 1 then chosenId2 = ANIM.combo2a; chosenKey2 = "a"
+    else chosenId2 = ANIM.combo2b; chosenKey2 = "b" end
+    flyanim.combo2LastUsed = chosenKey2
+    _launchComboAnim(chosenId2, 3.0)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+
+    stepStart = tick()
+    while tick() - stepStart < COMBO_ANIM_DURATION do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+    end
+    flyanim.comboBusy = false
+
+    waitStart = tick()
+    while not comboPendingClick do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+        if tick() - waitStart > COMBO_PENDING_WINDOW then
+            finalizarCombo(); return
+        end
+    end
+    comboPendingClick = false
+    if flyanim.comboToken ~= startToken then return end
+
+    -- Paso 3
+    flyanim.comboStep = 3
+    local chosenId3 = (flyanim.combo2LastUsed == "a") and ANIM.combo3b or ANIM.combo3a
+    _launchComboAnim(chosenId3, 3.0)
+    flyanim.comboBusy = true
+    comboPendingClick = false
+
+    stepStart = tick()
+    while tick() - stepStart < COMBO_ANIM_DURATION do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+    end
+    flyanim.comboBusy = false
+
+    waitStart = tick()
+    while not comboPendingClick do
+        task.wait(0.02)
+        if flyanim.comboToken ~= startToken then return end
+        if tick() - waitStart > COMBO_PENDING_WINDOW then
+            finalizarCombo(); return
+        end
+    end
+    comboPendingClick = false
+    if flyanim.comboToken ~= startToken then return end
+
+    -- Paso 4
+    flyanim.comboStep = 4
+    local spaceDown4 = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+
+    if spaceDown4 then
+        -- Combo 4 especial con espacio
+        local t4s = getTrack(ANIM.combo4_space)
+        if t4s then
+            for id, track in pairs(flyanim.tracks) do
+                if id ~= ANIM.combo4_space and id ~= ANIM.levitacion and track and track.IsPlaying then
+                    pcall(function() track:Stop(0.05) end)
+                end
+            end
+            for key, track in pairs(flyanim.normalTracks) do
+                if key ~= "levitacion" then
+                    pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
+                end
+            end
+            t4s.Looped = false; t4s.Priority = Enum.AnimationPriority.Action4
+            if t4s.IsPlaying then pcall(function() t4s:Stop(0) end) end
+            pcall(function() t4s:Play(0.05, 1, 1); t4s:AdjustSpeed(1.0) end)
+            flyanim.comboBusy = true
+            local timeout4 = tick() + 5
+            while t4s.IsPlaying and tick() < timeout4 do
+                task.wait(0.03)
+                if flyanim.comboToken ~= startToken then return end
+            end
+            flyanim.comboBusy = false
+            task.wait(0.3)
+        end
+        resetCombo()
+        finalizarCombo()
+    else
+        -- Combo 4 normal: congelar al 25% y esperar click para el remate
+        local t4 = getTrack(ANIM.combo4)
+        if not t4 then finalizarCombo(); return end
+        for id, track in pairs(flyanim.tracks) do
+            if id ~= ANIM.combo4 and id ~= ANIM.levitacion and track and track.IsPlaying then
+                pcall(function() track:Stop(0.05) end)
+            end
+        end
+        for key, track in pairs(flyanim.normalTracks) do
+            if key ~= "levitacion" then
+                pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
+            end
+        end
+        t4.Looped   = false
+        t4.Priority = Enum.AnimationPriority.Action4
+        if t4.IsPlaying then pcall(function() t4:Stop(0) end) end
+        pcall(function() t4:Play(0.05, 1, 1); t4:AdjustSpeed(3.0) end)
+        flyanim.comboBusy = true
+        comboPendingClick = false
+
+        -- Esperar que llegue al 25%
+        local timeout4 = tick() + 3
+        while t4.IsPlaying and tick() < timeout4 do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then return end
+            local len4 = t4.Length
+            if len4 > 0 and t4.TimePosition >= len4 * 0.25 then break end
+        end
+        if flyanim.comboToken ~= startToken then return end
+
+        -- Congelar al 25%
         flyanim.combo4Frozen = true
-        pcall(function() t:AdjustSpeed(0) end)
-        pcall(function() t.TimePosition = target40 end)
+        flyanim.comboBusy = false
+        pcall(function() t4:AdjustSpeed(0) end)
+        if t4.Length > 0 then pcall(function() t4.TimePosition = t4.Length * 0.25 end) end
 
-        local waitStart = tick()
-        while tick() - waitStart < 0.3 do
-            if flyanim.comboToken ~= myToken then
-                flyanim.combo4Frozen = false
-                return
+        -- Esperar click para el remate (max 0.3s como antes)
+        local freezeStart = tick()
+        while not comboPendingClick and tick() - freezeStart < 0.3 do
+            task.wait(0.02)
+            if flyanim.comboToken ~= startToken then
+                flyanim.combo4Frozen = false; return
             end
-            if not flyanim.combo4Frozen then
-                pcall(function() t:AdjustSpeed(10) end)
-                t.Looped = false
-                task.spawn(function()
-                    local to2 = tick() + 1
-                    while t.IsPlaying and tick() < to2 do task.wait() end
-                    finalizarCombo()
-                end)
-                return
-            end
-            task.wait(0.03)
         end
-
         flyanim.combo4Frozen = false
-        pcall(function() t:AdjustSpeed(1) end)
-        t.Looped = false
-        task.spawn(function()
-            local to3 = tick() + 3
-            while t.IsPlaying and tick() < to3 do task.wait() end
-            finalizarCombo()
-        end)
-    end)
+        comboPendingClick = false
+        if flyanim.comboToken ~= startToken then return end
+
+        -- Lanzar remate
+        pcall(function() t4:AdjustSpeed(10) end)
+        t4.Looped = false
+        local timeout4b = tick() + 3
+        while t4.IsPlaying and tick() < timeout4b do
+            task.wait(0.03)
+            if flyanim.comboToken ~= startToken then return end
+        end
+        resetCombo()
+        finalizarCombo()
+        return
+    end
 end
 
 local function handleComboClick()
     if not flyanim.enabled then return end
     if flyanim.turboPreImpulsoActivo then return end
-    if flyanim.comboBusy then return end
-    -- No iniciar combo si el escudo está activo
     if flyanim.isBlocking then return end
 
-    local now  = tick()
-    local step = flyanim.comboStep
-
-    if flyanim.combo4Frozen then
-        flyanim.combo4Frozen = false
+    -- Si el combo ya está corriendo y esperando un click, registrarlo como pendiente
+    if flyanim.comboPlaying then
+        if flyanim.comboBusy then
+            -- Aún en el período de 0.75s: ignorar (el combo lo aceptará cuando baje comboBusy)
+            return
+        end
+        -- Registrar click pendiente (el secuenciador lo consumirá)
+        comboPendingClick = true
+        flyanim.comboLastClick = tick()
         return
     end
 
-    local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-    local isCombo4SpaceAttempt = (step == 3 and spaceDown)
-    local minGap = isCombo4SpaceAttempt and COMBO4_SPACE_MIN_GAP or COMBO_MIN_GAP
-
-    if now - flyanim.comboLastClick < minGap then return end
-
-    if flyanim.comboAnimStartTime > 0 and (now - flyanim.comboAnimStartTime) < COMBO_ANIM_MIN_DURATION then return end
-
-    if step >= 1 then
-        if now - flyanim.comboLastClick > COMBO_CHAIN_WINDOW then
-            -- Ventana expirada: resetear todo sin importar el estado actual
-            flyanim.comboToken = (flyanim.comboToken or 0) + 1
-            for _, track in pairs(flyanim.tracks) do
-                pcall(function() if track and track.IsPlaying then track:Stop(0.1) end end)
-            end
-            flyanim.comboPlaying = false
-            flyanim.comboBusy    = false
-            flyanim.combo4Frozen = false
-            stopComboC0Lock()
-            resetCombo()
-            step = 0
-        end
-    end
-
-    local nextStep = step + 1
-    flyanim.comboStep      = nextStep
-    flyanim.comboLastClick = now
+    -- Iniciar combo nuevo
+    local now = tick()
+    if now - flyanim.comboLastClick < COMBO_MIN_GAP then return end
 
     flyanim.comboToken = (flyanim.comboToken or 0) + 1
     local myToken = flyanim.comboToken
@@ -2904,92 +2959,14 @@ local function handleComboClick()
         flyanim.blockCancelledByCombo = true
     end
 
-    if nextStep == 1 then
-        flyanim.comboPlaying = true
-        startComboC0Lock()
-        playComboAnimRaw(ANIM.combo1, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 1 then
-                task.wait(0.05)
-                -- Solo resetear si la ventana de encadenamiento expiró
-                if flyanim.comboStep == 1 and flyanim.comboToken == myToken
-                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
+    flyanim.comboPlaying    = true
+    flyanim.comboLastClick  = now
+    comboPendingClick       = false
+    startComboC0Lock()
 
-    elseif nextStep == 2 then
-        local r = math.random(1, 2)
-        local chosenId, chosenKey
-        if r == 1 then chosenId = ANIM.combo2a; chosenKey = "a"
-        else chosenId = ANIM.combo2b; chosenKey = "b" end
-        flyanim.combo2LastUsed = chosenKey
-        playComboAnimRaw(chosenId, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 2 then
-                task.wait(0.05)
-                if flyanim.comboStep == 2 and flyanim.comboToken == myToken
-                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
-
-    elseif nextStep == 3 then
-        local chosenId
-        if flyanim.combo2LastUsed == "a" then chosenId = ANIM.combo3b
-        else chosenId = ANIM.combo3a end
-        playComboAnimRaw(chosenId, 3.0, function()
-            if flyanim.comboToken ~= myToken then return end
-            if flyanim.comboStep == 3 then
-                task.wait(0.1)
-                if flyanim.comboStep == 3 and flyanim.comboToken == myToken
-                and (tick() - flyanim.comboLastClick) >= COMBO_CHAIN_WINDOW then
-                    resetCombo(); finalizarCombo()
-                end
-            end
-        end)
-
-    elseif nextStep == 4 then
-        if spaceDown then
-            flyanim.comboBusy = true
-            local t = getTrack(ANIM.combo4_space)
-            if t then
-                for id, track in pairs(flyanim.tracks) do
-                    if id ~= ANIM.combo4_space and id ~= ANIM.levitacion and track and track.IsPlaying then
-                        pcall(function() track:Stop(0.05) end)
-                    end
-                end
-                for key, track in pairs(flyanim.normalTracks) do
-                    if key ~= "levitacion" then
-                        pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
-                    end
-                end
-                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
-                if t.IsPlaying then pcall(function() t:Stop(0) end) end
-                pcall(function() t:Play(0.05, 1, 1); t:AdjustSpeed(1.0) end)
-                task.spawn(function()
-                    local timeout2 = tick() + 2
-                    while t.Length == 0 and tick() < timeout2 do task.wait() end
-                    flyanim.comboBusy = false
-                    task.spawn(function()
-                        t.Stopped:Wait()
-                        if flyanim.comboToken ~= myToken then return end
-                        resetCombo()
-                        task.wait(0.3)
-                        finalizarCombo()
-                    end)
-                end)
-            else
-                flyanim.comboBusy = false
-                resetCombo(); finalizarCombo()
-            end
-        else
-            ejecutarPuno4()
-            flyanim.comboStep = 0
-        end
-    end
+    task.spawn(function()
+        runComboSequencer(myToken)
+    end)
 end
 
 local COMBO_HOLD_INTERVAL = 0.10
@@ -3003,7 +2980,7 @@ local function startComboListener()
     flyanim.combo4Frozen = false
     flyanim.comboToken   = 0
     flyanim.mouseHeld    = false
-    flyanim.comboAnimStartTime = 0
+    comboPendingClick    = false
 
     flyanim.comboConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() or not flyanim.enabled then return end
@@ -3022,6 +2999,8 @@ local function startComboListener()
         end
     end)
 
+    -- Hold: mientras se mantiene el botón presionado y el combo no está ocupado,
+    -- registrar clicks periódicos (para encadenar sin soltar)
     local lastHoldFire = 0
     flyanim.comboHoldConn = RunService.Heartbeat:Connect(function()
         if not flyanim.enabled then return end
@@ -3029,10 +3008,14 @@ local function startComboListener()
         if isTyping() then return end
         local now = tick()
         if now - lastHoldFire < COMBO_HOLD_INTERVAL then return end
-        if flyanim.comboBusy then return end
-        if now - flyanim.comboLastClick < COMBO_MIN_GAP then return end
         lastHoldFire = now
-        handleComboClick()
+        -- Solo registrar si el combo ya está corriendo y espera un click
+        if not flyanim.comboPlaying then return end
+        if flyanim.comboBusy then return end
+        if not comboPendingClick then
+            comboPendingClick = true
+            flyanim.comboLastClick = now
+        end
     end)
 
     flyanim._comboEndConn = comboEndConn
@@ -3048,7 +3031,7 @@ local function stopComboListener()
     flyanim.comboBusy    = false
     flyanim.combo4Frozen = false
     flyanim.mouseHeld    = false
-    flyanim.comboAnimStartTime = 0
+    comboPendingClick    = false
 end
 
 -- ============================================================
