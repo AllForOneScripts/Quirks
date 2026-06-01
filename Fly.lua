@@ -1,4 +1,4 @@
-print("version 1.50 fly")
+print("version 1.51 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2589,6 +2589,8 @@ end
 local _landAnimToken = 0
 local _landBaseRef    = nil
 local _landOverlayRef = nil
+-- Token global para cancelar el ancla de suelo (omniAntiBounceLand) desde _flyOn o respawn
+local _groundAnchorToken = 0
 
 local function doLanding(char)
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -4106,8 +4108,6 @@ end
 --   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
 --     para "pegar" al suelo y absorber el impacto sin afectar XZ
 --   · Destruye todo y restaura el estado normal al terminar
--- Token global para que el ancla pueda cancelarse desde cualquier parte
-local _groundAnchorToken = 0
 
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
