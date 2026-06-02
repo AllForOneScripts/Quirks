@@ -2042,25 +2042,12 @@ local function createParticle(isMega)
     img.ImageColor3 = Color3.fromRGB(255,255,255)
     img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
     local FADE_TIME = 0.42
-    -- Tween de fade de imagen: de la transparencia inicial hasta completamente invisible
-    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
-    fadeTween:Play()
-    -- Tween de movimiento
+    TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1}):Play()
     local travelDist = isMega and 14 or 8
     local targetPos  = spawnPos + awayDir * travelDist
     TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
-    -- Destruir exactamente cuando el tween de fade termina (garantiza que la imagen
-    -- llegó a transparencia 1 antes de destruir la Part, evitando que quede visible)
-    fadeTween.Completed:Connect(function()
-        pcall(function()
-            if part and part.Parent then part:Destroy() end
-        end)
-    end)
-    -- Fallback por si Completed no dispara (e.g. Part destruida externamente)
-    task.delay(FADE_TIME + 0.15, function()
-        pcall(function()
-            if part and part.Parent then part:Destroy() end
-        end)
+    task.delay(FADE_TIME, function()
+        pcall(function() part:Destroy() end)
     end)
 end
 
@@ -3423,10 +3410,13 @@ local function updateLockInfoGui()
                     heightLabel.TextColor3 = Color3.fromRGB(255,200,100)   -- naranja: peligro
                     -- TP automatico: si estoy a MAS de 15 studs debajo del target,
                     -- hacer un TP unico directamente junto a el para corregir el error.
+                    -- Solo si la distancia mundial es menor a 500 (menos que el break de lock en 750).
                     if flyanim.enabled and math.abs(heightDiff) > 15 then
                         local myChar2 = lplr.Character
                         local myRoot2 = myChar2 and myChar2:FindFirstChild("HumanoidRootPart")
                         if myRoot2 then
+                            local worldDist2 = (root.Position - myRoot2.Position).Magnitude
+                            if worldDist2 < 500 then
                             -- TP al lado del target (3 studs detras, a su misma altura)
                             local toTarget = (root.Position - myRoot2.Position)
                             local toTargetH = Vector3.new(toTarget.X, 0, toTarget.Z)
@@ -3439,6 +3429,7 @@ local function updateLockInfoGui()
                                 myRoot2.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                                 myRoot2.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                             end)
+                            end
                         end
                     end
                 else
@@ -4430,15 +4421,7 @@ local function _flyOff()
         return
     end
 
-    -- Deshabilitar estados que empujan hacia arriba ANTES de quitar PlatformStand.
-    -- GettingUp y Jumping pueden causar un impulso vertical hacia arriba cuando
-    -- PlatformStand pasa de true->false en el aire. Se re-habilitan tras Freefall.
-    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, false)
     hum.PlatformStand = false
-    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
 
     if rootCurrent then
         for _, part in ipairs(charCurrent:GetDescendants()) do
@@ -4446,131 +4429,9 @@ local function _flyOff()
         end
     end
 
-    -- Alinear orientación (quitar inclinación del vuelo) ANTES de Freefall.
-    -- Es critico que el HRP quede completamente recto (sin pitch/roll) en este momento:
-    -- si el body tiene inclinacion residual del turbo/mega (CFrame.Angles), al entrar
-    -- en Freefall la fisica calcula fuerzas de contacto laterales al tocar el suelo
-    -- que disparan el personaje hacia los lados (el "rebote loco").
-    if rootCurrent then
-        local _, ry, _ = rootCurrent.CFrame:ToOrientation()
-        pcall(function()
-            -- Forzar CFrame completamente vertical: solo yaw, sin pitch ni roll
-            rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
-            -- Zerear velocidad angular para que no haya torques residuales
-            rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            -- Zerear XZ tambien: al salir del vuelo solo debe haber caida libre en Y.
-            -- La velocidad Y ya fue preservada por cleanupMotors(preserveVelY=true).
-            local velY = rootCurrent.AssemblyLinearVelocity.Y
-            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
-        end)
-    end
-
-    hum:ChangeState(Enum.HumanoidStateType.Freefall)
-
-    -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
-    -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
-    -- Freefall esté asentado, causando el rebote hacia arriba.
-    task.delay(0.12, function()
-        if hum and hum.Parent then
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
-        end
-    end)
-
-    -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
-    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
-    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
-    if rootCurrent then
-        task.delay(0.01, function()
-            if not rootCurrent or not rootCurrent.Parent then return end
-            if flyanim.enabled then return end  -- ya reactivó el vuelo
-            local velY = rootCurrent.AssemblyLinearVelocity.Y
-            if velY > 0.5 then
-                pcall(function()
-                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
-                end)
-            end
-        end)
-    end
-
-    local capturedHeight   = flyanim.landingHeight
-    local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
-
-    if capturedHeight < 10 then
-        local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
-        if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
-        if hum then
-            -- GettingUp ya fue deshabilitado arriba; re-habilitarlo ahora que
-            -- PlatformStand ya es false y no puede causar el rebote hacia arriba.
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-            hum.PlatformStand = false
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
-        end
-        flyanim.landingHeight = nil
-        return
-    end
-
-    -- FIX BUG PRINCIPAL: Reactivar animScript INMEDIATAMENTE para que las animaciones
-    -- normales (caída libre, etc.) aparezcan durante el freefall ANTES de aterrizar.
-    -- Antes solo se reactivaba en doLanding() → el personaje caía completamente sin animaciones.
-    -- doLanding() lo desactivará temporalmente para la secuencia épica y lo vuelve a activar.
-    do
-        local animScriptEarly = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
-        if animScriptEarly then
-            animScriptEarly.Disabled = false
-            flyanim.animScript = animScriptEarly  -- doLanding() necesita esta referencia
-        end
-    end
-
-    flyanim.waitingLand = true
-    if flyanim.landConn then flyanim.landConn:Disconnect() end
-    startLandingWatcher()
-
-    local function finalizarAterrizaje(newState)
-        if not flyanim.waitingLand then return end
-        flyanim.waitingLand = false
-        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-        if newState ~= Enum.HumanoidStateType.Dead then
-            flyanim.landingHeight   = capturedHeight
-            flyanim.landingVelocity = capturedVelocity
-            flyanim.landingVelocityCapture = capturedVelocity
-            doLanding(lplr.Character)
-        else
-            local deadChar = lplr.Character
-            local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
-            if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-            flyanim.landingHeight = nil
-        end
-    end
-
-    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
-        if not flyanim.waitingLand then
-            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-            return
-        end
-        if newState == Enum.HumanoidStateType.Landed
-        or newState == Enum.HumanoidStateType.Running
-        or newState == Enum.HumanoidStateType.RunningNoPhysics
-        or newState == Enum.HumanoidStateType.Dead then
-            finalizarAterrizaje(newState)
-        end
-    end)
-
-    -- Timeout de seguridad: si en 10 segundos no aterriza, forzar restauracion
-    task.delay(10, function()
-        if not flyanim.waitingLand then return end
-        flyanim.waitingLand = false
-        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-        local animSc = lplr.Character and lplr.Character:FindFirstChild("Animate") or flyanim.animScript
-        if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-        local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
-        if humFinal and humFinal.Parent then
-            humFinal.PlatformStand = false
-            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        end
-        flyanim.landingHeight = nil
-    end)
+    local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+    if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
+    flyanim.landingHeight = nil
 end
 
 -- ============================================================
