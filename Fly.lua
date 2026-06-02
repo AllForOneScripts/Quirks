@@ -287,6 +287,15 @@ local flyanim = {
     noclipMegaEnabled    = true,
     noclipCtrlEnabled    = true,
     noclipCtrlActive     = false,
+    gyroProtectionActive = false,
+    gyroProtectionTimer  = nil,
+    originalGyroP        = nil,
+    originalGyroMaxTorque = nil,
+    backupGyro           = nil,
+
+    lastKnownPos         = nil,
+    anomalyConn          = nil,
+    ragdollDetected      = false,
 
     animBlockRenderConn  = nil,
 
@@ -349,7 +358,15 @@ local flyanim = {
 
     tpMoveConn = nil,
 
-    -- Token de sesión
+    -- Sistema anti-teletransporte forzado
+    lastSafePos      = nil,
+    lastSafeTime     = 0,
+    teleportGuardConn = nil,
+    isTeleportGuardActive = false,
+
+    -- Token de sesión: se incrementa en _flyOff() para invalidar INSTANTÁNEAMENTE
+    -- cualquier callback de Heartbeat/Stepped que corra un tick extra tras el apagado.
+    -- Cada guard captura su sessionToken al iniciar y lo comprueba ANTES de actuar.
     sessionToken = 0,
 }
 
@@ -385,9 +402,72 @@ local function restaurarC0Inmediato()
     clearC0Desired()
 end
 
--- TeleportGuard eliminado — no mueve ni guarda posiciones
-local function startTeleportGuard() end
-local function stopTeleportGuard()  end
+-- ============================================================
+-- SISTEMA ANTI-VOID
+-- Si el jugador cae por debajo de Y=-500 mientras vuela,
+-- lo devuelve a la última posición segura conocida.
+-- NO interfiere con ningún TP intencional.
+-- ============================================================
+
+local function startTeleportGuard()
+    if flyanim.teleportGuardConn then
+        flyanim.teleportGuardConn:Disconnect()
+        flyanim.teleportGuardConn = nil
+    end
+    flyanim.lastSafePos           = nil
+    flyanim.lastSafeTime          = tick()
+    flyanim.isTeleportGuardActive = true
+
+    local mySession = flyanim.sessionToken
+
+    flyanim.teleportGuardConn = RunService.Stepped:Connect(function()
+        if flyanim.sessionToken ~= mySession or not flyanim.enabled then
+            if flyanim.teleportGuardConn then
+                flyanim.teleportGuardConn:Disconnect()
+                flyanim.teleportGuardConn = nil
+            end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+
+        local char = lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local pos = root.Position
+
+        -- Actualizar última posición segura cuando estamos por encima del void
+        if pos.Y > -490 then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+            return
+        end
+
+        -- Solo actuar si caímos al void (Y <= -500)
+        local safePos = flyanim.lastSafePos
+        if not safePos then return end
+
+        pcall(function()
+            root.CFrame                  = CFrame.new(safePos + Vector3.new(0, 5, 0))
+            root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+        flyanim.dashTimer = 0
+        flyanim.dashVel   = Vector3.new(0, 0, 0)
+        if not root:FindFirstChildOfClass("BodyGyro") then
+            pcall(_flyMakeMotors)
+        end
+    end)
+end
+
+local function stopTeleportGuard()
+    flyanim.isTeleportGuardActive = false
+    if flyanim.teleportGuardConn then
+        flyanim.teleportGuardConn:Disconnect()
+        flyanim.teleportGuardConn = nil
+    end
+    flyanim.lastSafePos = nil
+end
 
 local function setNoclip(state)
     local char = lplr.Character
@@ -1547,9 +1627,88 @@ local function stopAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
 end
 
--- GyroProtection, AnomalyProtection y silentMotorReset eliminados
-local function startAnomalyProtection() end
-local function stopAnomalyProtection()  end
+local function activateGyroProtection()
+    if flyanim.gyroProtectionActive then return end
+    if not flyanim.bg then return end
+    flyanim.gyroProtectionActive  = true
+    flyanim.originalGyroP         = flyanim.bg.P
+    flyanim.originalGyroMaxTorque = flyanim.bg.maxTorque
+    flyanim.bg.P         = 2000
+    flyanim.bg.maxTorque = Vector3.new(2000,2000,2000)
+    if flyanim.backupGyro then flyanim.backupGyro:Destroy() end
+    flyanim.backupGyro = Instance.new("BodyGyro", flyanim.bg.Parent)
+    flyanim.backupGyro.P         = 1000
+    flyanim.backupGyro.maxTorque = Vector3.new(1000,1000,1000)
+    flyanim.backupGyro.cframe    = flyanim.bg.cframe
+    if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
+    flyanim.gyroProtectionTimer = task.delay(0.5, function()
+        if flyanim.enabled and flyanim.bg then
+            flyanim.bg.P         = flyanim.originalGyroP or 9e4
+            flyanim.bg.maxTorque = flyanim.originalGyroMaxTorque or Vector3.new(9e9,9e9,9e9)
+        end
+        if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro = nil end
+        flyanim.gyroProtectionActive = false
+        flyanim.gyroProtectionTimer  = nil
+    end)
+end
+
+local ANOMALY_SPEED_THRESHOLD  = 300
+local ANOMALY_TELEPORT_STUDS   = 40
+local ANOMALY_COOLDOWN         = 0.12
+
+local lastAnomalyFix    = 0
+local lastMotorReset    = 0
+local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
+
+-- ── Silent motor reset (fake fly-off / fly-on invisible) ──────────────────
+-- Se activa cuando el juego "suelta" la hitbox sin que el jugador lo pida:
+-- destruye y recrea los body movers en el mismo frame, restaurando el estado
+-- de Physics sin que el jugador note ningún parpadeo ni interrupción.
+local function silentMotorReset()
+    local now = tick()
+    if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
+    lastMotorReset = now
+
+    local char = lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    -- Capturar posición y orientación actuales para no perder contexto
+    local currentCF = root.CFrame
+
+    -- Destruir motores viejos y recrear en un único pcall atómico
+    pcall(function()
+        -- Limpiar motores corruptos/ausentes
+        for _, v in ipairs(root:GetChildren()) do
+            if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+            or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+                v:Destroy()
+            end
+        end
+        root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+        -- Recrear motores
+        local bg = Instance.new("BodyGyro", root)
+        bg.P = 9e4; bg.maxTorque = Vector3.new(9e9,9e9,9e9); bg.cframe = currentCF
+        local bv = Instance.new("BodyVelocity", root)
+        bv.velocity = Vector3.new(0,0,0); bv.maxForce = Vector3.new(9e9,9e9,9e9)
+        local bf = Instance.new("BodyForce", root)
+        local totalMass = root.AssemblyMass
+        bf.Force = Vector3.new(0, totalMass * workspace.Gravity, 0)
+
+        flyanim.bg = bg
+        flyanim.bv = bv
+        flyanim.bf = bf
+
+        -- Forzar estado de física sin animación de levantarse
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+end
 
 local function _flyMakeMotors()
     local char = lplr.Character; if not char then return end
@@ -1567,6 +1726,71 @@ local function _flyMakeMotors()
     hum:ChangeState(Enum.HumanoidStateType.Physics)
 end
 
+local function startAnomalyProtection()
+    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+    flyanim.lastKnownPos = nil
+    local mySession = flyanim.sessionToken
+    flyanim.anomalyConn = RunService.Stepped:Connect(function(_, dt)
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
+        if not flyanim.enabled then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
+        local char = lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then flyanim.lastKnownPos = nil; return end
+
+        local now = tick()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local pos = root.Position
+
+        -- Actualizar posición conocida
+        flyanim.lastKnownPos = pos
+
+        if not hum then return end
+        local state = hum:GetState()
+
+        -- ── Detección de hitbox caída ─────────────────────────────────────────
+        -- Mientras volamos, el estado DEBE ser Physics. Si detectamos Freefall,
+        -- GettingUp, FallingDown o Ragdoll sin que nosotros lo hayamos pedido,
+        -- es señal de que el juego "soltó" la hitbox. Hacemos un reset silencioso.
+        local isHitboxDrop = (
+            state == Enum.HumanoidStateType.Freefall     or
+            state == Enum.HumanoidStateType.FallingDown  or
+            state == Enum.HumanoidStateType.Ragdoll      or
+            state == Enum.HumanoidStateType.GettingUp
+        )
+
+        -- También detectar si los motores desaparecieron (el juego los puede destruir)
+        local motorsGone = (
+            not root:FindFirstChildOfClass("BodyGyro") or
+            not root:FindFirstChildOfClass("BodyVelocity")
+        )
+
+        if (isHitboxDrop or motorsGone) and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+            lastAnomalyFix = now
+            flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
+
+            -- Reset silencioso: recrea los motores sin que el jugador lo note
+            silentMotorReset()
+
+            task.defer(function()
+                if not flyanim.enabled then return end
+                flyanim.ragdollDetected = false
+            end)
+        end
+    end)
+end
+
+local function stopAnomalyProtection()
+    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+    flyanim.lastKnownPos = nil
+end
 
 local function fixUndergroundOrientation()
     local char = lplr.Character
@@ -2343,9 +2567,11 @@ local function restoreGameAnimations(char)
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if humanoid then
         humanoid.PlatformStand = false
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+        -- GettingUp saca el Humanoid del estado Physics (heredado del vuelo).
+        -- Sin él, Landed/Running pueden no tener efecto y el char queda congelado.
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
         task.wait(0.05)
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
     end
 end
 
@@ -3663,8 +3889,14 @@ local function _flyOn()
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
     flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
     flyanim.isMoving=false; flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
+    flyanim.gyroProtectionActive=false; flyanim.turboPreImpulsoActivo=false
     flyanim.turboPreImpulsoToken=0; flyanim.c0ControlToken=0; flyanim.c0HeightToken=0
+    flyanim.noclipSpaceActive = false; flyanim.lastKnownPos = nil
+    flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
+    flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick()
+    if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
+    if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
     flyanim.lastDamageTime = 0; flyanim.mouseHeld = false; flyanim.comboAnimStartTime = 0
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -3687,7 +3919,7 @@ local function _flyOn()
     flyanim._normalPlayId = 1
     iniciarCicloNormal(1)
     startLockSystem(); startBrakeSystem(); startAntiImpulse(); startMegaTurboUpListener()
-    startAnimBlockLoop()
+    startAnomalyProtection(); startAnimBlockLoop(); startTeleportGuard()
 
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
     local _tpMoveSession = flyanim.sessionToken
@@ -3831,6 +4063,7 @@ local function _flyOn()
         updateAntiGravityForce()
 
         local angularSpeed = root.AssemblyAngularVelocity.Magnitude
+        if angularSpeed > 25 and not flyanim.gyroProtectionActive then activateGyroProtection() end
 
         local cam    = workspace.CurrentCamera
         local typing = isTyping()
@@ -4066,8 +4299,16 @@ local function _flyOff()
     local char = lplr.Character
 
     -- ── PASO 0: Cancelar timers pendientes que podrían ejecutarse post-flyOff ──
+    -- gyroProtectionTimer puede llamar a _flyMakeMotors tras el apagado
+    if flyanim.gyroProtectionTimer then
+        task.cancel(flyanim.gyroProtectionTimer)
+        flyanim.gyroProtectionTimer = nil
     end
+    if flyanim.backupGyro then
+        pcall(function() flyanim.backupGyro:Destroy() end)
+        flyanim.backupGyro = nil
     end
+    flyanim.gyroProtectionActive = false
 
     -- ── PASO 0B: Invalidar TODOS los tokens inmediatamente ──
     -- sessionToken es lo PRIMERO: invalida los guards de seguridad (teleportGuard,
@@ -4089,6 +4330,10 @@ local function _flyOff()
     -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
     -- CRITICO: Limpiar las posiciones de seguridad ANTES de desconectar,
     -- para que aunque un guard corra un tick mas, no tenga posicion a la que devolver.
+    flyanim.lastSafePos  = nil
+    flyanim.lastSafeTime = 0
+    flyanim.lastKnownPos = nil
+    flyanim.isTeleportGuardActive = false
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
     if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
     if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
@@ -4099,6 +4344,8 @@ local function _flyOff()
     if flyanim.megaTurboUpConn     then flyanim.megaTurboUpConn:Disconnect();     flyanim.megaTurboUpConn     = nil end
     if brakeConn                   then brakeConn:Disconnect();                   brakeConn                   = nil end
     if flyanim.antiImpulseConn     then flyanim.antiImpulseConn:Disconnect();     flyanim.antiImpulseConn     = nil end
+    if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
+    if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
     if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
     if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
     -- Destruir los body movers INMEDIATAMENTE aquí, en el mismo frame que rsConn/tpMoveConn,
@@ -4124,6 +4371,7 @@ local function _flyOff()
     if flyanim.idleTimer           then task.cancel(flyanim.idleTimer);           flyanim.idleTimer           = nil end
     if flyanim.spaceHoldTimerAdv   then task.cancel(flyanim.spaceHoldTimerAdv);   flyanim.spaceHoldTimerAdv   = nil end
     -- Cancelar timers de gyroProtection que pudieran recrear motores post-apagado
+    if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer); flyanim.gyroProtectionTimer = nil end
 
     -- ── PASO 1: Medir altura antes de apagar ──
     -- Limpiar compensación de altura INCONDICIONALMENTE al apagar el vuelo.
@@ -4160,6 +4408,9 @@ local function _flyOff()
     flyanim.dashVel   = Vector3.new(0, 0, 0)
 
     -- ── Flags de estado: resetear todo ──
+    flyanim.isTeleportGuardActive = false
+    flyanim.lastKnownPos          = nil
+    flyanim.lastSafePos           = nil
     flyanim.megaTurboUpActive     = false
     flyanim.spaceHoldStart        = nil
     flyanim.brakingActive         = false
@@ -4168,6 +4419,7 @@ local function _flyOff()
     flyanim.isBlocking            = false
     flyanim.isSpaceAdv            = false
     flyanim.isBrazosActive        = false
+    flyanim.ragdollDetected       = false
     flyanim.comboPlaying          = false
     flyanim.comboBusy             = false
     flyanim.combo4Frozen          = false
@@ -4182,8 +4434,13 @@ local function _flyOff()
     -- Su única función aquí es limpiar estado extra que no sea una RBXScriptConnection
     detenerNormalTracks(0); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
     stopBlocking(); stopParticleEmitter()
+    -- stopAntiImpulse / stopBrakeSystem / stopAnomalyProtection / stopTeleportGuard /
+    -- stopAnimBlockLoop / stopMegaTurboUpListener ya no tienen conn que desconectar
+    -- (se hizo en PASO 0C), pero los llamamos igual para limpiar sus flags internos
     stopAntiImpulse(); stopBrakeSystem(); stopMegaTurboUpListener()
-    stopComboC0Lock(); stopAnimBlockLoop(); detenerWatchdogAltura()
+    stopAnomalyProtection(); stopComboC0Lock(); stopAnimBlockLoop()
+    stopTeleportGuard(); detenerWatchdogAltura()
+    -- Limpiar estado del combo (conns ya desconectadas en PASO 0C)
     stopComboListener()
     setNoclip(false)
 
@@ -4283,6 +4540,10 @@ local function _flyOff()
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
             hum.PlatformStand = false
+            -- GettingUp es necesario para sacar al Humanoid del estado Physics;
+            -- sin él el personaje queda congelado sin poder moverse.
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            task.wait(0.05)
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
         flyanim.landingHeight = nil
@@ -4345,6 +4606,8 @@ local function _flyOff()
         local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
         if humFinal and humFinal.Parent then
             humFinal.PlatformStand = false
+            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            task.wait(0.05)
             pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.Landed) end)
         end
         flyanim.landingHeight = nil
@@ -4611,9 +4874,14 @@ local function _connectGlobal()
         flyanim.noclipSpaceActive = false
         flyanim.noclipCtrlActive  = false
         flyanim.mouseHeld = false
+        flyanim.lastKnownPos = nil
+        flyanim.ragdollDetected = false
         flyanim.fKeyHeld = false
         flyanim.blockCancelledByCombo = false
         flyanim.comboAnimStartTime = 0
+        flyanim.lastSafePos = nil
+        flyanim.lastSafeTime = tick()
+        flyanim.isTeleportGuardActive = false
         if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
         flyanim.lateralKilled=true; flyanim.atrasKilled=true
         if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv=nil end
@@ -4625,6 +4893,8 @@ local function _connectGlobal()
         _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
+        stopAnomalyProtection(); stopComboC0Lock()
+        stopAnimBlockLoop(); stopTeleportGuard()
         detenerWatchdogAltura()
         if flyanim.turboRenderConn  then flyanim.turboRenderConn:Disconnect();  flyanim.turboRenderConn=nil end
         if flyanim.megaRenderConn   then flyanim.megaRenderConn:Disconnect();   flyanim.megaRenderConn=nil end
@@ -4635,6 +4905,8 @@ local function _connectGlobal()
         if flyanim.tpMoveConn       then flyanim.tpMoveConn:Disconnect();       flyanim.tpMoveConn=nil end
         if flyanim.idleTimer        then task.cancel(flyanim.idleTimer);        flyanim.idleTimer=nil end
         if flyanim.damageConn       then flyanim.damageConn:Disconnect();       flyanim.damageConn=nil end
+        if flyanim.anomalyConn      then flyanim.anomalyConn:Disconnect();      flyanim.anomalyConn=nil end
+        if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn=nil end
         if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn=nil end
         if flyanim.c0HeightConn     then flyanim.c0HeightConn:Disconnect();     flyanim.c0HeightConn=nil end
         stopComboListener()
