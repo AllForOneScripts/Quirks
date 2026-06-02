@@ -1,4 +1,4 @@
-print("version 1.62 fly - security alerts")
+print("version 1.65 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -148,132 +148,6 @@ local LOCK_ROTATION_SMOOTH = 0.8
 local COORD_SANITY_LIMIT = 50000
 
 
-
--- ============================================================
--- SISTEMA DE ALERTAS DE SEGURIDAD
--- Muestra una etiqueta en pantalla y un print cada vez que
--- uno de los sistemas de protección actúa sobre el personaje.
--- ============================================================
-
-local _secAlertGui      = nil
-local _secAlertTween    = nil
-local _secAlertCooldown = {}   -- [sistema] = último tick de alerta (evita spam)
-local SEC_ALERT_GAP     = 1.0  -- segundos mínimos entre alertas del mismo sistema
-
-local function securityAlert(sistema, detalle)
-    local now = tick()
-    -- Debounce por sistema individual
-    if _secAlertCooldown[sistema] and (now - _secAlertCooldown[sistema]) < SEC_ALERT_GAP then
-        return
-    end
-    _secAlertCooldown[sistema] = now
-
-    -- Print en consola (siempre visible)
-    print(string.format("[SEC] %s → %s  (t=%.2f)", sistema, detalle or "", now))
-
-    -- Alerta visual en pantalla
-    task.spawn(function()
-        pcall(function()
-            -- Destruir alerta anterior si existe
-            if _secAlertGui and _secAlertGui.Parent then
-                _secAlertGui:Destroy()
-                _secAlertGui = nil
-            end
-            if _secAlertTween then
-                pcall(function() _secAlertTween:Cancel() end)
-                _secAlertTween = nil
-            end
-
-            local sg = Instance.new("ScreenGui")
-            sg.Name           = "AFO_SecAlert"
-            sg.ResetOnSpawn   = false
-            sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
-            sg.DisplayOrder   = 999
-            sg.IgnoreGuiInset = true
-            sg.Parent         = CoreGui
-            _secAlertGui      = sg
-
-            local frame = Instance.new("Frame", sg)
-            frame.AnchorPoint        = Vector2.new(0.5, 0)
-            frame.Position           = UDim2.new(0.5, 0, 0, 64)
-            frame.Size               = UDim2.new(0, 320, 0, 42)
-            frame.BackgroundColor3   = Color3.fromRGB(14, 6, 28)
-            frame.BackgroundTransparency = 0.08
-            frame.BorderSizePixel    = 0
-            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-            local stroke = Instance.new("UIStroke", frame)
-            stroke.Color       = Color3.fromRGB(255, 80, 80)
-            stroke.Thickness   = 1.5
-            stroke.Transparency = 0.1
-
-            -- Icono de escudo
-            local icon = Instance.new("TextLabel", frame)
-            icon.Size                = UDim2.new(0, 30, 1, 0)
-            icon.Position            = UDim2.new(0, 6, 0, 0)
-            icon.BackgroundTransparency = 1
-            icon.Font                = Enum.Font.GothamBold
-            icon.TextSize            = 18
-            icon.TextColor3          = Color3.fromRGB(255, 80, 80)
-            icon.Text                = "🛡"
-            icon.TextXAlignment      = Enum.TextXAlignment.Center
-
-            -- Nombre del sistema
-            local lblSistema = Instance.new("TextLabel", frame)
-            lblSistema.Size             = UDim2.new(1, -42, 0, 18)
-            lblSistema.Position         = UDim2.new(0, 38, 0, 4)
-            lblSistema.BackgroundTransparency = 1
-            lblSistema.Font             = Enum.Font.GothamBold
-            lblSistema.TextSize         = 11
-            lblSistema.TextColor3       = Color3.fromRGB(255, 100, 100)
-            lblSistema.Text             = sistema
-            lblSistema.TextXAlignment   = Enum.TextXAlignment.Left
-            lblSistema.TextTruncate     = Enum.TextTruncate.AtEnd
-
-            -- Detalle del disparo
-            local lblDetalle = Instance.new("TextLabel", frame)
-            lblDetalle.Size             = UDim2.new(1, -42, 0, 16)
-            lblDetalle.Position         = UDim2.new(0, 38, 0, 22)
-            lblDetalle.BackgroundTransparency = 1
-            lblDetalle.Font             = Enum.Font.Gotham
-            lblDetalle.TextSize         = 10
-            lblDetalle.TextColor3       = Color3.fromRGB(200, 170, 255)
-            lblDetalle.Text             = detalle or ""
-            lblDetalle.TextXAlignment   = Enum.TextXAlignment.Left
-            lblDetalle.TextTruncate     = Enum.TextTruncate.AtEnd
-
-            -- Barra de progreso (fade timer visual)
-            local bar = Instance.new("Frame", frame)
-            bar.Size               = UDim2.new(1, -16, 0, 2)
-            bar.Position           = UDim2.new(0, 8, 1, -4)
-            bar.BackgroundColor3   = Color3.fromRGB(255, 80, 80)
-            bar.BorderSizePixel    = 0
-            Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-
-            -- Animar fade de la barra y luego destruir el GUI
-            local SHOW_TIME = 2.8
-            _secAlertTween = TweenService:Create(
-                bar,
-                TweenInfo.new(SHOW_TIME, Enum.EasingStyle.Linear),
-                { Size = UDim2.new(0, 0, 0, 2) }
-            )
-            _secAlertTween:Play()
-
-            task.delay(SHOW_TIME, function()
-                pcall(function()
-                    if sg and sg.Parent then
-                        TweenService:Create(frame,
-                            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                            { BackgroundTransparency = 1 }
-                        ):Play()
-                        task.wait(0.32)
-                        if sg and sg.Parent then sg:Destroy() end
-                        if _secAlertGui == sg then _secAlertGui = nil end
-                    end
-                end)
-            end)
-        end)
-    end)
-end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -529,9 +403,10 @@ local function restaurarC0Inmediato()
 end
 
 -- ============================================================
--- SISTEMA ANTI-TELETRANSPORTE FORZADO
--- Detecta cuando el personaje es teletransportado a coordenadas
--- absurdas y lo devuelve a la última posición segura conocida
+-- SISTEMA ANTI-VOID
+-- Si el jugador cae por debajo de Y=-500 mientras vuela,
+-- lo devuelve a la última posición segura conocida.
+-- NO interfiere con ningún TP intencional.
 -- ============================================================
 
 local function startTeleportGuard()
@@ -539,14 +414,14 @@ local function startTeleportGuard()
         flyanim.teleportGuardConn:Disconnect()
         flyanim.teleportGuardConn = nil
     end
-    flyanim.lastSafePos  = nil
-    flyanim.lastSafeTime = tick()
+    flyanim.lastSafePos           = nil
+    flyanim.lastSafeTime          = tick()
     flyanim.isTeleportGuardActive = true
 
     local mySession = flyanim.sessionToken
 
-    flyanim.teleportGuardConn = RunService.Stepped:Connect(function(_, dt)
-        if flyanim.sessionToken ~= mySession then
+    flyanim.teleportGuardConn = RunService.Stepped:Connect(function()
+        if flyanim.sessionToken ~= mySession or not flyanim.enabled then
             if flyanim.teleportGuardConn then
                 flyanim.teleportGuardConn:Disconnect()
                 flyanim.teleportGuardConn = nil
@@ -554,59 +429,33 @@ local function startTeleportGuard()
             flyanim.isTeleportGuardActive = false
             return
         end
-        if not flyanim.enabled then
-            if flyanim.teleportGuardConn then
-                flyanim.teleportGuardConn:Disconnect()
-                flyanim.teleportGuardConn = nil
-            end
-            flyanim.isTeleportGuardActive = false
-            return
-        end
-        if not flyanim.isTeleportGuardActive then return end
 
         local char = lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then
-            flyanim.lastSafePos = nil
-            return
-        end
+        if not root then return end
 
         local pos = root.Position
 
-        -- ÚNICA condición de TP permitida: caer al void (Y <= -500)
-        -- Ninguna otra condición (delta de posición, velocidad absurda, etc.) activa el TP.
-        if pos.Y <= -500 then
-            local safePos = flyanim.lastSafePos
-            if safePos then
-                securityAlert("TELEPORT GUARD", "void detectado Y="..math.floor(pos.Y).." → rescate")
-                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
-                pcall(function()
-                    root.CFrame = targetCF
-                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-                local cam = workspace.CurrentCamera
-                if cam then
-                    local camCF = cam.CFrame
-                    task.defer(function()
-                        if cam and cam.Parent then
-                            cam.CFrame = camCF
-                        end
-                    end)
-                end
-                flyanim.dashTimer = 0
-                flyanim.dashVel   = Vector3.new(0, 0, 0)
-                if not root:FindFirstChildOfClass("BodyGyro") then
-                    pcall(_flyMakeMotors)
-                end
-            end
+        -- Actualizar última posición segura cuando estamos por encima del void
+        if pos.Y > -490 then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
             return
         end
 
-        -- Actualizar posición segura siempre que las coords sean razonables
-        if math.abs(pos.X) < COORD_SANITY_LIMIT and math.abs(pos.Z) < COORD_SANITY_LIMIT then
-            flyanim.lastSafePos  = pos
-            flyanim.lastSafeTime = tick()
+        -- Solo actuar si caímos al void (Y <= -500)
+        local safePos = flyanim.lastSafePos
+        if not safePos then return end
+
+        pcall(function()
+            root.CFrame                  = CFrame.new(safePos + Vector3.new(0, 5, 0))
+            root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+        flyanim.dashTimer = 0
+        flyanim.dashVel   = Vector3.new(0, 0, 0)
+        if not root:FindFirstChildOfClass("BodyGyro") then
+            pcall(_flyMakeMotors)
         end
     end)
 end
@@ -1762,16 +1611,12 @@ local function startAntiImpulse()
         local expectedVel = bv.velocity
         local actualVel   = root.AssemblyLinearVelocity
         local diff = (actualVel - expectedVel).Magnitude
-        if diff > 3 then
-            securityAlert("ANTI IMPULSO", "vel. lineal corregida Δ="..math.floor(diff).." st/s")
-            root.AssemblyLinearVelocity = expectedVel
-        end
+        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
         local bg = flyanim.bg
         if bg then
             local targetAngular  = Vector3.new(0,0,0)
             local currentAngular = root.AssemblyAngularVelocity
             if (currentAngular - targetAngular).Magnitude > 5 then
-                securityAlert("ANTI IMPULSO", "vel. angular corregida Δ="..string.format("%.1f", (currentAngular - targetAngular).Magnitude).." rad/s")
                 root.AssemblyAngularVelocity = targetAngular
             end
         end
@@ -1782,11 +1627,10 @@ local function stopAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
 end
 
-local function activateGyroProtection(angularSpeed)
+local function activateGyroProtection()
     if flyanim.gyroProtectionActive then return end
     if not flyanim.bg then return end
     flyanim.gyroProtectionActive  = true
-    securityAlert("GYRO PROTECTION", "vel. angular="..string.format("%.1f", angularSpeed or 0).." rad/s → gyro reforzado")
     flyanim.originalGyroP         = flyanim.bg.P
     flyanim.originalGyroMaxTorque = flyanim.bg.maxTorque
     flyanim.bg.P         = 2000
@@ -1932,9 +1776,6 @@ local function startAnomalyProtection()
             lastAnomalyFix = now
             flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
 
-            local causa = motorsGone and "motores perdidos" or ("estado="..tostring(state))
-            securityAlert("ANOMALY PROTECTION", causa.." → reset silencioso")
-
             -- Reset silencioso: recrea los motores sin que el jugador lo note
             silentMotorReset()
 
@@ -1995,10 +1836,7 @@ local function startAnimBlockLoop()
             for _, t in ipairs(tracks) do
                 if t and t.Animation then
                     local id = t.Animation.AnimationId
-                    if not ownAnimIds[id] then
-                        securityAlert("ANIM BLOCK", "anim externa bloqueada → "..id)
-                        pcall(function() t:Stop(0) end)
-                    end
+                    if not ownAnimIds[id] then pcall(function() t:Stop(0) end) end
                 end
             end
         end)
@@ -2048,7 +1886,6 @@ local function startBrakeSystem()
         if not targetRoot then return end
         local dist = (myRoot.Position - targetRoot.Position).Magnitude
         if dist <= flyanim.BRAKE_HARD_DISTANCE then
-            securityAlert("BRAKE SYSTEM", "frenazo duro dist="..math.floor(dist).." st")
             flyanim.dashVel   = Vector3.new(0,0,0)
             flyanim.dashTimer = 0
             flyanim.brakingActive = false
@@ -2730,9 +2567,9 @@ local function restoreGameAnimations(char)
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if humanoid then
         humanoid.PlatformStand = false
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        task.wait(0.05)
         pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+        task.wait(0.05)
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
     end
 end
 
@@ -2937,15 +2774,28 @@ local COMBO_PENDING_WINDOW = 1.0
 local comboPendingClick = false
 
 local function _launchComboAnim(animId, speed)
-    -- Solo parar animaciones de combate (flyanim.tracks), NUNCA las normalTracks
-    -- (levitación, estatica, idle, movimiento) para que no se rompa el sistema de animación
+    -- Parar animaciones de combate anteriores (flyanim.tracks)
     for id, track in pairs(flyanim.tracks) do
         if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
         end
     end
-    -- NO tocar flyanim.normalTracks aqui: esas son las animaciones del vuelo normal
-    -- y pararlas rompe la animacion de idle/levitacion al terminar el combo
+    -- Parar normalTracks de movimiento/idle para evitar la mezcolancha:
+    -- levitacion se mantiene (es de fondo), el resto se corta limpio.
+    local nt = flyanim.normalTracks
+    if nt then
+        local keep = nt.levitacion
+        for _, track in pairs(nt) do
+            if track ~= keep and track and track.IsPlaying then
+                pcall(function() track:Stop(0.08) end)
+            end
+        end
+    end
+    -- Matar loops de movimiento para que no se reenciendan solos
+    flyanim.lateralKilled   = true;  flyanim.lateralLoopId  = 0
+    flyanim.atrasKilled     = true;  flyanim.atrasLoopId    = 0
+    flyanim.isBrazosActive  = false
+    flyanim.idleTimerAnim   = 0
 
     local t = getTrack(animId)
     if not t then return end
@@ -2999,35 +2849,46 @@ local function finalizarCombo()
 
     if not flyanim.enabled then return end
 
+    -- Parar todas las animaciones de combate con fade corto
     for id, track in pairs(flyanim.tracks) do
         if id ~= ANIM.levitacion and track and track.IsPlaying then
-            pcall(function() track:Stop(0.12) end)
+            pcall(function() track:Stop(0.10) end)
         end
     end
 
-    task.wait(0.08)
+    -- Asegurar que los loops de movimiento estén muertos
+    flyanim.lateralKilled  = true;  flyanim.lateralLoopId  = 0
+    flyanim.atrasKilled    = true;  flyanim.atrasLoopId    = 0
+    flyanim.isBrazosActive = false
+    flyanim.idleTimerAnim  = 0
 
-    if not flyanim.enabled then return end
-
+    -- Incrementar token ANTES de cualquier wait para que cualquier
+    -- coroutine de idle que pudiera haber quedado viva se invalide
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
+    if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
     detenerWatchdogAltura()
     restaurarC0Inmediato()
 
-    if flyanim.mode == "normal" then
-        flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-        local pid = flyanim._normalPlayId
+    if not flyanim.enabled then return end
 
+    if flyanim.mode == "normal" then
         local nt = flyanim.normalTracks
         if nt then
+            -- Reiniciar levitacion si se cayó
             if nt.levitacion and not nt.levitacion.IsPlaying then
-                pcall(function() nt.levitacion:Play(0.2) end)
+                pcall(function() nt.levitacion:Play(0.15) end)
                 pcall(function() nt.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION) end)
             end
         end
 
+        flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+        local pid = flyanim._normalPlayId
         iniciarCicloNormal(pid)
         task.delay(0.05, function()
-            if flyanim.enabled and flyanim.mode == "normal" then evaluarMovimientoNormal() end
+            if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                evaluarMovimientoNormal()
+            end
         end)
     else
         updateAnimForMovement()
@@ -3093,7 +2954,7 @@ local function runComboSequencer(startToken)
     local spaceDown4 = UserInputService:IsKeyDown(Enum.KeyCode.Space)
 
     if spaceDown4 then
-        -- Combo 4 especial con espacio (sin cambios)
+        -- Combo 4 especial con espacio
         local t4s = getTrack(ANIM.combo4_space)
         if t4s then
             for id, track in pairs(flyanim.tracks) do
@@ -3101,6 +2962,20 @@ local function runComboSequencer(startToken)
                     pcall(function() track:Stop(0.05) end)
                 end
             end
+            -- Parar normalTracks de movimiento/idle
+            local nt4s = flyanim.normalTracks
+            if nt4s then
+                local keep4s = nt4s.levitacion
+                for _, track in pairs(nt4s) do
+                    if track ~= keep4s and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.08) end)
+                    end
+                end
+            end
+            flyanim.lateralKilled  = true;  flyanim.lateralLoopId  = 0
+            flyanim.atrasKilled    = true;  flyanim.atrasLoopId    = 0
+            flyanim.isBrazosActive = false
+            flyanim.idleTimerAnim  = 0
             t4s.Looped = false; t4s.Priority = Enum.AnimationPriority.Action4
             if t4s.IsPlaying then pcall(function() t4s:Stop(0) end) end
             pcall(function() t4s:Play(0.05, 1, 1); t4s:AdjustSpeed(1.0) end)
@@ -3132,12 +3007,28 @@ local function runComboSequencer(startToken)
     local t4 = getTrack(ANIM.combo4)
     if not t4 then finalizarCombo(); return end
 
-    -- Parar otras tracks de combate (NO las normalTracks)
+    -- Parar otras tracks de combate
     for id, track in pairs(flyanim.tracks) do
         if id ~= ANIM.combo4 and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
         end
     end
+    -- Parar normalTracks de movimiento/idle (mantener solo levitacion)
+    do
+        local nt4 = flyanim.normalTracks
+        if nt4 then
+            local keep4 = nt4.levitacion
+            for _, track in pairs(nt4) do
+                if track ~= keep4 and track and track.IsPlaying then
+                    pcall(function() track:Stop(0.08) end)
+                end
+            end
+        end
+    end
+    flyanim.lateralKilled  = true;  flyanim.lateralLoopId  = 0
+    flyanim.atrasKilled    = true;  flyanim.atrasLoopId    = 0
+    flyanim.isBrazosActive = false
+    flyanim.idleTimerAnim  = 0
 
     t4.Looped   = false
     t4.Priority = Enum.AnimationPriority.Action4
@@ -3216,10 +3107,9 @@ local function handleComboClick()
     -- Si el combo ya está corriendo y esperando un click, registrarlo como pendiente
     if flyanim.comboPlaying then
         if flyanim.comboBusy then
-            -- Aún en el período de 0.75s: ignorar (el combo lo aceptará cuando baje comboBusy)
+            -- Aún en el período de bloqueo: ignorar
             return
         end
-        -- Registrar click pendiente (el secuenciador lo consumirá)
         comboPendingClick = true
         flyanim.comboLastClick = tick()
         return
@@ -3232,7 +3122,24 @@ local function handleComboClick()
     flyanim.comboToken = (flyanim.comboToken or 0) + 1
     local myToken = flyanim.comboToken
 
+    -- Matar TODOS los sistemas de animación de vuelo antes de empezar
+    -- para que no se mezclen con las animaciones de combate.
     if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
+    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
+
+    local nt = flyanim.normalTracks
+    if nt then
+        local keep = nt.levitacion
+        for _, track in pairs(nt) do
+            if track ~= keep and track and track.IsPlaying then
+                pcall(function() track:Stop(0.1) end)
+            end
+        end
+    end
+    flyanim.lateralKilled   = true;  flyanim.lateralLoopId  = 0
+    flyanim.atrasKilled     = true;  flyanim.atrasLoopId    = 0
+    flyanim.isBrazosActive  = false
+    flyanim.idleTimerAnim   = 0
 
     if flyanim.isBlocking then
         stopBlocking()
@@ -4154,7 +4061,7 @@ local function _flyOn()
         updateAntiGravityForce()
 
         local angularSpeed = root.AssemblyAngularVelocity.Magnitude
-        if angularSpeed > 25 and not flyanim.gyroProtectionActive then activateGyroProtection(angularSpeed) end
+        if angularSpeed > 25 and not flyanim.gyroProtectionActive then activateGyroProtection() end
 
         local cam    = workspace.CurrentCamera
         local typing = isTyping()
@@ -4255,9 +4162,6 @@ local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    local velY = math.floor(math.abs(hrp.AssemblyLinearVelocity.Y))
-    securityAlert("ANTI BOUNCE LAND", "suelo detectado velY="..velY.." st/s")
-
     -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
     pcall(function()
         local v = hrp.AssemblyLinearVelocity
@@ -4295,8 +4199,7 @@ local function omniAntiBounceLand(hrp, hum)
     bv.Parent    = hrp
 
     hum.PlatformStand = true
-    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
 
     task.delay(GROUND_STICK_TIME, function()
         pcall(function() bv:Destroy() end)
@@ -4309,8 +4212,7 @@ local function omniAntiBounceLand(hrp, hum)
             hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
         hum.PlatformStand = false
-        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
         -- El motor de fisica detectara Landed en el siguiente frame
     end)
 end
@@ -4570,10 +4472,7 @@ local function _flyOff()
         return
     end
 
-    -- Deshabilitar estados que empujan hacia arriba ANTES de quitar PlatformStand.
-    -- GettingUp y Jumping pueden causar un impulso vertical hacia arriba cuando
-    -- PlatformStand pasa de true->false en el aire. Se re-habilitan tras Freefall.
-    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+    -- Deshabilitar Jumping ANTES de quitar PlatformStand para evitar impulso hacia arriba.
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
     hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, false)
     hum.PlatformStand = false
@@ -4607,12 +4506,9 @@ local function _flyOff()
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
 
-    -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
-    -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
-    -- Freefall esté asentado, causando el rebote hacia arriba.
-    task.delay(0.12, function()
+    -- Re-habilitar Jumping una vez que Freefall esté confirmado.
+    task.delay(0.15, function()
         if hum and hum.Parent then
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
         end
@@ -4641,9 +4537,6 @@ local function _flyOff()
         local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
-            -- GettingUp ya fue deshabilitado arriba; re-habilitarlo ahora que
-            -- PlatformStand ya es false y no puede causar el rebote hacia arriba.
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum.PlatformStand = false
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
@@ -4707,7 +4600,7 @@ local function _flyOff()
         local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
         if humFinal and humFinal.Parent then
             humFinal.PlatformStand = false
-            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.Landed) end)
         end
         flyanim.landingHeight = nil
     end)
