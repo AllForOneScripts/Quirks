@@ -1,4 +1,4 @@
-print("version 1.56 fly")
+print("version 1.57 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4565,25 +4565,11 @@ local function _flyOff()
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
             -- Zerear velocidad angular para que no haya torques residuales
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            -- Zerear XZ: al salir del vuelo solo debe haber caida libre en Y.
+            -- Zerear XZ tambien: al salir del vuelo solo debe haber caida libre en Y.
             -- La velocidad Y ya fue preservada por cleanupMotors(preserveVelY=true).
             local velY = rootCurrent.AssemblyLinearVelocity.Y
-            -- Asegurar que haya al menos un pequeño impulso hacia abajo
-            local finalVelY = (velY >= 0) and -6 or velY
-            rootCurrent.AssemblyLinearVelocity = Vector3.new(0, finalVelY, 0)
+            rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, velY, 0)
         end)
-
-        -- BodyGyro temporal durante la caída para mantener el personaje recto y firme
-        -- Se destruye automáticamente al aterrizar (el landingWatcher limpia los motores)
-        local freefallGyro = Instance.new("BodyGyro")
-        pcall(function()
-            local _, ry2, _ = rootCurrent.CFrame:ToOrientation()
-            freefallGyro.CFrame    = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry2, 0)
-            freefallGyro.P         = 50000
-            freefallGyro.MaxTorque = Vector3.new(50000, 0, 50000)  -- solo corregir pitch/roll, no yaw
-            freefallGyro.Parent    = rootCurrent
-        end)
-        -- El landingWatcher destruirá este gyro junto con todos los motores al detectar suelo
     end
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
@@ -4599,8 +4585,21 @@ local function _flyOff()
         end
     end)
 
-    -- El kick de caída ya está integrado en el alineamiento de orientación de arriba
-    -- (finalVelY = -6 cuando el personaje está quieto o subiendo)
+    -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
+    -- aplicar pequeño impulso hacia abajo para que la gravedad tome efecto.
+    -- Se aplica DESPUÉS del delay de GettingUp para que no lo sobreescriba.
+    if rootCurrent then
+        task.delay(0.01, function()
+            if not rootCurrent or not rootCurrent.Parent then return end
+            if flyanim.enabled then return end  -- ya reactivó el vuelo
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            if velY > 0.5 then
+                pcall(function()
+                    rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
+                end)
+            end
+        end)
+    end
 
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
