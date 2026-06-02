@@ -1,4 +1,4 @@
-print("version 1.61 fly") 
+print("version 1.62 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2041,11 +2041,27 @@ local function createParticle(isMega)
     img.Image = PARTICLE_TEXTURE; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
     img.ImageColor3 = Color3.fromRGB(255,255,255)
     img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
-    TweenService:Create(img, TweenInfo.new(0.4, Enum.EasingStyle.Linear), {ImageTransparency = isMega and 0.85 or 0.92}):Play()
+    local FADE_TIME = 0.42
+    -- Tween de fade de imagen: de la transparencia inicial hasta completamente invisible
+    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
+    fadeTween:Play()
+    -- Tween de movimiento
     local travelDist = isMega and 14 or 8
     local targetPos  = spawnPos + awayDir * travelDist
-    TweenService:Create(part, TweenInfo.new(0.45, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
-    task.delay(0.48, function() pcall(function() part:Destroy() end) end)
+    TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
+    -- Destruir exactamente cuando el tween de fade termina (garantiza que la imagen
+    -- llegó a transparencia 1 antes de destruir la Part, evitando que quede visible)
+    fadeTween.Completed:Connect(function()
+        pcall(function()
+            if part and part.Parent then part:Destroy() end
+        end)
+    end)
+    -- Fallback por si Completed no dispara (e.g. Part destruida externamente)
+    task.delay(FADE_TIME + 0.15, function()
+        pcall(function()
+            if part and part.Parent then part:Destroy() end
+        end)
+    end)
 end
 
 local function startParticleEmitter()
@@ -3405,31 +3421,23 @@ local function updateLockInfoGui()
                     -- Yo estoy abajo → el target está arriba de mí (peligro)
                     heightLabel.Text = "↑ "..math.abs(heightDiff).." "..FT.height_above
                     heightLabel.TextColor3 = Color3.fromRGB(255,200,100)   -- naranja: peligro
-                    -- TP automático: si el target está por encima de mí y la
-                    -- distancia circular (XZ) es <= 50 studs, teletransportarse
-                    -- a su lado para no quedar atrapado bajo él.
-                    if flyanim.enabled then
-                        local myChar2 = lplr.Character
-                        local myRoot2 = myChar2 and myChar2:FindFirstChild("HumanoidRootPart")
-                        if myRoot2 then
-                            local horDist = Vector3.new(
-                                root.Position.X - myRoot2.Position.X,
-                                0,
-                                root.Position.Z - myRoot2.Position.Z
-                            ).Magnitude
-                            if horDist <= 50 then
-                                -- Posicionarse al lado del target (3 studs detrás de él)
-                                local toTarget = (root.Position - myRoot2.Position)
-                                local toTargetH = Vector3.new(toTarget.X, 0, toTarget.Z)
-                                local behindDir = toTargetH.Magnitude > 0.1
-                                    and -toTargetH.Unit
-                                    or Vector3.new(0, 0, 1)
-                                local tpPos = root.Position + behindDir * 3
-                                pcall(function()
-                                    myRoot2.CFrame = CFrame.new(tpPos, root.Position)
-                                end)
-                            end
-                        end
+                    -- TP: si estoy 15+ studs ABAJO del target, teletransportar
+                    -- 3 studs detrás de él (en el plano horizontal).
+                    if flyanim.enabled and math.abs(heightDiff) >= 15 then
+                        local toTargetH = Vector3.new(
+                            root.Position.X - myRoot.Position.X,
+                            0,
+                            root.Position.Z - myRoot.Position.Z
+                        )
+                        local behindDir = toTargetH.Magnitude > 0.1
+                            and -toTargetH.Unit
+                            or Vector3.new(0, 0, 1)
+                        local tpPos = root.Position + behindDir * 3
+                        pcall(function()
+                            myRoot.CFrame = CFrame.new(tpPos, root.Position)
+                            myRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                            myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        end)
                     end
                 else
                     heightLabel.Text = FT.height_same
