@@ -1,4 +1,4 @@
-print("version 1.55 fly")
+print("version 1.56 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -3883,6 +3883,10 @@ end
 -- FLY ON / OFF
 -- ============================================================
 
+-- Token global para cancelar el anclaje al suelo (anclarAlSuelo).
+-- Debe declararse ANTES de _flyOn porque _flyOn lo incrementa al activarse.
+local _groundAnchorToken = 0
+
 local function _flyOn()
     local char = lplr.Character; if not char then return end
     -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
@@ -4177,8 +4181,6 @@ end
 --   · BodyVelocity + BodyGyro para mantenerlo clavado
 --   · Si se presiona Espacio (salto), cancelar el anclaje inmediatamente
 -- ============================================================
-
-local _groundAnchorToken = 0  -- token global para cancelar el anclaje
 
 local function anclarAlSuelo(hrp, hum, groundY)
     if not hrp or not hum then return end
