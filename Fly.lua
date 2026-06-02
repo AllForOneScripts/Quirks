@@ -1,4 +1,4 @@
-print("version 1.62 fly")
+print("version 1.62 fly - security alerts")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -148,6 +148,132 @@ local LOCK_ROTATION_SMOOTH = 0.8
 local COORD_SANITY_LIMIT = 50000
 
 
+
+-- ============================================================
+-- SISTEMA DE ALERTAS DE SEGURIDAD
+-- Muestra una etiqueta en pantalla y un print cada vez que
+-- uno de los sistemas de protección actúa sobre el personaje.
+-- ============================================================
+
+local _secAlertGui      = nil
+local _secAlertTween    = nil
+local _secAlertCooldown = {}   -- [sistema] = último tick de alerta (evita spam)
+local SEC_ALERT_GAP     = 1.0  -- segundos mínimos entre alertas del mismo sistema
+
+local function securityAlert(sistema, detalle)
+    local now = tick()
+    -- Debounce por sistema individual
+    if _secAlertCooldown[sistema] and (now - _secAlertCooldown[sistema]) < SEC_ALERT_GAP then
+        return
+    end
+    _secAlertCooldown[sistema] = now
+
+    -- Print en consola (siempre visible)
+    print(string.format("[SEC] %s → %s  (t=%.2f)", sistema, detalle or "", now))
+
+    -- Alerta visual en pantalla
+    task.spawn(function()
+        pcall(function()
+            -- Destruir alerta anterior si existe
+            if _secAlertGui and _secAlertGui.Parent then
+                _secAlertGui:Destroy()
+                _secAlertGui = nil
+            end
+            if _secAlertTween then
+                pcall(function() _secAlertTween:Cancel() end)
+                _secAlertTween = nil
+            end
+
+            local sg = Instance.new("ScreenGui")
+            sg.Name           = "AFO_SecAlert"
+            sg.ResetOnSpawn   = false
+            sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+            sg.DisplayOrder   = 999
+            sg.IgnoreGuiInset = true
+            sg.Parent         = CoreGui
+            _secAlertGui      = sg
+
+            local frame = Instance.new("Frame", sg)
+            frame.AnchorPoint        = Vector2.new(0.5, 0)
+            frame.Position           = UDim2.new(0.5, 0, 0, 64)
+            frame.Size               = UDim2.new(0, 320, 0, 42)
+            frame.BackgroundColor3   = Color3.fromRGB(14, 6, 28)
+            frame.BackgroundTransparency = 0.08
+            frame.BorderSizePixel    = 0
+            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+            local stroke = Instance.new("UIStroke", frame)
+            stroke.Color       = Color3.fromRGB(255, 80, 80)
+            stroke.Thickness   = 1.5
+            stroke.Transparency = 0.1
+
+            -- Icono de escudo
+            local icon = Instance.new("TextLabel", frame)
+            icon.Size                = UDim2.new(0, 30, 1, 0)
+            icon.Position            = UDim2.new(0, 6, 0, 0)
+            icon.BackgroundTransparency = 1
+            icon.Font                = Enum.Font.GothamBold
+            icon.TextSize            = 18
+            icon.TextColor3          = Color3.fromRGB(255, 80, 80)
+            icon.Text                = "🛡"
+            icon.TextXAlignment      = Enum.TextXAlignment.Center
+
+            -- Nombre del sistema
+            local lblSistema = Instance.new("TextLabel", frame)
+            lblSistema.Size             = UDim2.new(1, -42, 0, 18)
+            lblSistema.Position         = UDim2.new(0, 38, 0, 4)
+            lblSistema.BackgroundTransparency = 1
+            lblSistema.Font             = Enum.Font.GothamBold
+            lblSistema.TextSize         = 11
+            lblSistema.TextColor3       = Color3.fromRGB(255, 100, 100)
+            lblSistema.Text             = sistema
+            lblSistema.TextXAlignment   = Enum.TextXAlignment.Left
+            lblSistema.TextTruncate     = Enum.TextTruncate.AtEnd
+
+            -- Detalle del disparo
+            local lblDetalle = Instance.new("TextLabel", frame)
+            lblDetalle.Size             = UDim2.new(1, -42, 0, 16)
+            lblDetalle.Position         = UDim2.new(0, 38, 0, 22)
+            lblDetalle.BackgroundTransparency = 1
+            lblDetalle.Font             = Enum.Font.Gotham
+            lblDetalle.TextSize         = 10
+            lblDetalle.TextColor3       = Color3.fromRGB(200, 170, 255)
+            lblDetalle.Text             = detalle or ""
+            lblDetalle.TextXAlignment   = Enum.TextXAlignment.Left
+            lblDetalle.TextTruncate     = Enum.TextTruncate.AtEnd
+
+            -- Barra de progreso (fade timer visual)
+            local bar = Instance.new("Frame", frame)
+            bar.Size               = UDim2.new(1, -16, 0, 2)
+            bar.Position           = UDim2.new(0, 8, 1, -4)
+            bar.BackgroundColor3   = Color3.fromRGB(255, 80, 80)
+            bar.BorderSizePixel    = 0
+            Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+            -- Animar fade de la barra y luego destruir el GUI
+            local SHOW_TIME = 2.8
+            _secAlertTween = TweenService:Create(
+                bar,
+                TweenInfo.new(SHOW_TIME, Enum.EasingStyle.Linear),
+                { Size = UDim2.new(0, 0, 0, 2) }
+            )
+            _secAlertTween:Play()
+
+            task.delay(SHOW_TIME, function()
+                pcall(function()
+                    if sg and sg.Parent then
+                        TweenService:Create(frame,
+                            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                            { BackgroundTransparency = 1 }
+                        ):Play()
+                        task.wait(0.32)
+                        if sg and sg.Parent then sg:Destroy() end
+                        if _secAlertGui == sg then _secAlertGui = nil end
+                    end
+                end)
+            end)
+        end)
+    end)
+end
 
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
@@ -452,6 +578,7 @@ local function startTeleportGuard()
         if pos.Y <= -500 then
             local safePos = flyanim.lastSafePos
             if safePos then
+                securityAlert("TELEPORT GUARD", "void detectado Y="..math.floor(pos.Y).." → rescate")
                 local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
                 pcall(function()
                     root.CFrame = targetCF
@@ -1635,12 +1762,16 @@ local function startAntiImpulse()
         local expectedVel = bv.velocity
         local actualVel   = root.AssemblyLinearVelocity
         local diff = (actualVel - expectedVel).Magnitude
-        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
+        if diff > 3 then
+            securityAlert("ANTI IMPULSO", "vel. lineal corregida Δ="..math.floor(diff).." st/s")
+            root.AssemblyLinearVelocity = expectedVel
+        end
         local bg = flyanim.bg
         if bg then
             local targetAngular  = Vector3.new(0,0,0)
             local currentAngular = root.AssemblyAngularVelocity
             if (currentAngular - targetAngular).Magnitude > 5 then
+                securityAlert("ANTI IMPULSO", "vel. angular corregida Δ="..string.format("%.1f", (currentAngular - targetAngular).Magnitude).." rad/s")
                 root.AssemblyAngularVelocity = targetAngular
             end
         end
@@ -1651,10 +1782,11 @@ local function stopAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
 end
 
-local function activateGyroProtection()
+local function activateGyroProtection(angularSpeed)
     if flyanim.gyroProtectionActive then return end
     if not flyanim.bg then return end
     flyanim.gyroProtectionActive  = true
+    securityAlert("GYRO PROTECTION", "vel. angular="..string.format("%.1f", angularSpeed or 0).." rad/s → gyro reforzado")
     flyanim.originalGyroP         = flyanim.bg.P
     flyanim.originalGyroMaxTorque = flyanim.bg.maxTorque
     flyanim.bg.P         = 2000
@@ -1800,6 +1932,9 @@ local function startAnomalyProtection()
             lastAnomalyFix = now
             flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
 
+            local causa = motorsGone and "motores perdidos" or ("estado="..tostring(state))
+            securityAlert("ANOMALY PROTECTION", causa.." → reset silencioso")
+
             -- Reset silencioso: recrea los motores sin que el jugador lo note
             silentMotorReset()
 
@@ -1860,7 +1995,10 @@ local function startAnimBlockLoop()
             for _, t in ipairs(tracks) do
                 if t and t.Animation then
                     local id = t.Animation.AnimationId
-                    if not ownAnimIds[id] then pcall(function() t:Stop(0) end) end
+                    if not ownAnimIds[id] then
+                        securityAlert("ANIM BLOCK", "anim externa bloqueada → "..id)
+                        pcall(function() t:Stop(0) end)
+                    end
                 end
             end
         end)
@@ -1910,6 +2048,7 @@ local function startBrakeSystem()
         if not targetRoot then return end
         local dist = (myRoot.Position - targetRoot.Position).Magnitude
         if dist <= flyanim.BRAKE_HARD_DISTANCE then
+            securityAlert("BRAKE SYSTEM", "frenazo duro dist="..math.floor(dist).." st")
             flyanim.dashVel   = Vector3.new(0,0,0)
             flyanim.dashTimer = 0
             flyanim.brakingActive = false
@@ -4015,7 +4154,7 @@ local function _flyOn()
         updateAntiGravityForce()
 
         local angularSpeed = root.AssemblyAngularVelocity.Magnitude
-        if angularSpeed > 25 and not flyanim.gyroProtectionActive then activateGyroProtection() end
+        if angularSpeed > 25 and not flyanim.gyroProtectionActive then activateGyroProtection(angularSpeed) end
 
         local cam    = workspace.CurrentCamera
         local typing = isTyping()
@@ -4115,6 +4254,9 @@ local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
 
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
+
+    local velY = math.floor(math.abs(hrp.AssemblyLinearVelocity.Y))
+    securityAlert("ANTI BOUNCE LAND", "suelo detectado velY="..velY.." st/s")
 
     -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
     pcall(function()
