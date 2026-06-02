@@ -1602,6 +1602,8 @@ local function startAntiImpulse()
             if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
             return
         end
+        -- Si acabamos de detectar un TP externo, no corregir velocidad este frame
+        if flyanim.tpGrace and tick() < flyanim.tpGrace then return end
         local char = lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
@@ -2567,9 +2569,9 @@ local function restoreGameAnimations(char)
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if humanoid then
         humanoid.PlatformStand = false
-        -- GettingUp saca el Humanoid del estado Physics (heredado del vuelo).
-        -- Sin él, Landed/Running pueden no tener efecto y el char queda congelado.
-        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        -- Freefall saca del estado Physics sin provocar el impulso vertical de GettingUp.
+        -- Landed/Running solos no funcionan porque Physics es un estado "duro".
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Freefall) end)
         task.wait(0.05)
         pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
     end
@@ -3894,7 +3896,7 @@ local function _flyOn()
     flyanim.noclipSpaceActive = false; flyanim.lastKnownPos = nil
     flyanim.ragdollDetected = false
     flyanim.fKeyHeld = false; flyanim.blockCancelledByCombo = false
-    flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick()
+    flyanim.lastSafePos = nil; flyanim.lastSafeTime = tick(); flyanim._lastRsPos = nil
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
     if flyanim.backupGyro then flyanim.backupGyro:Destroy(); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
@@ -4053,6 +4055,29 @@ local function _flyOn()
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then
             return
         end
+
+        -- Detección de TP externo: si la posición saltó >100 studs entre frames,
+        -- actualizar bg.cframe a la nueva posición para que el BodyGyro no luche
+        -- contra el TP, y limpiar la velocidad residual del BodyVelocity.
+        if flyanim._lastRsPos then
+            local posDelta = (pos - flyanim._lastRsPos).Magnitude
+            if posDelta > 100 then
+                if flyanim.bg then flyanim.bg.cframe = root.CFrame end
+                if flyanim.bv then
+                    flyanim.bv.velocity = Vector3.new(0, 0, 0)
+                end
+                root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                -- Actualizar lastSafePos al nuevo destino para que teleportGuard
+                -- no nos devuelva a la posición anterior
+                flyanim.lastSafePos  = pos
+                flyanim.lastKnownPos = pos
+                -- Dar 3 frames de gracia al antiImpulse para que no corrija la velocidad
+                -- justo después del TP (el BV aún no refleja la nueva posición)
+                flyanim.tpGrace = tick() + 0.1
+            end
+        end
+        flyanim._lastRsPos = pos
 
         if not root:FindFirstChild("BodyGyro") or not root:FindFirstChild("BodyVelocity")
         or ch:GetState() == Enum.HumanoidStateType.Ragdoll then _flyMakeMotors(); return end
@@ -4333,6 +4358,7 @@ local function _flyOff()
     flyanim.lastSafePos  = nil
     flyanim.lastSafeTime = 0
     flyanim.lastKnownPos = nil
+    flyanim._lastRsPos   = nil
     flyanim.isTeleportGuardActive = false
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
     if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
@@ -4540,9 +4566,8 @@ local function _flyOff()
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
             hum.PlatformStand = false
-            -- GettingUp es necesario para sacar al Humanoid del estado Physics;
-            -- sin él el personaje queda congelado sin poder moverse.
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            -- Freefall saca del estado Physics sin impulso hacia arriba.
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Freefall) end)
             task.wait(0.05)
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
@@ -4606,7 +4631,7 @@ local function _flyOff()
         local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
         if humFinal and humFinal.Parent then
             humFinal.PlatformStand = false
-            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.Freefall) end)
             task.wait(0.05)
             pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.Landed) end)
         end
