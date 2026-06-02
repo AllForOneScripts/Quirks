@@ -1,4 +1,4 @@
-print("version 1.54 fly")
+print("version 1.55 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -3485,30 +3485,24 @@ local function updateLockInfoGui()
                     -- Yo estoy abajo → el target está arriba de mí (peligro)
                     heightLabel.Text = "↑ "..math.abs(heightDiff).." "..FT.height_above
                     heightLabel.TextColor3 = Color3.fromRGB(255,200,100)   -- naranja: peligro
-                    -- TP automático: si el target está por encima de mí y la
-                    -- distancia circular (XZ) es <= 50 studs, teletransportarse
-                    -- a su lado para no quedar atrapado bajo él.
-                    if flyanim.enabled then
+                    -- TP automatico: si estoy a MAS de 15 studs debajo del target,
+                    -- hacer un TP unico directamente junto a el para corregir el error.
+                    if flyanim.enabled and math.abs(heightDiff) > 15 then
                         local myChar2 = lplr.Character
                         local myRoot2 = myChar2 and myChar2:FindFirstChild("HumanoidRootPart")
                         if myRoot2 then
-                            local horDist = Vector3.new(
-                                root.Position.X - myRoot2.Position.X,
-                                0,
-                                root.Position.Z - myRoot2.Position.Z
-                            ).Magnitude
-                            if horDist <= 50 then
-                                -- Posicionarse al lado del target (3 studs detrás de él)
-                                local toTarget = (root.Position - myRoot2.Position)
-                                local toTargetH = Vector3.new(toTarget.X, 0, toTarget.Z)
-                                local behindDir = toTargetH.Magnitude > 0.1
-                                    and -toTargetH.Unit
-                                    or Vector3.new(0, 0, 1)
-                                local tpPos = root.Position + behindDir * 3
-                                pcall(function()
-                                    myRoot2.CFrame = CFrame.new(tpPos, root.Position)
-                                end)
-                            end
+                            -- TP al lado del target (3 studs detras, a su misma altura)
+                            local toTarget = (root.Position - myRoot2.Position)
+                            local toTargetH = Vector3.new(toTarget.X, 0, toTarget.Z)
+                            local behindDir = toTargetH.Magnitude > 0.1
+                                and -toTargetH.Unit
+                                or Vector3.new(0, 0, 1)
+                            local tpPos = root.Position + behindDir * 3
+                            pcall(function()
+                                myRoot2.CFrame = CFrame.new(tpPos, root.Position)
+                                myRoot2.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                                myRoot2.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                            end)
                         end
                     end
                 else
@@ -4188,13 +4182,18 @@ local _groundAnchorToken = 0  -- token global para cancelar el anclaje
 
 local function anclarAlSuelo(hrp, hum, groundY)
     if not hrp or not hum then return end
+    -- Proteccion: si groundY llego nil (no se detecto suelo), usar posicion actual del HRP
+    if type(groundY) ~= "number" then
+        groundY = hrp.Position.Y - 1
+    end
 
     _groundAnchorToken = _groundAnchorToken + 1
     local myToken = _groundAnchorToken
 
-    -- Calcular posición objetivo: 0.75 studs sobre el suelo detectado
-    -- (0.75 cubre la mitad del HRP que normalmente mide ~2 studs)
-    local anchorY = groundY + 0.75 + (hrp.Size.Y / 2)
+    -- hrp.Size.Y en Roblox siempre es un numero pero lo protegemos con pcall
+    local hrpHalfHeight = 1  -- fallback: HRP mide ~2 studs de alto
+    pcall(function() hrpHalfHeight = hrp.Size.Y / 2 end)
+    local anchorY   = groundY + 0.75 + hrpHalfHeight
     local anchorPos = Vector3.new(hrp.Position.X, anchorY, hrp.Position.Z)
 
     -- Paso 1: Zerear velocidades INMEDIATAMENTE
