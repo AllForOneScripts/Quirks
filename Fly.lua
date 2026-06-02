@@ -1,4 +1,4 @@
-print("version 1.58 fly")
+print("version 1.59 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2064,93 +2064,14 @@ local function createParticle(isMega)
     end)
 end
 
-local function createParticleMegaUp()
-    -- Partículas verticales hacia arriba estilo shockwave de Omniman
-    -- Se generan horizontalmente (misma orientación que las de doLanding) pero
-    -- viajan HACIA ARRIBA expandiéndose desde el centro del personaje
-    local char = lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    local spawnPos = root.Position  -- desde el centro del personaje
-
-    -- Número de rayos: 6 rayos radiales distribuidos en círculo
-    local NUM_RAYS = 6
-    for i = 1, NUM_RAYS do
-        local angle = (i / NUM_RAYS) * math.pi * 2
-        -- Dirección radial horizontal (como las de doLanding)
-        local radialDir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-
-        task.spawn(function()
-            local part = Instance.new("Part")
-            part.Anchored = true; part.CanCollide = false; part.CastShadow = false
-            part.Transparency = 1
-            -- Longitud horizontal como en doLanding
-            part.Size = Vector3.new(0.1, PARTICLE_LENGTH * 1.3, 0.1)
-            part.Position = spawnPos
-            part.Parent = workspace
-
-            -- Orientación: la part apunta en la dirección radial (horizontal)
-            -- igual que las partículas de doLanding (están acostadas horizontalmente)
-            local upVec   = radialDir.Unit           -- "arriba" local = dirección radial
-            local worldUp = Vector3.new(0, 1, 0)
-            local rightVec = upVec:Cross(worldUp)
-            if rightVec.Magnitude < 0.01 then rightVec = Vector3.new(1, 0, 0) end
-            rightVec = rightVec.Unit
-            local lookVec = rightVec:Cross(upVec).Unit
-            part.CFrame = CFrame.fromMatrix(spawnPos, rightVec, upVec, lookVec)
-
-            -- SurfaceGui con imagen
-            local sg = Instance.new("SurfaceGui", part)
-            sg.Adornee = part; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = true
-            sg.LightInfluence = 0
-            sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 50
-
-            local img = Instance.new("ImageLabel", sg)
-            img.Image = PARTICLE_TEXTURE
-            img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
-            img.ImageColor3 = Color3.fromRGB(220, 235, 255)  -- tono azul-blanco energético
-            img.ImageTransparency = 0.1; img.ScaleType = Enum.ScaleType.Fit
-
-            local FADE_TIME = 0.50
-            -- La partícula se mueve hacia ARRIBA Y hacia afuera radialmente (shockwave)
-            local targetPos = spawnPos
-                + radialDir * 10          -- expansión radial horizontal
-                + Vector3.new(0, 18, 0)   -- impulso vertical hacia arriba
-
-            local fadeTweenUp = TweenService:Create(img,  TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                {ImageTransparency = 1})
-            fadeTweenUp:Play()
-            TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Position = targetPos}):Play()
-
-            -- Destruir cuando el fade llega a 1 (garantiza que no quede visible)
-            fadeTweenUp.Completed:Connect(function()
-                pcall(function()
-                    if part and part.Parent then part:Destroy() end
-                end)
-            end)
-            task.delay(FADE_TIME + 0.15, function()
-                pcall(function()
-                    if part and part.Parent then part:Destroy() end
-                end)
-            end)
-        end)
-    end
-end
 local function startParticleEmitter()
     if flyanim.particleRunning then return end
     flyanim.particleRunning = true
     flyanim.particleConn = task.spawn(function()
         while flyanim.enabled and (flyanim.mode == "fast" or flyanim.mode == "turbo") do
+            if flyanim.megaTurboUpActive then task.wait(0.05); continue end
             local char = lplr.Character
             if char and char:FindFirstChild("HumanoidRootPart") then
-                if flyanim.megaTurboUpActive then
-                    -- Partículas shockwave verticales estilo Omniman
-                    createParticleMegaUp()
-                    task.wait(0.08)
-                    continue
-                end
                 local isMega = (flyanim.mode == "turbo")
                 createParticle(isMega)
                 if isMega then task.wait(0.04); createParticle(true) end
@@ -3898,10 +3819,6 @@ end
 -- FLY ON / OFF
 -- ============================================================
 
--- Token global para cancelar el anclaje al suelo (anclarAlSuelo).
--- Debe declararse ANTES de _flyOn porque _flyOn lo incrementa al activarse.
-local _groundAnchorToken = 0
-
 local function _flyOn()
     local char = lplr.Character; if not char then return end
     -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
@@ -3915,8 +3832,6 @@ local function _flyOn()
     if _landBaseRef and pcall(function() _landBaseRef:Stop(0) end) then end
     if _landOverlayRef and pcall(function() _landOverlayRef:Stop(0) end) then end
     _landBaseRef = nil; _landOverlayRef = nil
-    -- Cancelar anclaje al suelo si estaba activo (el vuelo cancela el anclaje)
-    _groundAnchorToken = _groundAnchorToken + 1
     -- Cancelar cualquier tween de compensación de altura en curso
     heightTweenToken = heightTweenToken + 1
     -- Nueva sesion de vuelo: incrementar sessionToken para que los guards
@@ -4188,114 +4103,75 @@ local function _flyOn()
 end
 
 -- ============================================================
--- SISTEMA DE ANCLAJE AL SUELO (reemplaza omniAntiBounceLand)
+-- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
--- Al detectar suelo a 0.75 studs bajo el personaje:
---   · Zerear TODOS los vectores de velocidad (linear + angular)
---   · Posicionar el personaje exactamente 0.75 studs sobre el suelo
---   · BodyVelocity + BodyGyro para mantenerlo clavado
---   · Si se presiona Espacio (salto), cancelar el anclaje inmediatamente
--- ============================================================
+-- Al detectar suelo inminente:
+--   · Cancela TODOS los impulsos en Y al instante
+--   · Fuerza el body completamente recto (upright) con un BodyGyro
+--     de maxTorque muy alto durante el impacto, eliminando cualquier
+--     inclinacion residual del vuelo que cause rebotes laterales
+--   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
+--     para "pegar" al suelo y absorber el impacto sin afectar XZ
+--   · Destruye todo y restaura el estado normal al terminar
+local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
 
-local function anclarAlSuelo(hrp, hum, groundY)
+local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
-    -- Proteccion: si groundY llego nil (no se detecto suelo), usar posicion actual del HRP
-    if type(groundY) ~= "number" then
-        groundY = hrp.Position.Y - 1
-    end
 
-    _groundAnchorToken = _groundAnchorToken + 1
-    local myToken = _groundAnchorToken
-
-    -- hrp.Size.Y en Roblox siempre es un numero pero lo protegemos con pcall
-    local hrpHalfHeight = 1  -- fallback: HRP mide ~2 studs de alto
-    pcall(function() hrpHalfHeight = hrp.Size.Y / 2 end)
-    local anchorY   = groundY + 0.75 + hrpHalfHeight
-    local anchorPos = Vector3.new(hrp.Position.X, anchorY, hrp.Position.Z)
-
-    -- Paso 1: Zerear velocidades INMEDIATAMENTE
+    -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
     pcall(function()
-        hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        local v = hrp.AssemblyLinearVelocity
+        -- Zerear Y por completo; conservar XZ para no interrumpir el movimiento
+        hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    -- Paso 2: Posicionar exactamente sobre el suelo
-    pcall(function()
-        local _, ry, _ = hrp.CFrame:ToOrientation()
-        hrp.CFrame = CFrame.new(anchorPos) * CFrame.Angles(0, ry, 0)
-        hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-    end)
-
-    -- Paso 3: BodyVelocity + BodyGyro para mantener anclado
-    local anchorBV = Instance.new("BodyVelocity")
-    anchorBV.Velocity = Vector3.new(0, 0, 0)
-    anchorBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)  -- bloquear TODOS los ejes
-    anchorBV.Parent   = hrp
-
-    local anchorBG = Instance.new("BodyGyro")
+    -- Paso 2: BodyGyro de alta potencia para alinear el body completamente
+    -- Esto elimina la inclinacion residual del vuelo (turbo/mega usan CFrame.Angles)
+    -- que hace que al impactar el suelo la fisica calcule fuerzas de reaccion
+    -- laterales y salga el personaje disparado hacia los lados.
+    local uprightGyro = Instance.new("BodyGyro")
     do
         local _, ry, _ = hrp.CFrame:ToOrientation()
-        anchorBG.CFrame    = CFrame.new(anchorPos) * CFrame.Angles(0, ry, 0)
-        anchorBG.P         = 999999
-        anchorBG.MaxTorque = Vector3.new(999999, 999999, 999999)
-        anchorBG.Parent    = hrp
+        -- CFrame completamente vertical: solo conservar rotacion Y (yaw), anular pitch/roll
+        uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+        uprightGyro.P         = 999999
+        uprightGyro.MaxTorque = Vector3.new(999999, 999999, 999999)
+        uprightGyro.Parent    = hrp
     end
+    -- Forzar la orientacion del HRP inmediatamente tambien via CFrame
+    pcall(function()
+        local _, ry, _ = hrp.CFrame:ToOrientation()
+        local currentPos = hrp.Position
+        hrp.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, ry, 0)
+    end)
+
+    -- Paso 3: BodyVelocity que bloquea el eje Y durante GROUND_STICK_TIME
+    -- MaxForce solo en Y: no toca XZ, el personaje puede moverse normalmente
+    -- Velocity Y = 0 para absorber rebotes y mantenerlo pegado al suelo
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity  = Vector3.new(0, 0, 0)
+    bv.MaxForce  = Vector3.new(0, 9e9, 0)
+    bv.Parent    = hrp
 
     hum.PlatformStand = true
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
 
-    -- Paso 4: Esperar salto para cancelar, o timeout de seguridad (1.5s)
-    local startT = tick()
-    local anchorConn
-    anchorConn = RunService.Heartbeat:Connect(function()
-        if myToken ~= _groundAnchorToken then
-            -- Token invalidado externamente → limpiar
-            anchorConn:Disconnect()
-            pcall(function() anchorBV:Destroy() end)
-            pcall(function() anchorBG:Destroy() end)
-            return
+    task.delay(GROUND_STICK_TIME, function()
+        pcall(function() bv:Destroy() end)
+        pcall(function() uprightGyro:Destroy() end)
+        if not hum or not hum.Parent then return end
+        -- Zerear Y una ultima vez al soltar
+        if hrp and hrp.Parent then
+            local v2 = hrp.AssemblyLinearVelocity
+            hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
-
-        local jumped = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-        local timeout = tick() - startT > 1.5
-
-        if jumped or timeout then
-            anchorConn:Disconnect()
-            _groundAnchorToken = _groundAnchorToken + 1  -- invalidar este token
-            pcall(function() anchorBV:Destroy() end)
-            pcall(function() anchorBG:Destroy() end)
-            if hum and hum.Parent then
-                hum.PlatformStand = false
-                hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-                hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-                if jumped then
-                    -- Aplicar impulso de salto manual para que se sienta responsivo
-                    pcall(function()
-                        if hrp and hrp.Parent then
-                            hrp.AssemblyLinearVelocity = Vector3.new(0, 50, 0)
-                        end
-                    end)
-                else
-                    -- Timeout: dejar caer normalmente
-                    pcall(function()
-                        if hrp and hrp.Parent then
-                            hrp.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
-                        end
-                    end)
-                    if hum and hum.Parent then
-                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Freefall) end)
-                    end
-                end
-            end
-        else
-            -- Mantener anclado: zerear velocidades cada frame
-            pcall(function()
-                hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end)
-        end
+        hum.PlatformStand = false
+        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
+        -- El motor de fisica detectara Landed en el siguiente frame
     end)
 end
 
@@ -4303,9 +4179,9 @@ end
 -- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
 -- ============================================================
 -- Se activa en _flyOff() cuando hay altura >= 10 studs.
--- Cada Heartbeat lanza un raycast hacia abajo;
--- si detecta suelo llama anclarAlSuelo para clavar el personaje
--- firmemente y eliminar cualquier rebote.
+-- Cada Heartbeat lanza un raycast de 5 studs hacia abajo;
+-- si detecta suelo a <= 2.5 studs aplica omniAntiBounceLand
+-- para evitar el rebote al caer.
 local _landingWatchConn = nil
 local _landingWatchToken = 0
 
@@ -4333,17 +4209,11 @@ startLandingWatcher = function()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum then return end
 
+        -- Sondear siempre, no solo cuando velY < -2.
+        -- Si el personaje está casi estático tras el kick de caída puede tener
+        -- velY cercana a 0 y aun así estar a punto de tocar el suelo.
         local velY = hrp.AssemblyLinearVelocity.Y
-        -- hrpHalfHeight: la mitad del HRP (aprox 1 stud) más el offset de contacto (0.75).
-        -- El raycast parte del CENTRO del HRP, así que necesitamos cubrir hasta el suelo real.
-        -- Antes probeDistance = 2.5 mínimo era insuficiente cuando velY es bajo (caída lenta):
-        -- el suelo estaba a 1 stud del fondo del HRP = 2 studs del centro, y el probe
-        -- de 2.5 solo lo detectaba cuando ya era demasiado tarde, causando el "float".
-        local hrpHalfHeight = 1.0
-        pcall(function() hrpHalfHeight = hrp.Size.Y / 2 end)
-        -- Probe mínimo = hrpHalfHeight + 0.75 (offset de contacto) + 0.5 (margen de seguridad)
-        local probeMin = hrpHalfHeight + 0.75 + 0.5
-        local probeDistance = math.clamp(math.abs(velY) * 0.12 + probeMin, probeMin, 10.0)
+        local probeDistance = math.clamp(math.abs(velY) * 0.1 + 2.5, 2.5, 8.0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -4353,7 +4223,8 @@ startLandingWatcher = function()
         if hit then
             stopLandingWatcher()
 
-            -- Limpiar motores residuales del vuelo
+            -- Limpiar cualquier motor residual del vuelo antes del anti-bounce.
+            -- Si quedó algún BodyForce/BodyGyro huérfano sigue empujando hacia arriba.
             pcall(function()
                 for _, v in ipairs(hrp:GetChildren()) do
                     if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
@@ -4364,7 +4235,7 @@ startLandingWatcher = function()
                 end
             end)
 
-            -- Inhibir Animate antes del impacto
+            -- Inhibir Animate antes del impacto para que doLanding controle la animación
             local animScriptPre = char and char:FindFirstChild("Animate")
             if animScriptPre then
                 pcall(function() animScriptPre.Disabled = true end)
@@ -4375,9 +4246,7 @@ startLandingWatcher = function()
                 end)
             end
 
-            -- Nuevo sistema: anclar al suelo en la posición detectada
-            local groundY = hit.Position.Y
-            anclarAlSuelo(hrp, hum, groundY)
+            omniAntiBounceLand(hrp, hum)
         end
     end)
 end
@@ -4981,7 +4850,6 @@ local function _connectGlobal()
         heightTweenToken = heightTweenToken + 1  -- cancelar tweens de altura al respawn
         flyanim.sessionToken = (flyanim.sessionToken or 0) + 1  -- invalidar guards de sesion anterior al respawn
         _landAnimToken = _landAnimToken + 1; _landBaseRef = nil; _landOverlayRef = nil
-        _groundAnchorToken = _groundAnchorToken + 1  -- cancelar anclaje al suelo al respawn
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
