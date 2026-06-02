@@ -1,4 +1,4 @@
-print("version 1.57 fly")
+print("version 1.58 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2042,14 +2042,22 @@ local function createParticle(isMega)
     img.ImageColor3 = Color3.fromRGB(255,255,255)
     img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
     local FADE_TIME = 0.42
-    -- Tween de fade de imagen
-    TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1}):Play()
+    -- Tween de fade de imagen: de la transparencia inicial hasta completamente invisible
+    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
+    fadeTween:Play()
     -- Tween de movimiento
     local travelDist = isMega and 14 or 8
     local targetPos  = spawnPos + awayDir * travelDist
     TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
-    -- Destruir exactamente cuando termina el tween (no antes, no después)
-    task.delay(FADE_TIME + 0.02, function()
+    -- Destruir exactamente cuando el tween de fade termina (garantiza que la imagen
+    -- llegó a transparencia 1 antes de destruir la Part, evitando que quede visible)
+    fadeTween.Completed:Connect(function()
+        pcall(function()
+            if part and part.Parent then part:Destroy() end
+        end)
+    end)
+    -- Fallback por si Completed no dispara (e.g. Part destruida externamente)
+    task.delay(FADE_TIME + 0.15, function()
         pcall(function()
             if part and part.Parent then part:Destroy() end
         end)
@@ -2110,12 +2118,19 @@ local function createParticleMegaUp()
                 + radialDir * 10          -- expansión radial horizontal
                 + Vector3.new(0, 18, 0)   -- impulso vertical hacia arriba
 
-            TweenService:Create(img,  TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                {ImageTransparency = 1}):Play()
+            local fadeTweenUp = TweenService:Create(img,  TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                {ImageTransparency = 1})
+            fadeTweenUp:Play()
             TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Position = targetPos}):Play()
 
-            task.delay(FADE_TIME + 0.02, function()
+            -- Destruir cuando el fade llega a 1 (garantiza que no quede visible)
+            fadeTweenUp.Completed:Connect(function()
+                pcall(function()
+                    if part and part.Parent then part:Destroy() end
+                end)
+            end)
+            task.delay(FADE_TIME + 0.15, function()
                 pcall(function()
                     if part and part.Parent then part:Destroy() end
                 end)
@@ -4319,7 +4334,16 @@ startLandingWatcher = function()
         if not hrp or not hum then return end
 
         local velY = hrp.AssemblyLinearVelocity.Y
-        local probeDistance = math.clamp(math.abs(velY) * 0.1 + 2.5, 2.5, 8.0)
+        -- hrpHalfHeight: la mitad del HRP (aprox 1 stud) más el offset de contacto (0.75).
+        -- El raycast parte del CENTRO del HRP, así que necesitamos cubrir hasta el suelo real.
+        -- Antes probeDistance = 2.5 mínimo era insuficiente cuando velY es bajo (caída lenta):
+        -- el suelo estaba a 1 stud del fondo del HRP = 2 studs del centro, y el probe
+        -- de 2.5 solo lo detectaba cuando ya era demasiado tarde, causando el "float".
+        local hrpHalfHeight = 1.0
+        pcall(function() hrpHalfHeight = hrp.Size.Y / 2 end)
+        -- Probe mínimo = hrpHalfHeight + 0.75 (offset de contacto) + 0.5 (margen de seguridad)
+        local probeMin = hrpHalfHeight + 0.75 + 0.5
+        local probeDistance = math.clamp(math.abs(velY) * 0.12 + probeMin, probeMin, 10.0)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
