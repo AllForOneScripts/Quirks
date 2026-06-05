@@ -1,4 +1,4 @@
-print("version 1.64")
+print("version 1.65")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -280,6 +280,7 @@ local flyanim = {
     particleRunning = false,
     particleConn    = nil,
     particleUpMode  = false,
+    particleList    = {},   -- tracks active particle Parts for instant cleanup
 
     antiImpulseConn      = nil,
     noclipSpaceEnabled   = true,
@@ -2041,6 +2042,10 @@ local function createParticle(isMega)
     img.Image = PARTICLE_TEXTURE; img.Size = UDim2.new(1,0,1,0); img.BackgroundTransparency = 1
     img.ImageColor3 = Color3.fromRGB(255,255,255)
     img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
+    -- Track this part for instant cleanup on MegaTurboUp
+    local particleRef = {part = part}
+    table.insert(flyanim.particleList, particleRef)
+
     local FADE_TIME = 0.42
     -- Tween de fade de imagen: de la transparencia inicial hasta completamente invisible
     local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
@@ -2055,12 +2060,14 @@ local function createParticle(isMega)
         pcall(function()
             if part and part.Parent then part:Destroy() end
         end)
+        particleRef.part = nil
     end)
     -- Fallback por si Completed no dispara (e.g. Part destruida externamente)
     task.delay(FADE_TIME + 0.15, function()
         pcall(function()
             if part and part.Parent then part:Destroy() end
         end)
+        particleRef.part = nil
     end)
 end
 
@@ -2085,6 +2092,18 @@ end
 function stopParticleEmitter()
     if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
     flyanim.particleRunning = false
+end
+
+local function killActiveParticles()
+    local list = flyanim.particleList
+    for i = #list, 1, -1 do
+        local ref = list[i]
+        if ref and ref.part then
+            pcall(function() ref.part:Destroy() end)
+            ref.part = nil
+        end
+        table.remove(list, i)
+    end
 end
 
 local function getBrightnessFactor(speed)
@@ -2346,9 +2365,11 @@ local function spawnLandingEffects(position, velocity)
             local peakSize = ringSize * (3.2 + t * 2.5)
             TweenService:Create(p, TweenInfo.new(smokeDuration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
-            TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd}):Play()
-            task.delay(smokeDuration + 0.05, function() pcall(function() p:Destroy() end) end)
+            local fadeTween1 = TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = 1})
+            fadeTween1:Play()
+            fadeTween1.Completed:Connect(function() pcall(function() p:Destroy() end) end)
+            task.delay(smokeDuration + 0.10, function() pcall(function() if p and p.Parent then p:Destroy() end end) end)
         end)
 
         -- ── CAPA 2: anillo de billow oscuro (sale antes, da profundidad) ──────
@@ -2371,9 +2392,11 @@ local function spawnLandingEffects(position, velocity)
             local peakSize2 = ringSize2 * (2.4 + t * 1.8)
             TweenService:Create(p2, TweenInfo.new(dur2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize2, peakSize2, 0.05)}):Play()
-            TweenService:Create(img2, TweenInfo.new(dur2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd + 0.08}):Play()
-            task.delay(dur2 + 0.05, function() pcall(function() p2:Destroy() end) end)
+            local fadeTween2 = TweenService:Create(img2, TweenInfo.new(dur2, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = 1})
+            fadeTween2:Play()
+            fadeTween2.Completed:Connect(function() pcall(function() p2:Destroy() end) end)
+            task.delay(dur2 + 0.10, function() pcall(function() if p2 and p2.Parent then p2:Destroy() end end) end)
         end)
 
         -- ── CAPA 3: anillo interior luminoso (da sensación de explosión de aire) ─
@@ -2396,9 +2419,11 @@ local function spawnLandingEffects(position, velocity)
             local peakSize3 = ringSize3 * (2.0 + t * 1.4)
             TweenService:Create(p3, TweenInfo.new(dur3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize3, peakSize3, 0.05)}):Play()
-            TweenService:Create(img3, TweenInfo.new(dur3, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                {ImageTransparency = smokeAlphaEnd - 0.06}):Play()
-            task.delay(dur3 + 0.05, function() pcall(function() p3:Destroy() end) end)
+            local fadeTween3 = TweenService:Create(img3, TweenInfo.new(dur3, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                {ImageTransparency = 1})
+            fadeTween3:Play()
+            fadeTween3.Completed:Connect(function() pcall(function() p3:Destroy() end) end)
+            task.delay(dur3 + 0.10, function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
         end)
 
         -- ── Piedrecitas ───────────────────────────────────────────────────────
@@ -3192,7 +3217,7 @@ local function activateMegaTurboUp()
         end
     end
     stopParticleEmitter()
-    shakeCamera(3.0, 0.5)
+    killActiveParticles()
     playLocalSound(SFX_MEGA_TURBO, 0.90)
     sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
     local char = lplr.Character
@@ -4110,7 +4135,7 @@ end
 --   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
 --     para "pegar" al suelo y absorber el impacto sin afectar XZ
 --   · Destruye todo y restaura el estado normal al terminar
-local GROUND_STICK_TIME = 0.35   -- segundos pegado al suelo
+local GROUND_STICK_TIME = 0.25   -- segundos pegado al suelo (reducido para menos ventana de trampolín)
 
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
@@ -4146,9 +4171,11 @@ local function omniAntiBounceLand(hrp, hum)
     -- Paso 3: BodyVelocity que bloquea el eje Y durante GROUND_STICK_TIME
     -- MaxForce solo en Y: no toca XZ, el personaje puede moverse normalmente
     -- Velocity Y = 0 para absorber rebotes y mantenerlo pegado al suelo
+    -- NOTA: MaxForce moderado (1e5) en lugar de 9e9 para evitar reacción de
+    -- trampolín cuando se activa con el personaje todavía en el aire.
     local bv = Instance.new("BodyVelocity")
     bv.Velocity  = Vector3.new(0, 0, 0)
-    bv.MaxForce  = Vector3.new(0, 9e9, 0)
+    bv.MaxForce  = Vector3.new(0, 1e5, 0)
     bv.Parent    = hrp
 
     hum.PlatformStand = true
@@ -4176,9 +4203,9 @@ end
 -- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
 -- ============================================================
 -- Se activa en _flyOff() cuando hay altura >= 10 studs.
--- Cada Heartbeat lanza un raycast de 5 studs hacia abajo;
--- si detecta suelo a <= 2.5 studs aplica omniAntiBounceLand
--- para evitar el rebote al caer.
+-- Cada Heartbeat lanza un raycast hacia abajo SOLO cuando el
+-- personaje cae (velY < -1); si detecta suelo aplica omniAntiBounceLand.
+-- probeDistance: 2.0–4.5 studs según velocidad, evita falsos positivos.
 local _landingWatchConn = nil
 local _landingWatchToken = 0
 
@@ -4206,11 +4233,12 @@ startLandingWatcher = function()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum then return end
 
-        -- Sondear siempre, no solo cuando velY < -2.
-        -- Si el personaje está casi estático tras el kick de caída puede tener
-        -- velY cercana a 0 y aun así estar a punto de tocar el suelo.
+        -- Sondear solo cuando el personaje está cayendo (velY <= -1).
+        -- Si velY es positivo o cercano a cero, el personaje no está aterrizando
+        -- todavía y activar omniAntiBounceLand causaría un TP hacia arriba.
         local velY = hrp.AssemblyLinearVelocity.Y
-        local probeDistance = math.clamp(math.abs(velY) * 0.1 + 2.5, 2.5, 8.0)
+        if velY > -1 then return end  -- no activar cuando sube o está casi quieto
+        local probeDistance = math.clamp(math.abs(velY) * 0.08 + 2.0, 2.0, 4.5)
 
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
