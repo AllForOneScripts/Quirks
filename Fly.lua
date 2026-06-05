@@ -1,4 +1,4 @@
-print("version 1.65")
+print("version 1.66")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4127,75 +4127,24 @@ end
 -- ============================================================
 -- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
 -- ============================================================
--- Al detectar suelo inminente:
---   · Cancela TODOS los impulsos en Y al instante
---   · Fuerza el body completamente recto (upright) con un BodyGyro
---     de maxTorque muy alto durante el impacto, eliminando cualquier
---     inclinacion residual del vuelo que cause rebotes laterales
---   · BodyVelocity con MaxForce solo en Y durante GROUND_STICK_TIME (0.35s)
---     para "pegar" al suelo y absorber el impacto sin afectar XZ
---   · Destruye todo y restaura el estado normal al terminar
-local GROUND_STICK_TIME = 0.25   -- segundos pegado al suelo (reducido para menos ventana de trampolín)
-
+-- Zerear velocidad Y y alinear orientacion al detectar suelo.
+-- NO usa PlatformStand ni BodyVelocity: ambos causan GettingUp
+-- (TP hacia arriba) cuando se revierten mientras el personaje
+-- esta en el suelo.
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
 
-    -- Paso 1: Cancelar TODOS los impulsos en Y inmediatamente
+    -- Zerear velocidad Y para absorber el impacto. Conservar XZ.
     pcall(function()
         local v = hrp.AssemblyLinearVelocity
-        -- Zerear Y por completo; conservar XZ para no interrumpir el movimiento
         hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
     end)
 
-    -- Paso 2: BodyGyro de alta potencia para alinear el body completamente
-    -- Esto elimina la inclinacion residual del vuelo (turbo/mega usan CFrame.Angles)
-    -- que hace que al impactar el suelo la fisica calcule fuerzas de reaccion
-    -- laterales y salga el personaje disparado hacia los lados.
-    local uprightGyro = Instance.new("BodyGyro")
-    do
-        local _, ry, _ = hrp.CFrame:ToOrientation()
-        -- CFrame completamente vertical: solo conservar rotacion Y (yaw), anular pitch/roll
-        uprightGyro.CFrame    = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
-        uprightGyro.P         = 999999
-        uprightGyro.MaxTorque = Vector3.new(999999, 999999, 999999)
-        uprightGyro.Parent    = hrp
-    end
-    -- Forzar la orientacion del HRP inmediatamente tambien via CFrame
+    -- Alinear orientacion: eliminar pitch/roll residual del vuelo.
     pcall(function()
         local _, ry, _ = hrp.CFrame:ToOrientation()
-        local currentPos = hrp.Position
-        hrp.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, ry, 0)
-    end)
-
-    -- Paso 3: BodyVelocity que bloquea el eje Y durante GROUND_STICK_TIME
-    -- MaxForce solo en Y: no toca XZ, el personaje puede moverse normalmente
-    -- Velocity Y = 0 para absorber rebotes y mantenerlo pegado al suelo
-    -- NOTA: MaxForce moderado (1e5) en lugar de 9e9 para evitar reacción de
-    -- trampolín cuando se activa con el personaje todavía en el aire.
-    local bv = Instance.new("BodyVelocity")
-    bv.Velocity  = Vector3.new(0, 0, 0)
-    bv.MaxForce  = Vector3.new(0, 1e5, 0)
-    bv.Parent    = hrp
-
-    hum.PlatformStand = true
-    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   false)
-
-    task.delay(GROUND_STICK_TIME, function()
-        pcall(function() bv:Destroy() end)
-        pcall(function() uprightGyro:Destroy() end)
-        if not hum or not hum.Parent then return end
-        -- Zerear Y una ultima vez al soltar
-        if hrp and hrp.Parent then
-            local v2 = hrp.AssemblyLinearVelocity
-            hrp.AssemblyLinearVelocity  = Vector3.new(v2.X, 0, v2.Z)
-            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        end
-        hum.PlatformStand = false
-        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping,   true)
-        -- El motor de fisica detectara Landed en el siguiente frame
+        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
     end)
 end
 
@@ -4492,22 +4441,22 @@ local function _flyOff()
 
     hum:ChangeState(Enum.HumanoidStateType.Freefall)
 
-    -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
-    -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
-    -- Freefall esté asentado, causando el rebote hacia arriba.
-    -- TAMBIÉN verificar que el humanoid no esté en GettingUp: si el personaje
-    -- acelera (W/dash) durante el delay, Roblox puede disparar GettingUp en ese
-    -- intervalo y causar el TP hacia arriba. Lo detectamos y forzamos Freefall de nuevo.
+    -- Re-habilitar GettingUp/Jumping solo si el personaje SIGUE en el aire.
+    -- Si ya aterrizó (waitingLand=false), doLanding ya se encargó del estado.
+    -- Si GettingUp se disparó durante el delay (causando TP hacia arriba),
+    -- forzar Freefall de nuevo y luego re-habilitar.
     task.delay(0.12, function()
-        if hum and hum.Parent then
-            local curState = hum:GetState()
-            if curState == Enum.HumanoidStateType.GettingUp then
-                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Freefall) end)
-            end
-            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
+        if not hum or not hum.Parent then return end
+        -- Si ya aterrizó, no tocar nada: doLanding maneja el estado
+        if not flyanim.waitingLand then return end
+        local curState = hum:GetState()
+        if curState == Enum.HumanoidStateType.GettingUp then
+            -- GettingUp se disparó anticipadamente → cancelarlo
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Freefall) end)
         end
+        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+        hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
     end)
 
     -- KICK DE CAÍDA: si al apagar el vuelo el personaje está quieto o subiendo,
