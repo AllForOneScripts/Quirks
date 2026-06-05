@@ -1,4 +1,4 @@
-print("version 1.63")
+print("version 1.64")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -2068,8 +2068,7 @@ local function startParticleEmitter()
     if flyanim.particleRunning then return end
     flyanim.particleRunning = true
     flyanim.particleConn = task.spawn(function()
-        while flyanim.enabled and (flyanim.mode == "fast" or flyanim.mode == "turbo") do
-            if flyanim.megaTurboUpActive then task.wait(0.05); continue end
+        while flyanim.enabled and (flyanim.mode == "fast" or flyanim.mode == "turbo") and not flyanim.megaTurboUpActive do
             local char = lplr.Character
             if char and char:FindFirstChild("HumanoidRootPart") then
                 local isMega = (flyanim.mode == "turbo")
@@ -2235,10 +2234,10 @@ local function sonicBoomEffect(intensity)
         img.ImageColor3=WHITE; img.ImageTransparency=0; img.ScaleType=Enum.ScaleType.Fit
         TweenService:Create(bb, TweenInfo.new(0.10, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
             {Size=UDim2.new(0,peakPx,0,peakPx)}):Play()
+        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
         task.wait(0.04)
         if not img or not img.Parent then return end
         TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
     end)
 end
 
@@ -4468,8 +4467,15 @@ local function _flyOff()
     -- Re-habilitar GettingUp/Jumping solo una vez que Freefall esté confirmado.
     -- Hacerlo en task.defer inmediato hace que GettingUp se dispare antes de que
     -- Freefall esté asentado, causando el rebote hacia arriba.
+    -- TAMBIÉN verificar que el humanoid no esté en GettingUp: si el personaje
+    -- acelera (W/dash) durante el delay, Roblox puede disparar GettingUp en ese
+    -- intervalo y causar el TP hacia arriba. Lo detectamos y forzamos Freefall de nuevo.
     task.delay(0.12, function()
         if hum and hum.Parent then
+            local curState = hum:GetState()
+            if curState == Enum.HumanoidStateType.GettingUp then
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Freefall) end)
+            end
             hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
