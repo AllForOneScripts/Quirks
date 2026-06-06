@@ -1,4 +1,4 @@
--- ProClonePlayer Module - Versión Avanzada
+-- ProClonePlayer Module - Versión Avanzada (Arquitectura UI Corregida)
 local M = {}
 
 local Players = game:GetService("Players")
@@ -30,7 +30,7 @@ local recordedFrames = {}
 local recordTimeLeft = 0
 
 -- UI Elements
-local ScreenGui, MainFrame, LeftMenu, RightMenu
+local ScreenGui, UIWrapper, MainFrame, LeftMenu, RightMenu
 local RedHighlight
 
 -- ==========================================
@@ -88,13 +88,12 @@ local function FinalizeClone(cframe)
     Clon:SetPrimaryPartCFrame(cframe)
     Clon:MakeJoints()
     
-    -- Limpiar scripts del clon
     for _, v in ipairs(Clon:GetDescendants()) do
         if v:IsA("Script") or v:IsA("LocalScript") then v.Disabled = true end
     end
     
     table.insert(spawnedClones, Clon)
-    if #espHighlights > 0 then UpdateESP(true) end -- Actualizar ESP si está activo
+    if #espHighlights > 0 then UpdateESP(true) end
     
     return Clon
 end
@@ -122,16 +121,13 @@ local function StartGhostPlacement()
 end
 
 RunService.RenderStepped:Connect(function()
-    -- Lógica de Posicionamiento Fantasma
     if isPlacing and ghostClone and ghostClone.PrimaryPart then
         local hit = Mouse.Hit
         if hit then
-            -- Ajustar para que no atraviese el suelo (básico)
             ghostClone:SetPrimaryPartCFrame(CFrame.new(hit.p + Vector3.new(0, 3, 0)))
         end
     end
     
-    -- Lógica de Modo Borrar (Hover rojo)
     if deleteMode and not isPlacing then
         local target = Mouse.Target
         if target then
@@ -155,14 +151,12 @@ UserInputService.InputBegan:Connect(function(input, gp)
     
     if isPlacing then
         if input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter then
-            -- Aceptar Clon
             local finalCFrame = ghostClone.PrimaryPart.CFrame
             ghostClone:Destroy()
             ghostClone = nil
             isPlacing = false
             FinalizeClone(finalCFrame)
         elseif input.KeyCode == Enum.KeyCode.Delete or input.KeyCode == Enum.KeyCode.Backspace then
-            -- Cancelar
             ghostClone:Destroy()
             ghostClone = nil
             isPlacing = false
@@ -180,21 +174,22 @@ UserInputService.InputBegan:Connect(function(input, gp)
         end
     end
     
-    -- Seleccionar clon para el editor (Click derecho si el editor está abierto)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 and RightMenu.Position.X.Scale < 1 then
+    -- Seleccionar clon para el editor
+    if input.UserInputType == Enum.UserInputType.MouseButton2 and _guiActive then
         local target = Mouse.Target
         if target then
             local model = target:FindFirstAncestorOfClass("Model")
             if model and table.find(spawnedClones, model) then
                 editorSelectedClone = model
-                print("Clon seleccionado para edición")
+                -- Feedback visual opcional en consola
+                print("Clon seleccionado para edición: " .. model.Name)
             end
         end
     end
 end)
 
 -- ==========================================
--- UI PRINCIPAL
+-- ESTRUCTURA UI CORREGIDA (WRAPPER)
 -- ==========================================
 function M.Start(lplr, lang)
     _lplr = lplr
@@ -216,135 +211,22 @@ function M.Open()
     pcall(function() ScreenGui.Parent = CoreGui end)
     if not ScreenGui.Parent then ScreenGui.Parent = _lplr:WaitForChild("PlayerGui") end
 
-    -- MainFrame (Basado en "Lector de animaciones")
-    MainFrame = Instance.new("Frame", ScreenGui)
-    MainFrame.Size = UDim2.new(0, 300, 0, 400)
-    MainFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(6, 4, 12) -- Color del lector
-    MainFrame.BorderSizePixel = 0
-    MainFrame.Active = true
-    MainFrame.Draggable = true
-    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
-
-    local TopBar = Instance.new("Frame", MainFrame)
-    TopBar.Size = UDim2.new(1, 0, 0, 40)
-    TopBar.BackgroundColor3 = Color3.fromRGB(28, 20, 45)
-    Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 8)
-    
-    local Title = Instance.new("TextLabel", TopBar)
-    Title.Size = UDim2.new(1, -50, 1, 0)
-    Title.Position = UDim2.new(0, 10, 0, 0)
-    Title.BackgroundTransparency = 1
-    Title.Text = "CLONE MANAGER PRO"
-    Title.TextColor3 = Color3.fromRGB(220, 190, 255)
-    Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 14
-    Title.TextXAlignment = Enum.TextXAlignment.Left
-
-    local CloseBtn = Instance.new("TextButton", TopBar)
-    CloseBtn.Size = UDim2.new(0, 26, 0, 26)
-    CloseBtn.Position = UDim2.new(1, -32, 0.5, -13)
-    CloseBtn.BackgroundColor3 = Color3.fromRGB(60, 15, 20)
-    CloseBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-    CloseBtn.Text = "X"
-    CloseBtn.Font = Enum.Font.GothamBold
-    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
-    CloseBtn.MouseButton1Click:Connect(M.Stop)
-
-    -- Player Input y Autocompletado
-    local PlayerBox = Instance.new("TextBox", MainFrame)
-    PlayerBox.Size = UDim2.new(0.9, 0, 0, 35)
-    PlayerBox.Position = UDim2.new(0.05, 0, 0, 50)
-    PlayerBox.BackgroundColor3 = Color3.fromRGB(18, 12, 30)
-    PlayerBox.TextColor3 = Color3.fromRGB(220, 190, 255)
-    PlayerBox.Font = Enum.Font.Gotham
-    PlayerBox.TextSize = 14
-    PlayerBox.PlaceholderText = LC("Nombre del jugador", "Player name")
-    Instance.new("UICorner", PlayerBox).CornerRadius = UDim.new(0, 6)
-    
-    PlayerBox.FocusLost:Connect(function()
-        local text = PlayerBox.Text:lower()
-        for _, p in ipairs(Players:GetPlayers()) do
-            if string.sub(p.Name:lower(), 1, #text) == text or string.sub(p.DisplayName:lower(), 1, #text) == text then
-                PlayerBox.Text = p.Name
-                break
-            end
-        end
-    end)
-
-    -- Botón Principal de Clonar
-    local CloneBtn = Instance.new("TextButton", MainFrame)
-    CloneBtn.Size = UDim2.new(0.9, 0, 0, 35)
-    CloneBtn.Position = UDim2.new(0.05, 0, 0, 95)
-    CloneBtn.BackgroundColor3 = Color3.fromRGB(160, 60, 255)
-    CloneBtn.TextColor3 = Color3.new(1, 1, 1)
-    CloneBtn.Font = Enum.Font.GothamBold
-    CloneBtn.TextSize = 14
-    CloneBtn.Text = LC("Clonar (Click -> Enter)", "Clone (Click -> Enter)")
-    Instance.new("UICorner", CloneBtn).CornerRadius = UDim.new(0, 6)
-    
-    CloneBtn.MouseButton1Click:Connect(function()
-        targetToClone = Players:FindFirstChild(PlayerBox.Text)
-        if targetToClone then StartGhostPlacement() end
-    end)
-
-    -- Panel de Control (Delete, ESP, TP)
-    local ControlFrame = Instance.new("Frame", MainFrame)
-    ControlFrame.Size = UDim2.new(0.9, 0, 0, 80)
-    ControlFrame.Position = UDim2.new(0.05, 0, 0, 140)
-    ControlFrame.BackgroundTransparency = 1
-    
-    local function CreateMiniBtn(txt, pos, color, parent)
-        local btn = Instance.new("TextButton", parent)
-        btn.Size = UDim2.new(0.48, 0, 0, 30)
-        btn.Position = pos
-        btn.BackgroundColor3 = color
-        btn.TextColor3 = Color3.new(1,1,1)
-        btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 12
-        btn.Text = txt
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-        return btn
-    end
-
-    local ToggleDeleteBtn = CreateMiniBtn("Modo Borrar: OFF", UDim2.new(0, 0, 0, 0), Color3.fromRGB(60, 20, 20), ControlFrame)
-    ToggleDeleteBtn.MouseButton1Click:Connect(function()
-        deleteMode = not deleteMode
-        ToggleDeleteBtn.Text = "Modo Borrar: " .. (deleteMode and "ON" or "OFF")
-        ToggleDeleteBtn.BackgroundColor3 = deleteMode and Color3.fromRGB(150, 30, 30) or Color3.fromRGB(60, 20, 20)
-    end)
-
-    local DeleteAllBtn = CreateMiniBtn("Borrar Todos", UDim2.new(0.52, 0, 0, 0), Color3.fromRGB(100, 20, 20), ControlFrame)
-    DeleteAllBtn.MouseButton1Click:Connect(function()
-        for _, c in ipairs(spawnedClones) do c:Destroy() end
-        table.clear(spawnedClones)
-    end)
-
-    local ToggleESPBtn = CreateMiniBtn("ESP: OFF", UDim2.new(0, 0, 0, 35), Color3.fromRGB(20, 60, 20), ControlFrame)
-    local espState = false
-    ToggleESPBtn.MouseButton1Click:Connect(function()
-        espState = not espState
-        ToggleESPBtn.Text = "ESP: " .. (espState and "ON" or "OFF")
-        ToggleESPBtn.BackgroundColor3 = espState and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(20, 60, 20)
-        UpdateESP(espState)
-    end)
-
-    local TpBtn = CreateMiniBtn("TP al Último Clon", UDim2.new(0.52, 0, 0, 35), Color3.fromRGB(20, 40, 80), ControlFrame)
-    TpBtn.MouseButton1Click:Connect(function()
-        local lastClone = spawnedClones[#spawnedClones]
-        if lastClone and LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
-            LocalPlayer.Character:SetPrimaryPartCFrame(lastClone.PrimaryPart.CFrame + Vector3.new(0, 5, 0))
-        end
-    end)
+    -- WRAPPER INVISIBLE PARA ARRASTRAR TODO JUNTO
+    UIWrapper = Instance.new("Frame", ScreenGui)
+    UIWrapper.Size = UDim2.new(0, 300, 0, 400)
+    UIWrapper.Position = UDim2.new(0.5, -150, 0.5, -200)
+    UIWrapper.BackgroundTransparency = 1
+    UIWrapper.Active = true
+    UIWrapper.Draggable = true
 
     -- ==========================================
-    -- MENÚ AVANZADO (IZQUIERDA)
+    -- MENÚ AVANZADO (IZQUIERDA) - HERMANO DE MAINFRAME
     -- ==========================================
-    LeftMenu = Instance.new("Frame", MainFrame)
+    LeftMenu = Instance.new("Frame", UIWrapper)
     LeftMenu.Size = UDim2.new(0, 200, 1, 0)
-    LeftMenu.Position = UDim2.new(0, 0, 0, 0) -- Escondido por ZIndex o Clip
+    LeftMenu.Position = UDim2.new(0, 0, 0, 0) -- Comienza oculto detrás
     LeftMenu.BackgroundColor3 = Color3.fromRGB(12, 8, 20)
-    LeftMenu.ZIndex = -1
+    LeftMenu.ZIndex = 5 -- Debajo del principal
     Instance.new("UICorner", LeftMenu).CornerRadius = UDim.new(0, 8)
     
     local LblAdv = Instance.new("TextLabel", LeftMenu)
@@ -353,6 +235,7 @@ function M.Open()
     LblAdv.TextColor3 = Color3.fromRGB(220, 190, 255)
     LblAdv.BackgroundTransparency = 1
     LblAdv.Font = Enum.Font.GothamBold
+    LblAdv.ZIndex = 5
 
     local AnimInput = Instance.new("TextBox", LeftMenu)
     AnimInput.Size = UDim2.new(0.9, 0, 0, 30)
@@ -360,39 +243,58 @@ function M.Open()
     AnimInput.BackgroundColor3 = Color3.fromRGB(18, 12, 30)
     AnimInput.TextColor3 = Color3.fromRGB(80, 200, 255)
     AnimInput.PlaceholderText = "ID Animación"
+    AnimInput.ZIndex = 5
     Instance.new("UICorner", AnimInput).CornerRadius = UDim.new(0, 4)
 
-    local PlayAnimBtn = CreateMiniBtn("Animar Último", UDim2.new(0.05, 0, 0, 75), Color3.fromRGB(60, 20, 100), LeftMenu)
+    local PlayAnimBtn = Instance.new("TextButton", LeftMenu)
     PlayAnimBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    PlayAnimBtn.Position = UDim2.new(0.05, 0, 0, 75)
+    PlayAnimBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 100)
+    PlayAnimBtn.TextColor3 = Color3.new(1,1,1)
+    PlayAnimBtn.Text = "Animar Último"
+    PlayAnimBtn.Font = Enum.Font.GothamBold
+    PlayAnimBtn.ZIndex = 5
+    Instance.new("UICorner", PlayAnimBtn).CornerRadius = UDim.new(0, 5)
+    
     PlayAnimBtn.MouseButton1Click:Connect(function()
         local last = spawnedClones[#spawnedClones]
         local id = AnimInput.Text:match("%d+")
         if last and id then
             local hum = last:FindFirstChildOfClass("Humanoid")
-            local anim = Instance.new("Animation")
-            anim.AnimationId = "rbxassetid://" .. id
-            local track = hum:LoadAnimation(anim)
-            track:Play()
+            if hum then
+                local anim = Instance.new("Animation")
+                anim.AnimationId = "rbxassetid://" .. id
+                local track = hum:LoadAnimation(anim)
+                track:Play()
+            end
         end
     end)
 
-    local RecordBtn = CreateMiniBtn("Grabar (Cortina)", UDim2.new(0.05, 0, 0, 115), Color3.fromRGB(100, 50, 20), LeftMenu)
+    local RecordBtn = Instance.new("TextButton", LeftMenu)
     RecordBtn.Size = UDim2.new(0.9, 0, 0, 30)
-    -- Lógica de grabación simplificada: Graba CFrame del jugador local
+    RecordBtn.Position = UDim2.new(0.05, 0, 0, 115)
+    RecordBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 20)
+    RecordBtn.TextColor3 = Color3.new(1,1,1)
+    RecordBtn.Text = "Grabar (Cortina)"
+    RecordBtn.Font = Enum.Font.GothamBold
+    RecordBtn.ZIndex = 5
+    Instance.new("UICorner", RecordBtn).CornerRadius = UDim.new(0, 5)
+    
     local recConnection
     RecordBtn.MouseButton1Click:Connect(function()
         if isRecording then
             isRecording = false
             RecordBtn.Text = "Grabar (Cortina)"
+            RecordBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 20)
             if recConnection then recConnection:Disconnect() end
-            -- Aplicar al último clon
+            
             local last = spawnedClones[#spawnedClones]
             if last and #recordedFrames > 0 then
                 task.spawn(function()
                     for _, frame in ipairs(recordedFrames) do
                         if not last or not last.Parent then break end
                         last:SetPrimaryPartCFrame(frame)
-                        task.wait(0.03) -- aprox 30 FPS playback
+                        task.wait(0.03) 
                     end
                 end)
             end
@@ -400,6 +302,7 @@ function M.Open()
             isRecording = true
             table.clear(recordedFrames)
             RecordBtn.Text = "Detener Grabación"
+            RecordBtn.BackgroundColor3 = Color3.fromRGB(150, 30, 30)
             recConnection = RunService.RenderStepped:Connect(function()
                 if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
                     table.insert(recordedFrames, LocalPlayer.Character.PrimaryPart.CFrame)
@@ -409,13 +312,13 @@ function M.Open()
     end)
 
     -- ==========================================
-    -- EDITOR MENÚ (DERECHA)
+    -- EDITOR MENÚ (DERECHA) - HERMANO DE MAINFRAME
     -- ==========================================
-    RightMenu = Instance.new("Frame", MainFrame)
+    RightMenu = Instance.new("Frame", UIWrapper)
     RightMenu.Size = UDim2.new(0, 200, 1, 0)
-    RightMenu.Position = UDim2.new(1, -200, 0, 0)
+    RightMenu.Position = UDim2.new(1, -200, 0, 0) -- Comienza oculto detrás (300 de ancho del wrapper - 200 = 100)
     RightMenu.BackgroundColor3 = Color3.fromRGB(12, 8, 20)
-    RightMenu.ZIndex = -1
+    RightMenu.ZIndex = 5 -- Debajo del principal
     Instance.new("UICorner", RightMenu).CornerRadius = UDim.new(0, 8)
 
     local LblEd = Instance.new("TextLabel", RightMenu)
@@ -424,7 +327,7 @@ function M.Open()
     LblEd.TextColor3 = Color3.fromRGB(220, 190, 255)
     LblEd.BackgroundTransparency = 1
     LblEd.Font = Enum.Font.GothamBold
-    LblEd.TextScaled = true
+    LblEd.ZIndex = 5
 
     local HealthInput = Instance.new("TextBox", RightMenu)
     HealthInput.Size = UDim2.new(0.6, 0, 0, 30)
@@ -432,18 +335,35 @@ function M.Open()
     HealthInput.BackgroundColor3 = Color3.fromRGB(18, 12, 30)
     HealthInput.TextColor3 = Color3.new(1,1,1)
     HealthInput.PlaceholderText = "Vida"
+    HealthInput.ZIndex = 5
     Instance.new("UICorner", HealthInput).CornerRadius = UDim.new(0, 4)
 
-    local ModeToggle = CreateMiniBtn("Raw", UDim2.new(0.7, 0, 0, 40), Color3.fromRGB(40,40,40), RightMenu)
+    local ModeToggle = Instance.new("TextButton", RightMenu)
     ModeToggle.Size = UDim2.new(0.25, 0, 0, 30)
+    ModeToggle.Position = UDim2.new(0.7, 0, 0, 40)
+    ModeToggle.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    ModeToggle.TextColor3 = Color3.new(1,1,1)
+    ModeToggle.Text = "Raw"
+    ModeToggle.Font = Enum.Font.GothamBold
+    ModeToggle.ZIndex = 5
+    Instance.new("UICorner", ModeToggle).CornerRadius = UDim.new(0, 5)
+    
     local isPercent = false
     ModeToggle.MouseButton1Click:Connect(function()
         isPercent = not isPercent
         ModeToggle.Text = isPercent and "%" or "Raw"
     end)
 
-    local ApplyHBtn = CreateMiniBtn("Aplicar Vida", UDim2.new(0.05, 0, 0, 75), Color3.fromRGB(20, 60, 20), RightMenu)
+    local ApplyHBtn = Instance.new("TextButton", RightMenu)
     ApplyHBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    ApplyHBtn.Position = UDim2.new(0.05, 0, 0, 75)
+    ApplyHBtn.BackgroundColor3 = Color3.fromRGB(20, 60, 20)
+    ApplyHBtn.TextColor3 = Color3.new(1,1,1)
+    ApplyHBtn.Text = "Aplicar Vida"
+    ApplyHBtn.Font = Enum.Font.GothamBold
+    ApplyHBtn.ZIndex = 5
+    Instance.new("UICorner", ApplyHBtn).CornerRadius = UDim.new(0, 5)
+    
     ApplyHBtn.MouseButton1Click:Connect(function()
         if editorSelectedClone then
             local hum = editorSelectedClone:FindFirstChildOfClass("Humanoid")
@@ -461,8 +381,16 @@ function M.Open()
         end
     end)
 
-    local ColBtn = CreateMiniBtn("Colisión: ON", UDim2.new(0.05, 0, 0, 115), Color3.fromRGB(80, 80, 20), RightMenu)
+    local ColBtn = Instance.new("TextButton", RightMenu)
     ColBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    ColBtn.Position = UDim2.new(0.05, 0, 0, 115)
+    ColBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 20)
+    ColBtn.TextColor3 = Color3.new(1,1,1)
+    ColBtn.Text = "Colisión: ON"
+    ColBtn.Font = Enum.Font.GothamBold
+    ColBtn.ZIndex = 5
+    Instance.new("UICorner", ColBtn).CornerRadius = UDim.new(0, 5)
+    
     local colState = true
     ColBtn.MouseButton1Click:Connect(function()
         if editorSelectedClone then
@@ -474,32 +402,164 @@ function M.Open()
         end
     end)
 
-    -- Botones para abrir/cerrar menús laterales
+    -- ==========================================
+    -- MAIN FRAME (CENTRO) - ZINDEX ALTO PARA CUBRIR
+    -- ==========================================
+    MainFrame = Instance.new("Frame", UIWrapper)
+    MainFrame.Size = UDim2.new(1, 0, 1, 0)
+    MainFrame.Position = UDim2.new(0, 0, 0, 0)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(6, 4, 12)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ZIndex = 10 -- Este es el secreto, cubre los menús laterales.
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+    local TopBar = Instance.new("Frame", MainFrame)
+    TopBar.Size = UDim2.new(1, 0, 0, 40)
+    TopBar.BackgroundColor3 = Color3.fromRGB(28, 20, 45)
+    TopBar.ZIndex = 11
+    Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 8)
+    
+    local Title = Instance.new("TextLabel", TopBar)
+    Title.Size = UDim2.new(1, -50, 1, 0)
+    Title.Position = UDim2.new(0, 10, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "CLONE MANAGER PRO"
+    Title.TextColor3 = Color3.fromRGB(220, 190, 255)
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 14
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.ZIndex = 12
+
+    local CloseBtn = Instance.new("TextButton", TopBar)
+    CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+    CloseBtn.Position = UDim2.new(1, -32, 0.5, -13)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(60, 15, 20)
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+    CloseBtn.Text = "X"
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.ZIndex = 12
+    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
+    CloseBtn.MouseButton1Click:Connect(M.Stop)
+
+    -- Player Input
+    local PlayerBox = Instance.new("TextBox", MainFrame)
+    PlayerBox.Size = UDim2.new(0.9, 0, 0, 35)
+    PlayerBox.Position = UDim2.new(0.05, 0, 0, 50)
+    PlayerBox.BackgroundColor3 = Color3.fromRGB(18, 12, 30)
+    PlayerBox.TextColor3 = Color3.fromRGB(220, 190, 255)
+    PlayerBox.Font = Enum.Font.Gotham
+    PlayerBox.TextSize = 14
+    PlayerBox.PlaceholderText = LC("Nombre del jugador", "Player name")
+    PlayerBox.ZIndex = 11
+    Instance.new("UICorner", PlayerBox).CornerRadius = UDim.new(0, 6)
+    
+    PlayerBox.FocusLost:Connect(function()
+        local text = PlayerBox.Text:lower()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if string.sub(p.Name:lower(), 1, #text) == text or string.sub(p.DisplayName:lower(), 1, #text) == text then
+                PlayerBox.Text = p.Name
+                break
+            end
+        end
+    end)
+
+    local CloneBtn = Instance.new("TextButton", MainFrame)
+    CloneBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    CloneBtn.Position = UDim2.new(0.05, 0, 0, 95)
+    CloneBtn.BackgroundColor3 = Color3.fromRGB(160, 60, 255)
+    CloneBtn.TextColor3 = Color3.new(1, 1, 1)
+    CloneBtn.Font = Enum.Font.GothamBold
+    CloneBtn.TextSize = 14
+    CloneBtn.Text = LC("Clonar (Click -> Enter)", "Clone (Click -> Enter)")
+    CloneBtn.ZIndex = 11
+    Instance.new("UICorner", CloneBtn).CornerRadius = UDim.new(0, 6)
+    
+    CloneBtn.MouseButton1Click:Connect(function()
+        targetToClone = Players:FindFirstChild(PlayerBox.Text)
+        if targetToClone then StartGhostPlacement() end
+    end)
+
+    -- Controles Principales
+    local ControlFrame = Instance.new("Frame", MainFrame)
+    ControlFrame.Size = UDim2.new(0.9, 0, 0, 80)
+    ControlFrame.Position = UDim2.new(0.05, 0, 0, 140)
+    ControlFrame.BackgroundTransparency = 1
+    ControlFrame.ZIndex = 11
+    
+    local function CreateMiniBtn(txt, pos, color)
+        local btn = Instance.new("TextButton", ControlFrame)
+        btn.Size = UDim2.new(0.48, 0, 0, 30)
+        btn.Position = pos
+        btn.BackgroundColor3 = color
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 12
+        btn.Text = txt
+        btn.ZIndex = 12
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        return btn
+    end
+
+    local ToggleDeleteBtn = CreateMiniBtn("Modo Borrar: OFF", UDim2.new(0, 0, 0, 0), Color3.fromRGB(60, 20, 20))
+    ToggleDeleteBtn.MouseButton1Click:Connect(function()
+        deleteMode = not deleteMode
+        ToggleDeleteBtn.Text = "Modo Borrar: " .. (deleteMode and "ON" or "OFF")
+        ToggleDeleteBtn.BackgroundColor3 = deleteMode and Color3.fromRGB(150, 30, 30) or Color3.fromRGB(60, 20, 20)
+    end)
+
+    local DeleteAllBtn = CreateMiniBtn("Borrar Todos", UDim2.new(0.52, 0, 0, 0), Color3.fromRGB(100, 20, 20))
+    DeleteAllBtn.MouseButton1Click:Connect(function()
+        for _, c in ipairs(spawnedClones) do c:Destroy() end
+        table.clear(spawnedClones)
+    end)
+
+    local ToggleESPBtn = CreateMiniBtn("ESP: OFF", UDim2.new(0, 0, 0, 35), Color3.fromRGB(20, 60, 20))
+    local espState = false
+    ToggleESPBtn.MouseButton1Click:Connect(function()
+        espState = not espState
+        ToggleESPBtn.Text = "ESP: " .. (espState and "ON" or "OFF")
+        ToggleESPBtn.BackgroundColor3 = espState and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(20, 60, 20)
+        UpdateESP(espState)
+    end)
+
+    local TpBtn = CreateMiniBtn("TP al Último Clon", UDim2.new(0.52, 0, 0, 35), Color3.fromRGB(20, 40, 80))
+    TpBtn.MouseButton1Click:Connect(function()
+        local lastClone = spawnedClones[#spawnedClones]
+        if lastClone and LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+            LocalPlayer.Character:SetPrimaryPartCFrame(lastClone.PrimaryPart.CFrame + Vector3.new(0, 5, 0))
+        end
+    end)
+
+    -- Botones Laterales de Apertura (Ubicados en los bordes de MainFrame)
     local BtnLeft = Instance.new("TextButton", MainFrame)
     BtnLeft.Size = UDim2.new(0, 20, 0, 60)
-    BtnLeft.Position = UDim2.new(0, -20, 0.5, -30)
+    BtnLeft.Position = UDim2.new(0, -10, 0.5, -30)
     BtnLeft.BackgroundColor3 = Color3.fromRGB(28, 20, 45)
     BtnLeft.TextColor3 = Color3.new(1,1,1)
     BtnLeft.Text = "<"
+    BtnLeft.ZIndex = 11
     Instance.new("UICorner", BtnLeft).CornerRadius = UDim.new(0, 5)
+    
     local leftOpen = false
     BtnLeft.MouseButton1Click:Connect(function()
         leftOpen = not leftOpen
-        TweenService:Create(LeftMenu, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Position = UDim2.new(0, leftOpen and -210 or 0, 0, 0)}):Play()
+        TweenService:Create(LeftMenu, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Position = UDim2.new(0, leftOpen and -205 or 0, 0, 0)}):Play()
         BtnLeft.Text = leftOpen and ">" or "<"
     end)
 
     local BtnRight = Instance.new("TextButton", MainFrame)
     BtnRight.Size = UDim2.new(0, 20, 0, 60)
-    BtnRight.Position = UDim2.new(1, 0, 0.5, -30)
+    BtnRight.Position = UDim2.new(1, -10, 0.5, -30)
     BtnRight.BackgroundColor3 = Color3.fromRGB(28, 20, 45)
     BtnRight.TextColor3 = Color3.new(1,1,1)
     BtnRight.Text = ">"
+    BtnRight.ZIndex = 11
     Instance.new("UICorner", BtnRight).CornerRadius = UDim.new(0, 5)
+    
     local rightOpen = false
     BtnRight.MouseButton1Click:Connect(function()
         rightOpen = not rightOpen
-        TweenService:Create(RightMenu, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Position = UDim2.new(1, rightOpen and 10 or -200, 0, 0)}):Play()
+        TweenService:Create(RightMenu, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Position = UDim2.new(1, rightOpen and 5 or -200, 0, 0)}):Play()
         BtnRight.Text = rightOpen and "<" or ">"
     end)
 
