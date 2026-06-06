@@ -1,4 +1,4 @@
-print("version 1.66")
+print("version 1.70")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -3222,39 +3222,112 @@ end
 -- MEGA TURBO UP
 -- ============================================================
 
-local function activateMegaTurboUp()
-    if flyanim.megaTurboUpActive then return end
+-- =============================================================================
+-- MÓDULO INDEPENDIENTE: MEGA UP LOGIC (AISLADO, SIN PARTÍCULAS)
+-- =============================================================================
+-- Bloque 100% puro: no inyecta, activa ni manipula ningún ParticleEmitter,
+-- partícula ambiental ni rastro visual físico. Solo lógica de aceleración
+-- vertical ascendente y efectos audiovisuales de pantalla (flash + sonido).
+-- =============================================================================
+local MegaUpLogic = {
+    Active   = false,
+    LoopConn = nil,
+    Token    = 0,
+}
+
+function MegaUpLogic.Deactivate()
+    MegaUpLogic.Active = false
+    MegaUpLogic.Token  = MegaUpLogic.Token + 1
+    if MegaUpLogic.LoopConn then
+        MegaUpLogic.LoopConn:Disconnect()
+        MegaUpLogic.LoopConn = nil
+    end
+end
+
+function MegaUpLogic.Activate()
+    -- Guardia de doble activación
+    if MegaUpLogic.Active then return end
+    -- Solo permitido en modos normal y fast (no turbo/mega)
     if flyanim.mode == "turbo" then return end
-    flyanim.megaTurboUpActive = true
-    -- Cerrar brazos al instante si estaban abiertos
+
+    MegaUpLogic.Deactivate()  -- Limpieza preventiva
+    MegaUpLogic.Active = true
+    MegaUpLogic.Token  = MegaUpLogic.Token + 1
+    local myToken = MegaUpLogic.Token
+
+    -- ── BLOQUEO INMEDIATO DE PARTÍCULAS EXISTENTES ──────────────────────────
+    -- CRÍTICO: matar partículas de turbo/fast ANTES de entrar en el loop.
+    -- Este es el único contacto permitido con el sistema de partículas: apagar
+    -- las que ya existían (del modo anterior). NO se crean ni emiten nuevas.
+    stopParticleEmitter()
+    killActiveParticles()
+
+    -- ── CERRAR BRAZOS AL INSTANTE ────────────────────────────────────────────
     if flyanim.isBrazosActive then
         flyanim.isBrazosActive = false
         flyanim.idleTimerAnim  = 0
         local ntMega = flyanim.normalTracks
-        if ntMega.brazos and ntMega.brazos.IsPlaying then
+        if ntMega and ntMega.brazos and ntMega.brazos.IsPlaying then
             pcall(function() ntMega.brazos:Stop(0.05) end)
         end
     end
-    stopParticleEmitter()
-    killActiveParticles()
+
+    -- ── EFECTOS AUDIOVISUALES: copiados 1:1 de activateMegaTurbo ────────────
+    -- Flash escalado en pantalla + boom sónico + aura + sonido.
+    -- Idénticos a Mega Turbo para coherencia visual, sin partículas físicas.
     playLocalSound(SFX_MEGA_TURBO, 0.90)
-    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
+    sonicBoomEffect(2)
+    airShockAura(2)
+    speedWhiteFlash("turbo")
+
+    -- ── IMPULSO INICIAL INSTANTÁNEO ──────────────────────────────────────────
+    -- Aplicar la velocidad vertical de golpe en el frame de activación para
+    -- que la respuesta sea inmediata y no dependa del primer tick del loop.
     local char = lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if root then root.AssemblyLinearVelocity = Vector3.new(0, BASE_SPEED * TURBO_MULT * 0.8, 0) end
+    if root then
+        root.AssemblyLinearVelocity = Vector3.new(0, BASE_SPEED * TURBO_MULT * 0.8, 0)
+    end
+
+    -- ── ACTUALIZAR HUD ───────────────────────────────────────────────────────
+    flyanim.megaTurboUpActive = true
     if flyanim.updateMode then flyanim.updateMode("megaup") end
-    task.spawn(function()
-        local startT = tick()
-        while flyanim.megaTurboUpActive and flyanim.enabled do
-            if flyanim.bv and flyanim.bv.Parent then flyanim.speed = BASE_SPEED * TURBO_MULT end
-            if tick() - startT > 4.0 then break end
-            task.wait(0.05)
+
+    -- ── LOOP DE MANTENIMIENTO (Heartbeat puro, sin partículas) ───────────────
+    -- Solo ajusta flyanim.speed para que el BodyVelocity del vuelo use la
+    -- velocidad de Mega Turbo mientras el jugador mantiene espacio.
+    -- Timeout de seguridad de 4 segundos.
+    local startT = os.clock()
+    MegaUpLogic.LoopConn = RunService.Heartbeat:Connect(function()
+        -- Invalidación inmediata por token (flyOff u otra deactivación)
+        if MegaUpLogic.Token ~= myToken then return end
+        if not MegaUpLogic.Active or not flyanim.enabled then
+            MegaUpLogic.Deactivate()
+            flyanim.megaTurboUpActive = false
+            flyanim.speed = BASE_SPEED
+            flyanim.mode  = "normal"
+            if flyanim.updateMode then flyanim.updateMode("normal") end
+            return
         end
-        flyanim.megaTurboUpActive = false
-        flyanim.speed = BASE_SPEED
-        flyanim.mode  = "normal"
-        if flyanim.updateMode then flyanim.updateMode("normal") end
+        if os.clock() - startT > 4.0 then
+            MegaUpLogic.Deactivate()
+            flyanim.megaTurboUpActive = false
+            flyanim.speed = BASE_SPEED
+            flyanim.mode  = "normal"
+            if flyanim.updateMode then flyanim.updateMode("normal") end
+            return
+        end
+        -- Mantener la velocidad de Mega Turbo en el BodyVelocity del vuelo
+        if flyanim.bv and flyanim.bv.Parent then
+            flyanim.speed = BASE_SPEED * TURBO_MULT
+        end
     end)
+end
+
+-- Wrapper de compatibilidad: mantiene la firma original que llaman
+-- startMegaTurboUpListener y otros sitios del script.
+local function activateMegaTurboUp()
+    MegaUpLogic.Activate()
 end
 
 local function startMegaTurboUpListener()
