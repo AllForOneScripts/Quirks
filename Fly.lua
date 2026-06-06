@@ -3271,6 +3271,11 @@ function MegaUpLogic.Activate()
     -- No activar si fly está apagado
     if not flyanim.enabled then return end
 
+    -- Bloquear partículas ANTES de todo: el flag megaTurboUpActive se pone a true
+    -- AQUI, en este mismo frame, para que createParticle() lo detecte inmediatamente
+    -- (tiene la guardia "if flyanim.megaTurboUpActive then return end").
+    flyanim.megaTurboUpActive = true
+
     -- Limpieza preventiva antes de activar
     MegaUpLogic.Deactivate()
     MegaUpLogic.Active = true
@@ -4066,20 +4071,40 @@ function EpicFall.Arm(height, gravity)
             -- pulsa WASD mientras sus pies están en el suelo.
             local anchorStart = os.clock()
             local lastGroundY = groundY
+
+            -- Helper: libera el ancla Y re-habilita el salto del Humanoid.
+            -- Se llama en TODOS los puntos de salida del AnchorConn para que
+            -- el jugador pueda volver a saltar después de aterrizar.
+            local anchorReleased = false
+            local function releaseAnchor()
+                if anchorReleased then return end
+                anchorReleased = true
+                if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                -- Re-habilitar el salto: _flyOff lo deshabilita antes de armar EpicFall
+                -- y nunca llega a re-habilitarlo para caídas >= EPIC_FALL_MIN_HEIGHT.
+                local c2 = lplr.Character
+                local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
+                if h2 and h2.Parent then
+                    pcall(function()
+                        h2:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+                        h2:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+                        h2:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
+                    end)
+                end
+            end
+
             EpicFall.AnchorConn = RunService.Heartbeat:Connect(function()
                 if EpicFall.Token ~= capturedToken then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
+                    releaseAnchor(); return
                 end
-                -- Cancelar si fly se reactivó
+                -- Cancelar si fly se reactivó (flyOn ya re-habilita Jumping)
                 if flyanim.enabled then
                     if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
                     return
                 end
                 -- Cancelar si el jugador presiona salto
                 if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
+                    releaseAnchor(); return
                 end
                 -- Cancelar si el jugador pulsa WASD y la distancia al suelo no cambió
                 -- (está pisando firme, no saltando)
@@ -4095,15 +4120,12 @@ function EpicFall.Arm(height, gravity)
                     local hit2 = workspace:Raycast(hrp.Position, Vector3.new(0, -4, 0), rp2)
                     local currentGroundY = hit2 and hit2.Position.Y or (hrp.Position.Y - 999)
                     if math.abs(currentGroundY - lastGroundY) < 0.5 then
-                        -- Sigue en suelo → cancelar ancla para que pueda moverse
-                        if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                        return
+                        releaseAnchor(); return
                     end
                 end
                 -- Cancelar por tiempo
                 if os.clock() - anchorStart >= EPIC_FALL_ANCHOR_TIME then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
+                    releaseAnchor(); return
                 end
                 -- Mantener ancla activa
                 pcall(function()
@@ -4135,6 +4157,7 @@ startLandingWatcher = function()
     -- para no romper la llamada en _flyOff que existe tras la lectura de altura.
     -- No hace nada porque EpicFall.Arm() ya conectó Touched.
 end
+
 -- ============================================================
 -- FLY ON / OFF
 -- ============================================================
@@ -4422,7 +4445,6 @@ local function _flyOn()
         updateAnimForMovement()
     end)
 end
-
 local function _flyOff()
     local char = lplr.Character
 
@@ -4561,7 +4583,7 @@ local function _flyOff()
     -- Llamar helpers de stop (son idempotentes: si la conn ya es nil no hacen nada)
     -- Su única función aquí es limpiar estado extra que no sea una RBXScriptConnection
     detenerNormalTracks(0); detenerPoseTurbo(); detenerPoseMega(); detenerEspacioAvanzado()
-    stopBlocking(); stopParticleEmitter()
+    stopBlocking(); stopParticleEmitter(); killActiveParticles()
     -- stopAntiImpulse / stopBrakeSystem / stopAnomalyProtection / stopTeleportGuard /
     -- stopAnimBlockLoop / stopMegaTurboUpListener ya no tienen conn que desconectar
     -- (se hizo en PASO 0C), pero los llamamos igual para limpiar sus flags internos
