@@ -3948,6 +3948,193 @@ local function _flyBuildGui()
     createLockInfoGui(root)
 end
 
+
+-- ============================================================
+-- EPIC FALL — sistema de caída épica (reescritura completa)
+-- ============================================================
+-- Arquitectura:
+--   • EpicFall.Arm(height, gravity)  — se llama desde _flyOff() con los
+--     datos leídos en ese momento. Registra la info pero no hace nada aún.
+--   • EpicFall.Disarm()              — limpia todo el estado. Se llama desde
+--     _flyOn() para garantizar que un fly rápido ON→OFF→ON no deja basura.
+--   • startLandingWatcher / stopLandingWatcher — detectan el impacto vía
+--     Touched en el HRP. Cuando ocurre, aplican el ancla CFrame y disparan
+--     las partículas desde spawnLandingEffects.
+--
+-- Detección de impacto:
+--   Se conecta HRP.Touched. Si el objeto tocado NO es parte del personaje
+--   (es suelo externo) se considera aterrizaje. Esto es robusto porque no
+--   depende del estado del Humanoid ni de raycasts con timing delicado.
+--
+-- Ancla CFrame:
+--   Al detectar el impacto se fuerza root.CFrame al suelo más cercano
+--   (raycast) con velocidad cero. Esto detiene al personaje en seco de
+--   forma limpia. El ancla dura el tiempo de no-animaciones definido por
+--   EPIC_FALL_ANCHOR_TIME y se cancela si el jugador salta o pulsa WASD
+--   con los pies en el suelo (sin cambio de distancia al suelo).
+--
+-- Partículas (shockwave):
+--   Se reutiliza spawnLandingEffects() tal cual. No se crean sistemas
+--   separados. La ventana de existencia es exactamente la duración del
+--   tween de la partícula más grande; pasada esa ventana no pueden
+--   aparecer nuevas (el token de EpicFall ya ha sido invalidado).
+-- ============================================================
+
+-- Tiempo que el ancla CFrame mantiene al personaje quieto (segundos)
+local EPIC_FALL_ANCHOR_TIME = 0.55
+-- Altura mínima para que se active el sistema (studs)
+local EPIC_FALL_MIN_HEIGHT  = 25
+
+local EpicFall = {
+    Armed       = false,   -- true cuando _flyOff lo activa
+    Token       = 0,       -- invalida cualquier coroutine al incrementar
+    Height      = 0,       -- altura de caída capturada en _flyOff
+    Gravity     = 0,       -- gravedad capturada en _flyOff
+    TouchConn   = nil,     -- conexión HRP.Touched
+    AnchorConn  = nil,     -- RunService para el ancla CFrame
+}
+
+function EpicFall.Disarm()
+    EpicFall.Armed  = false
+    EpicFall.Token  = EpicFall.Token + 1
+    EpicFall.Height = 0
+    EpicFall.Gravity = 0
+    if EpicFall.TouchConn  then EpicFall.TouchConn:Disconnect();  EpicFall.TouchConn  = nil end
+    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+end
+
+function EpicFall.Arm(height, gravity)
+    EpicFall.Disarm()
+    if height < EPIC_FALL_MIN_HEIGHT then return end
+    EpicFall.Armed   = true
+    EpicFall.Token   = EpicFall.Token + 1
+    EpicFall.Height  = height
+    EpicFall.Gravity = gravity
+    local myToken = EpicFall.Token
+
+    local char = lplr.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then EpicFall.Disarm(); return end
+
+    -- Conectar Touched en el HRP para detectar el primer contacto con suelo
+    EpicFall.TouchConn = hrp.Touched:Connect(function(hit)
+        -- Ignorar partes del propio personaje
+        if not hit or not hit.Parent then return end
+        if EpicFall.Token ~= myToken then return end
+        if not EpicFall.Armed then return end
+        local hitChar = hit:FindFirstAncestorOfClass("Model")
+        if hitChar == char then return end
+        -- Ignorar si fly volvió a estar activo
+        if flyanim.enabled then EpicFall.Disarm(); return end
+
+        -- ── Impacto detectado ─────────────────────────────────────────
+        EpicFall.Armed = false  -- evitar re-entrada
+        if EpicFall.TouchConn then EpicFall.TouchConn:Disconnect(); EpicFall.TouchConn = nil end
+
+        local capturedHeight = EpicFall.Height
+        local capturedToken  = myToken
+
+        task.spawn(function()
+            if EpicFall.Token ~= capturedToken then return end
+
+            -- Raycast para encontrar el suelo exacto bajo el HRP
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            rp.FilterDescendantsInstances = {char}
+            local hitResult = workspace:Raycast(hrp.Position, Vector3.new(0, -6, 0), rp)
+            local groundY = hrp.Position.Y
+            if hitResult then groundY = hitResult.Position.Y end
+
+            -- Ancho del personaje (mitad de su HRP para posicionar encima)
+            local hrpHalfHeight = hrp.Size.Y * 0.5
+            local anchorPos = Vector3.new(hrp.Position.X, groundY + hrpHalfHeight, hrp.Position.Z)
+            local _, ry, _  = hrp.CFrame:ToOrientation()
+            local anchorCF  = CFrame.new(anchorPos) * CFrame.Angles(0, ry, 0)
+
+            -- Aplicar ancla CFrame: fuerza al personaje al suelo en seco
+            pcall(function()
+                hrp.CFrame = anchorCF
+                hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+
+            -- Efectos de aterrizaje (partículas de shockwave)
+            spawnLandingEffects(hrp.Position, math.max(capturedHeight * 0.6, 30))
+
+            -- Mantener ancla CFrame durante EPIC_FALL_ANCHOR_TIME
+            -- Se cancela si: token cambia, fly se activa, jugador salta o
+            -- pulsa WASD mientras sus pies están en el suelo.
+            local anchorStart = os.clock()
+            local lastGroundY = groundY
+            EpicFall.AnchorConn = RunService.Heartbeat:Connect(function()
+                if EpicFall.Token ~= capturedToken then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si fly se reactivó
+                if flyanim.enabled then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si el jugador presiona salto
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si el jugador pulsa WASD y la distancia al suelo no cambió
+                -- (está pisando firme, no saltando)
+                local anyMove = UserInputService:IsKeyDown(Enum.KeyCode.W)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.A)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.S)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.D)
+                if anyMove then
+                    -- Verificar que sigue en el suelo (distancia no cambió > 0.5)
+                    local rp2 = RaycastParams.new()
+                    rp2.FilterType = Enum.RaycastFilterType.Exclude
+                    rp2.FilterDescendantsInstances = {char}
+                    local hit2 = workspace:Raycast(hrp.Position, Vector3.new(0, -4, 0), rp2)
+                    local currentGroundY = hit2 and hit2.Position.Y or (hrp.Position.Y - 999)
+                    if math.abs(currentGroundY - lastGroundY) < 0.5 then
+                        -- Sigue en suelo → cancelar ancla para que pueda moverse
+                        if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                        return
+                    end
+                end
+                -- Cancelar por tiempo
+                if os.clock() - anchorStart >= EPIC_FALL_ANCHOR_TIME then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Mantener ancla activa
+                pcall(function()
+                    hrp.CFrame = anchorCF
+                    hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+            end)
+        end)
+    end)
+end
+
+-- ── Stubs para compatibilidad con _flyOn / _flyOff / _charConn ───────────────
+-- startLandingWatcher / stopLandingWatcher se declaran al inicio como forward
+-- references. EpicFall las implementa.
+
+local _landingWatchConn  = nil   -- no usado por EpicFall pero requerido por otros paths
+local _landingWatchToken = 0
+
+stopLandingWatcher = function()
+    _landingWatchToken = _landingWatchToken + 1
+    if _landingWatchConn then _landingWatchConn:Disconnect(); _landingWatchConn = nil end
+    -- También desactivar EpicFall si estaba armado (por si se llama desde _flyOn)
+    EpicFall.Disarm()
+end
+
+startLandingWatcher = function()
+    -- EpicFall ya se armó en _flyOff vía EpicFall.Arm(); este stub se mantiene
+    -- para no romper la llamada en _flyOff que existe tras la lectura de altura.
+    -- No hace nada porque EpicFall.Arm() ya conectó Touched.
+end
 -- ============================================================
 -- FLY ON / OFF
 -- ============================================================
@@ -4234,193 +4421,6 @@ local function _flyOn()
 
         updateAnimForMovement()
     end)
-end
-
--- ============================================================
--- EPIC FALL — sistema de caída épica (reescritura completa)
--- ============================================================
--- Arquitectura:
---   • EpicFall.Arm(height, gravity)  — se llama desde _flyOff() con los
---     datos leídos en ese momento. Registra la info pero no hace nada aún.
---   • EpicFall.Disarm()              — limpia todo el estado. Se llama desde
---     _flyOn() para garantizar que un fly rápido ON→OFF→ON no deja basura.
---   • startLandingWatcher / stopLandingWatcher — detectan el impacto vía
---     Touched en el HRP. Cuando ocurre, aplican el ancla CFrame y disparan
---     las partículas desde spawnLandingEffects.
---
--- Detección de impacto:
---   Se conecta HRP.Touched. Si el objeto tocado NO es parte del personaje
---   (es suelo externo) se considera aterrizaje. Esto es robusto porque no
---   depende del estado del Humanoid ni de raycasts con timing delicado.
---
--- Ancla CFrame:
---   Al detectar el impacto se fuerza root.CFrame al suelo más cercano
---   (raycast) con velocidad cero. Esto detiene al personaje en seco de
---   forma limpia. El ancla dura el tiempo de no-animaciones definido por
---   EPIC_FALL_ANCHOR_TIME y se cancela si el jugador salta o pulsa WASD
---   con los pies en el suelo (sin cambio de distancia al suelo).
---
--- Partículas (shockwave):
---   Se reutiliza spawnLandingEffects() tal cual. No se crean sistemas
---   separados. La ventana de existencia es exactamente la duración del
---   tween de la partícula más grande; pasada esa ventana no pueden
---   aparecer nuevas (el token de EpicFall ya ha sido invalidado).
--- ============================================================
-
--- Tiempo que el ancla CFrame mantiene al personaje quieto (segundos)
-local EPIC_FALL_ANCHOR_TIME = 0.55
--- Altura mínima para que se active el sistema (studs)
-local EPIC_FALL_MIN_HEIGHT  = 25
-
-local EpicFall = {
-    Armed       = false,   -- true cuando _flyOff lo activa
-    Token       = 0,       -- invalida cualquier coroutine al incrementar
-    Height      = 0,       -- altura de caída capturada en _flyOff
-    Gravity     = 0,       -- gravedad capturada en _flyOff
-    TouchConn   = nil,     -- conexión HRP.Touched
-    AnchorConn  = nil,     -- RunService para el ancla CFrame
-}
-
-function EpicFall.Disarm()
-    EpicFall.Armed  = false
-    EpicFall.Token  = EpicFall.Token + 1
-    EpicFall.Height = 0
-    EpicFall.Gravity = 0
-    if EpicFall.TouchConn  then EpicFall.TouchConn:Disconnect();  EpicFall.TouchConn  = nil end
-    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-end
-
-function EpicFall.Arm(height, gravity)
-    EpicFall.Disarm()
-    if height < EPIC_FALL_MIN_HEIGHT then return end
-    EpicFall.Armed   = true
-    EpicFall.Token   = EpicFall.Token + 1
-    EpicFall.Height  = height
-    EpicFall.Gravity = gravity
-    local myToken = EpicFall.Token
-
-    local char = lplr.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then EpicFall.Disarm(); return end
-
-    -- Conectar Touched en el HRP para detectar el primer contacto con suelo
-    EpicFall.TouchConn = hrp.Touched:Connect(function(hit)
-        -- Ignorar partes del propio personaje
-        if not hit or not hit.Parent then return end
-        if EpicFall.Token ~= myToken then return end
-        if not EpicFall.Armed then return end
-        local hitChar = hit:FindFirstAncestorOfClass("Model")
-        if hitChar == char then return end
-        -- Ignorar si fly volvió a estar activo
-        if flyanim.enabled then EpicFall.Disarm(); return end
-
-        -- ── Impacto detectado ─────────────────────────────────────────
-        EpicFall.Armed = false  -- evitar re-entrada
-        if EpicFall.TouchConn then EpicFall.TouchConn:Disconnect(); EpicFall.TouchConn = nil end
-
-        local capturedHeight = EpicFall.Height
-        local capturedToken  = myToken
-
-        task.spawn(function()
-            if EpicFall.Token ~= capturedToken then return end
-
-            -- Raycast para encontrar el suelo exacto bajo el HRP
-            local rp = RaycastParams.new()
-            rp.FilterType = Enum.RaycastFilterType.Exclude
-            rp.FilterDescendantsInstances = {char}
-            local hitResult = workspace:Raycast(hrp.Position, Vector3.new(0, -6, 0), rp)
-            local groundY = hrp.Position.Y
-            if hitResult then groundY = hitResult.Position.Y end
-
-            -- Ancho del personaje (mitad de su HRP para posicionar encima)
-            local hrpHalfHeight = hrp.Size.Y * 0.5
-            local anchorPos = Vector3.new(hrp.Position.X, groundY + hrpHalfHeight, hrp.Position.Z)
-            local _, ry, _  = hrp.CFrame:ToOrientation()
-            local anchorCF  = CFrame.new(anchorPos) * CFrame.Angles(0, ry, 0)
-
-            -- Aplicar ancla CFrame: fuerza al personaje al suelo en seco
-            pcall(function()
-                hrp.CFrame = anchorCF
-                hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end)
-
-            -- Efectos de aterrizaje (partículas de shockwave)
-            spawnLandingEffects(hrp.Position, math.max(capturedHeight * 0.6, 30))
-
-            -- Mantener ancla CFrame durante EPIC_FALL_ANCHOR_TIME
-            -- Se cancela si: token cambia, fly se activa, jugador salta o
-            -- pulsa WASD mientras sus pies están en el suelo.
-            local anchorStart = os.clock()
-            local lastGroundY = groundY
-            EpicFall.AnchorConn = RunService.Heartbeat:Connect(function()
-                if EpicFall.Token ~= capturedToken then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
-                end
-                -- Cancelar si fly se reactivó
-                if flyanim.enabled then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
-                end
-                -- Cancelar si el jugador presiona salto
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
-                end
-                -- Cancelar si el jugador pulsa WASD y la distancia al suelo no cambió
-                -- (está pisando firme, no saltando)
-                local anyMove = UserInputService:IsKeyDown(Enum.KeyCode.W)
-                    or UserInputService:IsKeyDown(Enum.KeyCode.A)
-                    or UserInputService:IsKeyDown(Enum.KeyCode.S)
-                    or UserInputService:IsKeyDown(Enum.KeyCode.D)
-                if anyMove then
-                    -- Verificar que sigue en el suelo (distancia no cambió > 0.5)
-                    local rp2 = RaycastParams.new()
-                    rp2.FilterType = Enum.RaycastFilterType.Exclude
-                    rp2.FilterDescendantsInstances = {char}
-                    local hit2 = workspace:Raycast(hrp.Position, Vector3.new(0, -4, 0), rp2)
-                    local currentGroundY = hit2 and hit2.Position.Y or (hrp.Position.Y - 999)
-                    if math.abs(currentGroundY - lastGroundY) < 0.5 then
-                        -- Sigue en suelo → cancelar ancla para que pueda moverse
-                        if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                        return
-                    end
-                end
-                -- Cancelar por tiempo
-                if os.clock() - anchorStart >= EPIC_FALL_ANCHOR_TIME then
-                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
-                    return
-                end
-                -- Mantener ancla activa
-                pcall(function()
-                    hrp.CFrame = anchorCF
-                    hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-            end)
-        end)
-    end)
-end
-
--- ── Stubs para compatibilidad con _flyOn / _flyOff / _charConn ───────────────
--- startLandingWatcher / stopLandingWatcher se declaran al inicio como forward
--- references. EpicFall las implementa.
-
-local _landingWatchConn  = nil   -- no usado por EpicFall pero requerido por otros paths
-local _landingWatchToken = 0
-
-stopLandingWatcher = function()
-    _landingWatchToken = _landingWatchToken + 1
-    if _landingWatchConn then _landingWatchConn:Disconnect(); _landingWatchConn = nil end
-    -- También desactivar EpicFall si estaba armado (por si se llama desde _flyOn)
-    EpicFall.Disarm()
-end
-
-startLandingWatcher = function()
-    -- EpicFall ya se armó en _flyOff vía EpicFall.Arm(); este stub se mantiene
-    -- para no romper la llamada en _flyOff que existe tras la lectura de altura.
-    -- No hace nada porque EpicFall.Arm() ya conectó Touched.
 end
 
 local function _flyOff()
