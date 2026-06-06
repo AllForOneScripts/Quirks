@@ -502,14 +502,12 @@ local function setNoclip(state)
     end
 end
 
--- ============================================================
--- FUNCIÓN CLEANUP MOTORS CORREGIDA (Bug #1)
--- ============================================================
 local function cleanupMotors(root, preserveVelY)
     if not root then return end
     for _, v in ipairs(root:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
-        or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+        or v:IsA("BodyAngularVelocity") or v:IsA("BodyForce")
+        or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
             pcall(function() v:Destroy() end)
         end
     end
@@ -526,9 +524,13 @@ local function cleanupMotors(root, preserveVelY)
         end)
     end
 
+    -- preserveVelY=true: conservar velocidad Y o aplicar mínimo hacia abajo
+    -- para que la gravedad tome efecto inmediatamente al apagar el vuelo.
     if preserveVelY then
         local currentVelY = 0
         pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
+        -- Si está quieto (velY == 0) o subiendo (velY > 0), aplicar
+        -- pequeño impulso hacia abajo para que Freefall arranque correctamente.
         local finalVelY = (currentVelY >= 0) and -4 or currentVelY
         pcall(function() root.AssemblyLinearVelocity  = Vector3.new(0, finalVelY, 0) end)
     else
@@ -2016,9 +2018,6 @@ end
 local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
 local PARTICLE_LENGTH  = 6
 
--- ============================================================
--- FUNCIÓN CREATEPARTICLE CORREGIDA (Bug #3)
--- ============================================================
 local function createParticle(isMega)
     -- FIX: Bloqueo absoluto e inmediato si está en modo Mega Up
     if flyanim.megaTurboUpActive or flyanim.mode == "megaup" then return end
@@ -2087,9 +2086,6 @@ local function createParticle(isMega)
     end)
 end
 
--- ============================================================
--- FUNCIÓN START PARTICLE EMITTER CORREGIDA (Bug #3)
--- ============================================================
 local function startParticleEmitter()
     if flyanim.particleRunning then return end
     flyanim.particleRunning = true
@@ -2369,7 +2365,6 @@ local function spawnLandingEffects(position, velocity)
         end)
 
         -- ── CAPA 1: anillo principal de humo épico (grande, lento, persistente) ─
-        -- FIX COMPLETADO (Bug #2)
         task.spawn(function()
             local ringSize = smokeScale * 10
             local p = Instance.new("Part")
@@ -4675,7 +4670,7 @@ local function handleQPress()
             return
         end
 
-        if dDown and not sDown and not aDown then
+if dDown and not sDown and not aDown then
             triggerDash("right", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
             flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
             local myDashToken = flyanim.dashAnimToken
@@ -4886,9 +4881,9 @@ local function _connectGlobal()
 end
 
 local function _disconnectGlobal()
-    if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
+    if _inputConn     then _inputConn:Disconnect();     _inputConn     = nil end
     if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
-    if _charConn then _charConn:Disconnect(); _charConn = nil end
+    if _charConn      then _charConn:Disconnect();      _charConn      = nil end
 end
 
 -- ============================================================
@@ -4923,7 +4918,7 @@ function M.SetKey(keyCode)
         pcall(function() flyanim.updateLbl(keyCode.Name) end)
     end
     -- Reconectar input para que tome la nueva tecla
-    if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
+    if _inputConn     then _inputConn:Disconnect();     _inputConn     = nil end
     if _inputConn_End then _inputConn_End:Disconnect(); _inputConn_End = nil end
     _connectGlobal()
 end
