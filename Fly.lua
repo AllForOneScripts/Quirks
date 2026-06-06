@@ -1,4 +1,4 @@
-print("version 1.74")
+print("version 1.74 fly")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -1625,43 +1625,19 @@ local function updateAnimForMovement()
 end
 
 -- ============================================================
--- ANTI IMPULSO
+-- ANTI IMPULSO (stub de compatibilidad)
 -- ============================================================
+-- El sistema de anti-impulso fue eliminado porque causaba bugs
+-- de velocidad al apagar el vuelo. La detención al aterrizar
+-- ahora la hace EpicFall con CFrame anchor al suelo.
+-- Los stubs mantienen compatibilidad con las llamadas existentes.
 
 local function startAntiImpulse()
-    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-    local mySession = flyanim.sessionToken
-    flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
-        if flyanim.sessionToken ~= mySession then
-            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-            return
-        end
-        if not flyanim.enabled then
-            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
-            return
-        end
-        local char = lplr.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        local bv = flyanim.bv
-        if not bv or not bv.Parent then return end
-        local expectedVel = bv.velocity
-        local actualVel   = root.AssemblyLinearVelocity
-        local diff = (actualVel - expectedVel).Magnitude
-        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
-        local bg = flyanim.bg
-        if bg then
-            local targetAngular  = Vector3.new(0,0,0)
-            local currentAngular = root.AssemblyAngularVelocity
-            if (currentAngular - targetAngular).Magnitude > 5 then
-                root.AssemblyAngularVelocity = targetAngular
-            end
-        end
-    end)
+    -- No-op: sistema reemplazado por EpicFall CFrame anchor
 end
 
 local function stopAntiImpulse()
+    -- No-op
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
 end
 
@@ -1703,7 +1679,6 @@ local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
 -- destruye y recrea los body movers en el mismo frame, restaurando el estado
 -- de Physics sin que el jugador note ningún parpadeo ni interrupción.
 local function silentMotorReset()
-    if not flyanim.enabled then return end  -- FIX: no resetear si el vuelo ya está apagado
     local now = tick()
     if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
     lastMotorReset = now
@@ -1750,7 +1725,6 @@ local function silentMotorReset()
 end
 
 local function _flyMakeMotors()
-    if not flyanim.enabled then return end  -- FIX: no crear motores si el vuelo está apagado
     local char = lplr.Character; if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     local hum  = char:FindFirstChildOfClass("Humanoid")
@@ -2279,13 +2253,31 @@ local function sonicBoomEffect(intensity)
 end
 
 -- ============================================================
--- EFECTOS DE ATERRIZAJE
--- - Piedras desde cualquier altura (mínimo desde 10 studs)
--- - El doble de piedritas
--- - A mayor altura, más piedritas (máximo sin lag = 28 rocas)
+-- EFECTOS DE ATERRIZAJE (sistema ventana de tiempo)
+-- Arquitectura:
+--   • Token por invocación: cada llamada genera un token.
+--     Si EpicFall se desarma antes de que termine la ventana,
+--     el token ya no coincide y las partículas se destruyen.
+--   • Ventana de tiempo (PARTICLE_WINDOW): todas las partículas
+--     deben existir dentro de este rango. Al expirar, ninguna
+--     partícula nueva puede aparecer y las existentes se destruyen.
+--   • Limpieza: igual que turbo/mega — TweenService + Completed
+--     garantiza que el Part se destruye cuando la imagen llega a
+--     transparencia 1. Fallback task.delay para casos edge.
 -- ============================================================
 
+-- Ventana de tiempo máxima para partículas de caída (segundos)
+local PARTICLE_WINDOW = 2.0
+-- Token global de partículas de caída (invalida lotes anteriores)
+local _landParticleToken = 0
+
 local function spawnLandingEffects(position, velocity)
+    -- Generar token para esta invocación
+    _landParticleToken = _landParticleToken + 1
+    local myParticleToken = _landParticleToken
+    -- La ventana de partículas comienza ahora
+    local particleWindowStart = os.clock()
+
     local intensity = math.clamp(velocity, 25, 180)
     local t = (intensity - 25) / 155
 
@@ -2311,6 +2303,8 @@ local function spawnLandingEffects(position, velocity)
 
     task.spawn(function()
         task.wait(EFFECT_DELAY)
+        -- Verificar que la ventana sigue activa tras el delay
+        if _landParticleToken ~= myParticleToken then return end
 
         -- Recalcular groundPos desde la posición actual del personaje
         -- (puede haber cambiado ligeramente tras el asentamiento)
@@ -2344,8 +2338,8 @@ local function spawnLandingEffects(position, velocity)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
 
         -- ── CAPA 0: flash de impacto (anillo fino e instantáneo) ─────────────
-        -- Aparece y se disuelve muy rápido para dar el "golpe" visual
         task.spawn(function()
+            if _landParticleToken ~= myParticleToken then return end
             local flashSize = smokeScale * 6
             local pf = Instance.new("Part")
             pf.Anchored = true; pf.CanCollide = false; pf.CanTouch = false; pf.CastShadow = false
@@ -2368,6 +2362,7 @@ local function spawnLandingEffects(position, velocity)
 
         -- ── CAPA 1: anillo principal de humo épico (grande, lento, persistente) ─
         task.spawn(function()
+            if _landParticleToken ~= myParticleToken then return end
             local ringSize = smokeScale * 10
             local p = Instance.new("Part")
             p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CastShadow = false
@@ -2384,6 +2379,7 @@ local function spawnLandingEffects(position, velocity)
             TweenService:Create(p, TweenInfo.new(smokeDuration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
 
+            -- FIX: Completado el código truncado y añadida la destrucción de la partícula
             local fadeTween1 = TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1})
             fadeTween1:Play()
 
@@ -2394,7 +2390,9 @@ local function spawnLandingEffects(position, velocity)
 
         -- ── CAPA 2: anillo de billow oscuro (sale antes, da profundidad) ──────
         task.spawn(function()
+            if _landParticleToken ~= myParticleToken then return end
             task.wait(0.03)
+            if _landParticleToken ~= myParticleToken then return end
             local ringSize2 = smokeScale * 7
             local p2 = Instance.new("Part")
             p2.Anchored = true; p2.CanCollide = false; p2.CanTouch = false; p2.CastShadow = false
@@ -2421,7 +2419,9 @@ local function spawnLandingEffects(position, velocity)
 
         -- ── CAPA 3: anillo interior luminoso (da sensación de explosión de aire) ─
         task.spawn(function()
+            if _landParticleToken ~= myParticleToken then return end
             task.wait(0.07)
+            if _landParticleToken ~= myParticleToken then return end
             local ringSize3 = smokeScale * 4
             local p3 = Instance.new("Part")
             p3.Anchored = true; p3.CanCollide = false; p3.CanTouch = false; p3.CastShadow = false
@@ -2446,15 +2446,23 @@ local function spawnLandingEffects(position, velocity)
             task.delay(dur3 + 0.10, function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
         end)
 
-        -- ── Piedrecitas ───────────────────────────────────────────────────────
+        -- ── Piedrecitas (respetan ventana de tiempo y token) ────────────────
         task.spawn(function()
+            -- Verificar ventana antes de spawnear piedras
+            if _landParticleToken ~= myParticleToken then return end
+            if os.clock() - particleWindowStart > PARTICLE_WINDOW then return end
+
             local ROCK_BASE = Color3.fromRGB(130, 125, 118)
             local batchSize = 6
             local spawned = 0
             while spawned < numRocks do
+                -- Verificar token y ventana en cada lote
+                if _landParticleToken ~= myParticleToken then return end
+                if os.clock() - particleWindowStart > PARTICLE_WINDOW then return end
                 local thisBatch = math.min(batchSize, numRocks - spawned)
                 for i = 1, thisBatch do
                     task.spawn(function()
+                        if _landParticleToken ~= myParticleToken then return end
                         local rockSize = 0.08 + math.random() * (0.14 + t * 0.12)
                         local rock = Instance.new("Part")
                         rock.Size        = Vector3.new(rockSize, rockSize, rockSize)
@@ -2475,8 +2483,16 @@ local function spawnLandingEffects(position, velocity)
                         local fadeTime = 0.35 + math.random() * 0.35
                         task.delay(0.04, function()
                             if not rock or not rock.Parent then return end
-                            TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                                {Transparency = 1}):Play()
+                            -- Al expirar la ventana, destruir la piedra directamente
+                            if _landParticleToken ~= myParticleToken
+                            or os.clock() - particleWindowStart > PARTICLE_WINDOW then
+                                pcall(function() rock:Destroy() end); return
+                            end
+                            local tw = TweenService:Create(rock,
+                                TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                                {Transparency = 1})
+                            tw:Play()
+                            tw.Completed:Connect(function() pcall(function() rock:Destroy() end) end)
                             task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
                         end)
                     end)
@@ -3220,16 +3236,16 @@ local function stopComboListener()
 end
 
 -- ============================================================
--- MEGA TURBO UP
+-- MEGA TURBO UP  (bloque independiente, cero partículas)
+-- ============================================================
+-- Diseño: bloque 100% autónomo. No crea, emite ni toca ninguna partícula.
+-- Comparte exactamente los mismos efectos audiovisuales que Mega Turbo
+-- (flash escalado + sonic boom + aura + sonido) porque MegaUp ES Mega Turbo
+-- en dirección vertical. La lógica de aceleración sigue las mismas normas
+-- de incremento que Turbo y Mega Turbo: impulso instantáneo al activar +
+-- mantenimiento continuo mientras se sostiene Espacio.
 -- ============================================================
 
--- =============================================================================
--- MÓDULO INDEPENDIENTE: MEGA UP LOGIC (AISLADO, SIN PARTÍCULAS)
--- =============================================================================
--- Bloque 100% puro: no inyecta, activa ni manipula ningún ParticleEmitter,
--- partícula ambiental ni rastro visual físico. Solo lógica de aceleración
--- vertical ascendente y efectos audiovisuales de pantalla (flash + sonido).
--- =============================================================================
 local MegaUpLogic = {
     Active   = false,
     LoopConn = nil,
@@ -3243,27 +3259,31 @@ function MegaUpLogic.Deactivate()
         MegaUpLogic.LoopConn:Disconnect()
         MegaUpLogic.LoopConn = nil
     end
+    -- Apagar flag global de forma inmediata para que el listener no lo reactive
+    flyanim.megaTurboUpActive = false
 end
 
 function MegaUpLogic.Activate()
     -- Guardia de doble activación
     if MegaUpLogic.Active then return end
-    -- Solo permitido en modos normal y fast (no turbo/mega)
+    -- Solo permitido en modo normal o fast; turbo/mega tienen su propia lógica
     if flyanim.mode == "turbo" then return end
+    -- No activar si fly está apagado
+    if not flyanim.enabled then return end
 
-    MegaUpLogic.Deactivate()  -- Limpieza preventiva
+    -- Limpieza preventiva antes de activar
+    MegaUpLogic.Deactivate()
     MegaUpLogic.Active = true
     MegaUpLogic.Token  = MegaUpLogic.Token + 1
     local myToken = MegaUpLogic.Token
 
-    -- ── BLOQUEO INMEDIATO DE PARTÍCULAS EXISTENTES ──────────────────────────
-    -- CRÍTICO: matar partículas de turbo/fast ANTES de entrar en el loop.
-    -- Este es el único contacto permitido con el sistema de partículas: apagar
-    -- las que ya existían (del modo anterior). NO se crean ni emiten nuevas.
+    -- ── PASO 1: Detener partículas previas (único contacto autorizado) ───────
+    -- Se apagan las partículas del modo anterior (fast/turbo) pero NO se
+    -- crean partículas nuevas. MegaUp no produce ningún rastro de partículas.
     stopParticleEmitter()
     killActiveParticles()
 
-    -- ── CERRAR BRAZOS AL INSTANTE ────────────────────────────────────────────
+    -- ── PASO 2: Cerrar brazos inmediatamente ─────────────────────────────────
     if flyanim.isBrazosActive then
         flyanim.isBrazosActive = false
         flyanim.idleTimerAnim  = 0
@@ -3273,38 +3293,38 @@ function MegaUpLogic.Activate()
         end
     end
 
-    -- ── EFECTOS AUDIOVISUALES: copiados 1:1 de activateMegaTurbo ────────────
-    -- Flash escalado en pantalla + boom sónico + aura + sonido.
-    -- Idénticos a Mega Turbo para coherencia visual, sin partículas físicas.
+    -- ── PASO 3: Efectos audiovisuales (flash escalado Mega Turbo + sonido) ───
+    -- MegaUp reutiliza EXACTAMENTE los mismos efectos que activateMegaTurbo
+    -- porque comparte la misma escala de aceleración. Esto también evita
+    -- duplicar código y mantiene la coherencia visual.
     playLocalSound(SFX_MEGA_TURBO, 0.90)
     sonicBoomEffect(2)
     airShockAura(2)
     speedWhiteFlash("turbo")
 
-    -- ── IMPULSO INICIAL INSTANTÁNEO ──────────────────────────────────────────
-    -- Aplicar la velocidad vertical de golpe en el frame de activación para
-    -- que la respuesta sea inmediata y no dependa del primer tick del loop.
+    -- ── PASO 4: Impulso inicial instantáneo ──────────────────────────────────
+    -- Mismo patrón que Turbo/Mega: aplicar velocidad en el frame de activación.
+    -- Factor 0.8 para que el primer frame no sea abrupto pero sí notorio.
     local char = lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if root then
-        root.AssemblyLinearVelocity = Vector3.new(0, BASE_SPEED * TURBO_MULT * 0.8, 0)
+    if root and flyanim.bv and flyanim.bv.Parent then
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.new(0, BASE_SPEED * TURBO_MULT * 0.8, 0)
+        end)
     end
 
-    -- ── ACTUALIZAR HUD ───────────────────────────────────────────────────────
+    -- ── PASO 5: Actualizar HUD ────────────────────────────────────────────────
     flyanim.megaTurboUpActive = true
     if flyanim.updateMode then flyanim.updateMode("megaup") end
 
-    -- ── LOOP DE MANTENIMIENTO (Heartbeat puro, sin partículas) ───────────────
-    -- Solo ajusta flyanim.speed para que el BodyVelocity del vuelo use la
-    -- velocidad de Mega Turbo mientras el jugador mantiene espacio.
-    -- Timeout de seguridad de 4 segundos.
+    -- ── PASO 6: Loop de mantenimiento (Heartbeat puro, sin partículas) ───────
+    -- Mantiene flyanim.speed en BASE_SPEED * TURBO_MULT mientras el loop vive.
+    -- Timeout de seguridad: 4 segundos máximo aunque se siga pulsando Espacio.
     local startT = os.clock()
     MegaUpLogic.LoopConn = RunService.Heartbeat:Connect(function()
-        -- Invalidación inmediata por token (flyOff u otra deactivación)
         if MegaUpLogic.Token ~= myToken then return end
         if not MegaUpLogic.Active or not flyanim.enabled then
             MegaUpLogic.Deactivate()
-            flyanim.megaTurboUpActive = false
             flyanim.speed = BASE_SPEED
             flyanim.mode  = "normal"
             if flyanim.updateMode then flyanim.updateMode("normal") end
@@ -3312,21 +3332,19 @@ function MegaUpLogic.Activate()
         end
         if os.clock() - startT > 4.0 then
             MegaUpLogic.Deactivate()
-            flyanim.megaTurboUpActive = false
             flyanim.speed = BASE_SPEED
             flyanim.mode  = "normal"
             if flyanim.updateMode then flyanim.updateMode("normal") end
             return
         end
-        -- Mantener la velocidad de Mega Turbo en el BodyVelocity del vuelo
+        -- Mantener velocidad de Mega Turbo en el BodyVelocity del vuelo
         if flyanim.bv and flyanim.bv.Parent then
             flyanim.speed = BASE_SPEED * TURBO_MULT
         end
     end)
 end
 
--- Wrapper de compatibilidad: mantiene la firma original que llaman
--- startMegaTurboUpListener y otros sitios del script.
+-- Wrapper de compatibilidad con el resto del script
 local function activateMegaTurboUp()
     MegaUpLogic.Activate()
 end
@@ -3936,13 +3954,14 @@ end
 
 local function _flyOn()
     local char = lplr.Character; if not char then return end
-    -- Cancelar caída épica al instante: desconectar landConn y limpiar estado
+    -- Cancelar EpicFall y cualquier estado de aterrizaje al instante
+    EpicFall.Disarm()   -- desconecta TouchConn y AnchorConn sin residuos
     if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
     stopLandingWatcher()
     flyanim.waitingLand = false
     flyanim.landingHeight = nil
     flyanim.landingVelocity = 0; flyanim.landingVelocityCapture = 0
-    -- CAMBIO SALVAJE: matar animación de caída épica si está corriendo
+    -- Matar animación de caída épica si está corriendo
     _landAnimToken = _landAnimToken + 1
     if _landBaseRef and pcall(function() _landBaseRef:Stop(0) end) then end
     if _landOverlayRef and pcall(function() _landOverlayRef:Stop(0) end) then end
@@ -4218,104 +4237,190 @@ local function _flyOn()
 end
 
 -- ============================================================
--- ANTI-REBOTE AL ATERRIZAR (omniAntiBounceLand)
+-- EPIC FALL — sistema de caída épica (reescritura completa)
 -- ============================================================
--- Zerear velocidad Y y alinear orientacion al detectar suelo.
--- NO usa PlatformStand ni BodyVelocity: ambos causan GettingUp
--- (TP hacia arriba) cuando se revierten mientras el personaje
--- esta en el suelo.
-local function omniAntiBounceLand(hrp, hum)
-    if not hrp or not hum then return end
+-- Arquitectura:
+--   • EpicFall.Arm(height, gravity)  — se llama desde _flyOff() con los
+--     datos leídos en ese momento. Registra la info pero no hace nada aún.
+--   • EpicFall.Disarm()              — limpia todo el estado. Se llama desde
+--     _flyOn() para garantizar que un fly rápido ON→OFF→ON no deja basura.
+--   • startLandingWatcher / stopLandingWatcher — detectan el impacto vía
+--     Touched en el HRP. Cuando ocurre, aplican el ancla CFrame y disparan
+--     las partículas desde spawnLandingEffects.
+--
+-- Detección de impacto:
+--   Se conecta HRP.Touched. Si el objeto tocado NO es parte del personaje
+--   (es suelo externo) se considera aterrizaje. Esto es robusto porque no
+--   depende del estado del Humanoid ni de raycasts con timing delicado.
+--
+-- Ancla CFrame:
+--   Al detectar el impacto se fuerza root.CFrame al suelo más cercano
+--   (raycast) con velocidad cero. Esto detiene al personaje en seco de
+--   forma limpia. El ancla dura el tiempo de no-animaciones definido por
+--   EPIC_FALL_ANCHOR_TIME y se cancela si el jugador salta o pulsa WASD
+--   con los pies en el suelo (sin cambio de distancia al suelo).
+--
+-- Partículas (shockwave):
+--   Se reutiliza spawnLandingEffects() tal cual. No se crean sistemas
+--   separados. La ventana de existencia es exactamente la duración del
+--   tween de la partícula más grande; pasada esa ventana no pueden
+--   aparecer nuevas (el token de EpicFall ya ha sido invalidado).
+-- ============================================================
 
-    -- Zerear velocidad Y para absorber el impacto. Conservar XZ.
-    pcall(function()
-        local v = hrp.AssemblyLinearVelocity
-        hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
-        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-    end)
+-- Tiempo que el ancla CFrame mantiene al personaje quieto (segundos)
+local EPIC_FALL_ANCHOR_TIME = 0.55
+-- Altura mínima para que se active el sistema (studs)
+local EPIC_FALL_MIN_HEIGHT  = 25
 
-    -- Alinear orientacion: eliminar pitch/roll residual del vuelo.
-    pcall(function()
-        local _, ry, _ = hrp.CFrame:ToOrientation()
-        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+local EpicFall = {
+    Armed       = false,   -- true cuando _flyOff lo activa
+    Token       = 0,       -- invalida cualquier coroutine al incrementar
+    Height      = 0,       -- altura de caída capturada en _flyOff
+    Gravity     = 0,       -- gravedad capturada en _flyOff
+    TouchConn   = nil,     -- conexión HRP.Touched
+    AnchorConn  = nil,     -- RunService para el ancla CFrame
+}
+
+function EpicFall.Disarm()
+    EpicFall.Armed  = false
+    EpicFall.Token  = EpicFall.Token + 1
+    EpicFall.Height = 0
+    EpicFall.Gravity = 0
+    if EpicFall.TouchConn  then EpicFall.TouchConn:Disconnect();  EpicFall.TouchConn  = nil end
+    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+end
+
+function EpicFall.Arm(height, gravity)
+    EpicFall.Disarm()
+    if height < EPIC_FALL_MIN_HEIGHT then return end
+    EpicFall.Armed   = true
+    EpicFall.Token   = EpicFall.Token + 1
+    EpicFall.Height  = height
+    EpicFall.Gravity = gravity
+    local myToken = EpicFall.Token
+
+    local char = lplr.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then EpicFall.Disarm(); return end
+
+    -- Conectar Touched en el HRP para detectar el primer contacto con suelo
+    EpicFall.TouchConn = hrp.Touched:Connect(function(hit)
+        -- Ignorar partes del propio personaje
+        if not hit or not hit.Parent then return end
+        if EpicFall.Token ~= myToken then return end
+        if not EpicFall.Armed then return end
+        local hitChar = hit:FindFirstAncestorOfClass("Model")
+        if hitChar == char then return end
+        -- Ignorar si fly volvió a estar activo
+        if flyanim.enabled then EpicFall.Disarm(); return end
+
+        -- ── Impacto detectado ─────────────────────────────────────────
+        EpicFall.Armed = false  -- evitar re-entrada
+        if EpicFall.TouchConn then EpicFall.TouchConn:Disconnect(); EpicFall.TouchConn = nil end
+
+        local capturedHeight = EpicFall.Height
+        local capturedToken  = myToken
+
+        task.spawn(function()
+            if EpicFall.Token ~= capturedToken then return end
+
+            -- Raycast para encontrar el suelo exacto bajo el HRP
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            rp.FilterDescendantsInstances = {char}
+            local hitResult = workspace:Raycast(hrp.Position, Vector3.new(0, -6, 0), rp)
+            local groundY = hrp.Position.Y
+            if hitResult then groundY = hitResult.Position.Y end
+
+            -- Ancho del personaje (mitad de su HRP para posicionar encima)
+            local hrpHalfHeight = hrp.Size.Y * 0.5
+            local anchorPos = Vector3.new(hrp.Position.X, groundY + hrpHalfHeight, hrp.Position.Z)
+            local _, ry, _  = hrp.CFrame:ToOrientation()
+            local anchorCF  = CFrame.new(anchorPos) * CFrame.Angles(0, ry, 0)
+
+            -- Aplicar ancla CFrame: fuerza al personaje al suelo en seco
+            pcall(function()
+                hrp.CFrame = anchorCF
+                hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+
+            -- Efectos de aterrizaje (partículas de shockwave)
+            spawnLandingEffects(hrp.Position, math.max(capturedHeight * 0.6, 30))
+
+            -- Mantener ancla CFrame durante EPIC_FALL_ANCHOR_TIME
+            -- Se cancela si: token cambia, fly se activa, jugador salta o
+            -- pulsa WASD mientras sus pies están en el suelo.
+            local anchorStart = os.clock()
+            local lastGroundY = groundY
+            EpicFall.AnchorConn = RunService.Heartbeat:Connect(function()
+                if EpicFall.Token ~= capturedToken then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si fly se reactivó
+                if flyanim.enabled then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si el jugador presiona salto
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Cancelar si el jugador pulsa WASD y la distancia al suelo no cambió
+                -- (está pisando firme, no saltando)
+                local anyMove = UserInputService:IsKeyDown(Enum.KeyCode.W)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.A)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.S)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.D)
+                if anyMove then
+                    -- Verificar que sigue en el suelo (distancia no cambió > 0.5)
+                    local rp2 = RaycastParams.new()
+                    rp2.FilterType = Enum.RaycastFilterType.Exclude
+                    rp2.FilterDescendantsInstances = {char}
+                    local hit2 = workspace:Raycast(hrp.Position, Vector3.new(0, -4, 0), rp2)
+                    local currentGroundY = hit2 and hit2.Position.Y or (hrp.Position.Y - 999)
+                    if math.abs(currentGroundY - lastGroundY) < 0.5 then
+                        -- Sigue en suelo → cancelar ancla para que pueda moverse
+                        if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                        return
+                    end
+                end
+                -- Cancelar por tiempo
+                if os.clock() - anchorStart >= EPIC_FALL_ANCHOR_TIME then
+                    if EpicFall.AnchorConn then EpicFall.AnchorConn:Disconnect(); EpicFall.AnchorConn = nil end
+                    return
+                end
+                -- Mantener ancla activa
+                pcall(function()
+                    hrp.CFrame = anchorCF
+                    hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+            end)
+        end)
     end)
 end
 
--- ============================================================
--- WATCHER DE IMPACTO INMINENTE (raycast hacia el suelo)
--- ============================================================
--- Se activa en _flyOff() cuando hay altura >= 10 studs.
--- Cada Heartbeat lanza un raycast hacia abajo SOLO cuando el
--- personaje cae (velY < -1); si detecta suelo aplica omniAntiBounceLand.
--- probeDistance: 2.0–4.5 studs según velocidad, evita falsos positivos.
-local _landingWatchConn = nil
+-- ── Stubs para compatibilidad con _flyOn / _flyOff / _charConn ───────────────
+-- startLandingWatcher / stopLandingWatcher se declaran al inicio como forward
+-- references. EpicFall las implementa.
+
+local _landingWatchConn  = nil   -- no usado por EpicFall pero requerido por otros paths
 local _landingWatchToken = 0
 
 stopLandingWatcher = function()
     _landingWatchToken = _landingWatchToken + 1
-    if _landingWatchConn then
-        _landingWatchConn:Disconnect()
-        _landingWatchConn = nil
-    end
+    if _landingWatchConn then _landingWatchConn:Disconnect(); _landingWatchConn = nil end
+    -- También desactivar EpicFall si estaba armado (por si se llama desde _flyOn)
+    EpicFall.Disarm()
 end
 
 startLandingWatcher = function()
-    stopLandingWatcher()
-    local myToken = _landingWatchToken
-
-    _landingWatchConn = RunService.Heartbeat:Connect(function()
-        if not flyanim.waitingLand then
-            stopLandingWatcher()
-            return
-        end
-        if _landingWatchToken ~= myToken then return end
-
-        local char = lplr.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum then return end
-
-        -- Sondear solo cuando el personaje está cayendo (velY <= -1).
-        -- Si velY es positivo o cercano a cero, el personaje no está aterrizando
-        -- todavía y activar omniAntiBounceLand causaría un TP hacia arriba.
-        local velY = hrp.AssemblyLinearVelocity.Y
-        if velY > -1 then return end  -- no activar cuando sube o está casi quieto
-        local probeDistance = math.clamp(math.abs(velY) * 0.08 + 2.0, 2.0, 4.5)
-
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        rp.FilterDescendantsInstances = {char}
-        local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
-
-        if hit then
-            stopLandingWatcher()
-
-            -- Limpiar cualquier motor residual del vuelo antes del anti-bounce.
-            -- Si quedó algún BodyForce/BodyGyro huérfano sigue empujando hacia arriba.
-            pcall(function()
-                for _, v in ipairs(hrp:GetChildren()) do
-                    if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
-                    or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
-                    or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
-                        v:Destroy()
-                    end
-                end
-            end)
-
-            -- Inhibir Animate antes del impacto para que doLanding controle la animación
-            local animScriptPre = char and char:FindFirstChild("Animate")
-            if animScriptPre then
-                pcall(function() animScriptPre.Disabled = true end)
-                task.delay(0.25, function()
-                    if not flyanim.waitingLand and animScriptPre and animScriptPre.Parent then
-                        pcall(function() animScriptPre.Disabled = false end)
-                    end
-                end)
-            end
-
-            omniAntiBounceLand(hrp, hum)
-        end
-    end)
+    -- EpicFall ya se armó en _flyOff vía EpicFall.Arm(); este stub se mantiene
+    -- para no romper la llamada en _flyOff que existe tras la lectura de altura.
+    -- No hace nada porque EpicFall.Arm() ya conectó Touched.
 end
 
 local function _flyOff()
@@ -4351,8 +4456,8 @@ local function _flyOff()
     heightTweenToken              = heightTweenToken + 1
 
     -- ── PASO 0C: Desconectar TODOS los sistemas en este mismo frame ──
-    -- CRITICO: Limpiar las posiciones de seguridad ANTES de desconectar,
-    -- para que aunque un guard corra un tick mas, no tenga posicion a la que devolver.
+    -- CRITICO: Limpiar las posiciones de seguridad ANTES de desconectar.
+    EpicFall.Disarm()   -- limpiar EpicFall anterior si volamos durante una caída
     flyanim.lastSafePos  = nil
     flyanim.lastSafeTime = 0
     flyanim.lastKnownPos = nil
@@ -4396,12 +4501,9 @@ local function _flyOff()
     -- Cancelar timers de gyroProtection que pudieran recrear motores post-apagado
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer); flyanim.gyroProtectionTimer = nil end
 
-    -- ── PASO 1: Medir altura antes de apagar ──
+    -- ── PASO 1: Medir altura y gravedad antes de apagar ──
     -- Limpiar compensación de altura INCONDICIONALMENTE al apagar el vuelo.
-    -- Esto cubre el caso edge donde una animación de combo/turbo modifica C0
-    -- y el fly se apaga mientras corre: sin esto el personaje queda con el
-    -- offset de altura aplicado permanentemente.
-    heightTweenToken = heightTweenToken + 1   -- cancelar tweens de altura en curso
+    heightTweenToken = heightTweenToken + 1
     clearC0Desired()
     detenerWatchdogAltura()
     if flyanim.rootJoint and flyanim.originalC0 then
@@ -4409,13 +4511,14 @@ local function _flyOff()
     end
 
     local heightFromGround = 0
+    local gravityNow       = workspace.Gravity
     if char then
         local root = char:FindFirstChild("HumanoidRootPart")
         if root then
             local rp = RaycastParams.new()
             rp.FilterType = Enum.RaycastFilterType.Exclude
             rp.FilterDescendantsInstances = {char}
-            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -500, 0), rp)
+            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -2000, 0), rp)
             if rayResult then
                 heightFromGround = root.Position.Y - rayResult.Position.Y
             else
@@ -4424,6 +4527,8 @@ local function _flyOff()
         end
     end
     flyanim.landingHeight = heightFromGround
+    -- Limpiar EpicFall anterior antes de rearmar
+    EpicFall.Disarm()
 
     -- ── PASO 2: Marcar sistema como desactivado ──
     flyanim.enabled   = false
@@ -4571,80 +4676,45 @@ local function _flyOff()
     local capturedHeight   = flyanim.landingHeight
     local capturedVelocity = math.max(flyanim.landingVelocity, flyanim.landingVelocityCapture)
 
+    -- Caída muy corta (<10): restaurar sin efectos especiales
     if capturedHeight < 10 then
         local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
         if hum then
-            -- GettingUp ya fue deshabilitado arriba; re-habilitarlo ahora que
-            -- PlatformStand ya es false y no puede causar el rebote hacia arriba.
             hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
             hum.PlatformStand = false
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
         flyanim.landingHeight = nil
+        -- EpicFall no se arma para caídas cortas
         return
     end
 
-    -- FIX BUG PRINCIPAL: Reactivar animScript INMEDIATAMENTE para que las animaciones
-    -- normales (caída libre, etc.) aparezcan durante el freefall ANTES de aterrizar.
-    -- Antes solo se reactivaba en doLanding() → el personaje caía completamente sin animaciones.
-    -- doLanding() lo desactivará temporalmente para la secuencia épica y lo vuelve a activar.
+    -- ── Reactivar Animate para caída libre normal ──────────────────────────────
     do
         local animScriptEarly = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScriptEarly then
             animScriptEarly.Disabled = false
-            flyanim.animScript = animScriptEarly  -- doLanding() necesita esta referencia
+            flyanim.animScript = animScriptEarly
         end
     end
 
-    flyanim.waitingLand = true
-    if flyanim.landConn then flyanim.landConn:Disconnect() end
-    startLandingWatcher()
-
-    local function finalizarAterrizaje(newState)
-        if not flyanim.waitingLand then return end
-        flyanim.waitingLand = false
-        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-        if newState ~= Enum.HumanoidStateType.Dead then
-            flyanim.landingHeight   = capturedHeight
-            flyanim.landingVelocity = capturedVelocity
-            flyanim.landingVelocityCapture = capturedVelocity
-            doLanding(lplr.Character)
-        else
-            local deadChar = lplr.Character
-            local animSc = deadChar and deadChar:FindFirstChild("Animate") or flyanim.animScript
-            if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-            flyanim.landingHeight = nil
-        end
-    end
-
-    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
-        if not flyanim.waitingLand then
-            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-            return
-        end
-        if newState == Enum.HumanoidStateType.Landed
-        or newState == Enum.HumanoidStateType.Running
-        or newState == Enum.HumanoidStateType.RunningNoPhysics
-        or newState == Enum.HumanoidStateType.Dead then
-            finalizarAterrizaje(newState)
-        end
-    end)
-
-    -- Timeout de seguridad: si en 10 segundos no aterriza, forzar restauracion
-    task.delay(10, function()
-        if not flyanim.waitingLand then return end
-        flyanim.waitingLand = false
-        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
-        local animSc = lplr.Character and lplr.Character:FindFirstChild("Animate") or flyanim.animScript
-        if animSc then animSc.Disabled = false; flyanim.animScript = nil end
-        local humFinal = lplr.Character and lplr.Character:FindFirstChildOfClass("Humanoid")
-        if humFinal and humFinal.Parent then
-            humFinal.PlatformStand = false
-            pcall(function() humFinal:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    -- ── Armar EpicFall si la altura es suficiente ────────────────────────────
+    -- EpicFall detecta el impacto via HRP.Touched, aplica el ancla CFrame
+    -- al suelo y lanza las partículas. No usa StateChanged ni landConn.
+    if capturedHeight >= EPIC_FALL_MIN_HEIGHT then
+        EpicFall.Arm(capturedHeight, gravityNow)
+    else
+        -- Caída corta: solo restaurar estado sin efectos especiales
+        local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+        if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum.PlatformStand = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
         end
         flyanim.landingHeight = nil
-    end)
+    end
 end
 
 -- ============================================================
@@ -4927,6 +4997,7 @@ local function _connectGlobal()
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
+        EpicFall.Disarm()
         stopAnimBlockLoop(); stopTeleportGuard()
         detenerWatchdogAltura()
         if flyanim.turboRenderConn  then flyanim.turboRenderConn:Disconnect();  flyanim.turboRenderConn=nil end
