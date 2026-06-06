@@ -1,4 +1,4 @@
-print("version 1.72")
+print("version 1.74")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -1703,6 +1703,7 @@ local MOTOR_RESET_COOLDOWN = 0.5   -- no más de un reset cada 0.5s
 -- destruye y recrea los body movers en el mismo frame, restaurando el estado
 -- de Physics sin que el jugador note ningún parpadeo ni interrupción.
 local function silentMotorReset()
+    if not flyanim.enabled then return end  -- FIX: no resetear si el vuelo ya está apagado
     local now = tick()
     if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
     lastMotorReset = now
@@ -1749,6 +1750,7 @@ local function silentMotorReset()
 end
 
 local function _flyMakeMotors()
+    if not flyanim.enabled then return end  -- FIX: no crear motores si el vuelo está apagado
     local char = lplr.Character; if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     local hum  = char:FindFirstChildOfClass("Humanoid")
@@ -2382,7 +2384,6 @@ local function spawnLandingEffects(position, velocity)
             TweenService:Create(p, TweenInfo.new(smokeDuration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = Vector3.new(peakSize, peakSize, 0.05)}):Play()
 
-            -- FIX: Completado el código truncado y añadida la destrucción de la partícula
             local fadeTween1 = TweenService:Create(img, TweenInfo.new(smokeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1})
             fadeTween1:Play()
 
