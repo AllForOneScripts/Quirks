@@ -1,4 +1,4 @@
-print("version 1.91")
+print("version 1.67")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -3778,8 +3778,9 @@ local function _flyOn()
             local totalMag = root.AssemblyLinearVelocity.Magnitude
             if not isnan(totalMag) then
                 flyanim.landingVelocity = math.abs(velY)
-                if totalMag > (flyanim.landingVelocityCapture or 0) then
-                    flyanim.landingVelocityCapture = totalMag
+                local effectiveMag = math.max(math.abs(velY), totalMag)
+                if effectiveMag > (flyanim.landingVelocityCapture or 0) then
+                    flyanim.landingVelocityCapture = effectiveMag
                 end
             end
         end
@@ -3809,8 +3810,7 @@ local _landingWatchConn  = nil
 local _landingWatchToken = 0
 
 stopLandingWatcher = function()
-    _landingWatchToken = _
-_landingWatchToken = _landingWatchToken + 1
+    _landingWatchToken = _landingWatchToken + 1
     if _landingWatchConn then
         _landingWatchConn:Disconnect()
         _landingWatchConn = nil
@@ -4148,8 +4148,8 @@ local function _flyOff()
         -- BUG 11 / 21 / 38: Verificar que el personaje no cambió (respawn)
         if lplr.Character ~= charCurrent then
             flyanim.waitingLand = false
+            local animSc = charCurrent and charCurrent:FindFirstChild("Animate")
             flyanim.animScript = nil
-            local animSc = charCurrent and (charCurrent:FindFirstChild("Animate") or flyanim.animScript)
             if animSc then pcall(function() animSc.Disabled = false end) end
             flyanim.landingHeight = nil
             return
@@ -4204,6 +4204,57 @@ end
 -- ============================================================
 -- EVENTOS GLOBALES
 -- ============================================================
+
+local function handleQPress()
+    if not flyanim.enabled then return end
+    if isTyping() then return end
+    local now = tick()
+    if now - flyanim.qLastPress < 0.3 then
+        if flyanim.mode == "turbo" then
+            flyanim.mode  = "normal"
+            flyanim.speed = BASE_SPEED
+            flyanim.qLastPress = 0
+            if flyanim.updateMode then flyanim.updateMode("normal") end
+            if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
+            stopParticleEmitter()
+            detenerPoseMega()
+            detenerPoseTurbo()
+            flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+            restaurarC0Inmediato()
+            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+            iniciarCicloNormal(flyanim._normalPlayId)
+        elseif flyanim.mode == "fast" or flyanim.mode == "normal" then
+            flyanim.mode  = "turbo"
+            flyanim.speed = BASE_SPEED * TURBO_MULT
+            flyanim.qLastPress = 0
+            if flyanim.updateMode then flyanim.updateMode("turbo") end
+            if flyanim.noclipMegaEnabled then setNoclip(true) end
+            detenerPoseTurbo()
+            iniciarPoseMega()
+            startParticleEmitter()
+            playLocalSound(SFX_MEGA_TURBO, 0.85)
+            sonicBoomEffect(2)
+            airShockAura(2)
+            speedWhiteFlash("turbo")
+        end
+        flyanim.qLastPress = 0
+        return
+    end
+    if flyanim.mode == "normal" then
+        flyanim.mode  = "fast"
+        flyanim.speed = BASE_SPEED * FAST_MULT
+        if flyanim.updateMode then flyanim.updateMode("fast") end
+        if not flyanim.turboPreImpulsoActivo then
+            iniciarPoseTurbo()
+            startParticleEmitter()
+            playLocalSound(SFX_TURBO, 0.85)
+            sonicBoomEffect(1)
+            airShockAura(1)
+            speedWhiteFlash("fast")
+        end
+    end
+    flyanim.qLastPress = now
+end
 
 local _inputConn     = nil
 local _inputConn_End = nil
