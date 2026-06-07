@@ -5,7 +5,7 @@
 -- Mantiene la misma interfaz que el monolítico original para compatibilidad.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-print("version 1.66")   -- Versión del módulo, igual que en el original
+print("version 1.80")   -- Versión del módulo, igual que en el original
 
 -- ============================================================
 -- CARGAR SUBMÓDULOS
