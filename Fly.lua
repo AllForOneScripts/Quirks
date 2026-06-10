@@ -3383,43 +3383,54 @@ local function _flyBuildGui()
     _reloadFT()
     _flyDestroyGui()
 
-    local C_PURPLE  = Color3.fromRGB(110, 30, 180)
-    local C_DIM     = Color3.fromRGB(40,   6,  72)
-    local C_BLACK   = Color3.fromRGB(6,    4,  12)
+    -- ── Palette ───────────────────────────────────────────────────
+    local C_PURPLE  = Color3.fromRGB(110,  30, 180)
+    local C_BLACK   = Color3.fromRGB(6,     4,  12)
     local C_ACCENT  = Color3.fromRGB(160,  60, 255)
     local C_TEXT    = Color3.fromRGB(255, 255, 255)
-    local C_SUBTEXT = Color3.fromRGB(200, 175, 230)
+    local C_SUBTEXT = Color3.fromRGB(190, 160, 220)
     local C_GREEN   = Color3.fromRGB(80,  255, 150)
     local C_YELLOW  = Color3.fromRGB(255, 220,  60)
     local C_RED     = Color3.fromRGB(255,  80,  80)
     local C_CYAN    = Color3.fromRGB(80,  200, 255)
     local C_GOLD    = Color3.fromRGB(255, 220,  80)
+    -- Gradient: top section lightest purple → bottom darkest
+    local C_SEC1    = Color3.fromRGB(55,  20, 100)   -- LOCK    (más claro)
+    local C_SEC2    = Color3.fromRGB(38,  12,  72)   -- NOCLIP  (medio)
+    local C_SEC3    = Color3.fromRGB(22,   7,  50)   -- SPEED   (más oscuro)
 
-    -- Layout constants
+    -- ── Layout ───────────────────────────────────────────────────
     local W        = 280
     local H_MINI   = 48
     local DOT_SIZE = 10
     local PAD      = 10
+    local ROW_H    = 22   -- altura uniforme de todas las filas
+    local TOGGLE_W = 36   -- ancho del toggle switch
 
-    -- expandZone rows: lock(34) + noclip(90) + speed(110) + spacer(8)*3 + toppad(8) + botpad(8)
-    local CONTENT_H = 8 + 34 + 8 + 90 + 8 + 110 + 8
-    local H_FULL    = H_MINI + CONTENT_H + 6
+    -- Alturas de sección calculadas desde las filas que contienen
+    -- LOCK:  1 fila de datos                             = PAD(8) + ROW_H + PAD(8)  = 38
+    -- NOCLIP: título(20) + 3 filas de toggle             = 8+20+4 + 3*(ROW_H+4) + 8 = 118
+    -- SPEED:  3 filas input + limits hint + reset btn    = 8 + 3*(ROW_H+6) + 12 + 28 + 8 = 140
+    local H_LOCK   = 38
+    local H_NOCLIP = 8 + 20 + 4 + 3*(ROW_H + 4) + 8
+    local H_SPEED  = 8 + 3*(ROW_H + 6) + 14 + 28 + 8
+    local CONTENT_H = H_LOCK + 6 + H_NOCLIP + 6 + H_SPEED + 8
+    local H_FULL   = H_MINI + 4 + CONTENT_H + 6
 
     local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
+    -- ── ScreenGui + root ─────────────────────────────────────────
     local sg = Instance.new("ScreenGui")
     sg.Name = "AFO_FlyHUD"; sg.ResetOnSpawn = false
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     sg.IgnoreGuiInset = true; sg.Parent = CoreGui
     flyanim.gui = sg
 
-    -- Root container
     local root = Instance.new("Frame", sg)
     root.Size = UDim2.new(0, W, 0, H_FULL)
     root.Position = UDim2.new(0.5, -W/2, 0, 6)
     root.BackgroundTransparency = 1; root.BorderSizePixel = 0
 
-    -- Background panel (full height, clipped)
     local panel = Instance.new("Frame", root)
     panel.Size = UDim2.new(1, 0, 0, H_MINI)
     panel.BackgroundColor3 = C_BLACK
@@ -3428,53 +3439,41 @@ local function _flyBuildGui()
     local stroke = Instance.new("UIStroke", panel)
     stroke.Color = C_PURPLE; stroke.Thickness = 1.2; stroke.Transparency = 0.75
 
-    -- ── Top bar (header) ─────────────────────────────────────────
+    -- ── Header ───────────────────────────────────────────────────
     local topBar = Instance.new("Frame", panel)
     topBar.Size = UDim2.new(1, 0, 0, H_MINI)
     topBar.Position = UDim2.new(0, 0, 0, 0)
     topBar.BackgroundTransparency = 1
 
-    -- Rocket icon (left)
     local iconLbl = Instance.new("TextLabel", topBar)
-    iconLbl.Size = UDim2.new(0, 26, 1, 0); iconLbl.Position = UDim2.new(0, PAD, 0, 0)
+    iconLbl.Size = UDim2.new(0, 22, 1, 0); iconLbl.Position = UDim2.new(0, PAD, 0, 0)
     iconLbl.BackgroundTransparency = 1; iconLbl.Font = Enum.Font.Legacy
     iconLbl.TextSize = 18; iconLbl.TextColor3 = C_ACCENT
     iconLbl.Text = "🚀"; iconLbl.TextXAlignment = Enum.TextXAlignment.Center
     iconLbl.TextYAlignment = Enum.TextYAlignment.Center
 
-    -- Title label (fly name + key)
     local titleLbl = Instance.new("TextLabel", topBar)
-    titleLbl.Size = UDim2.new(0, 90, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 30, 0, 0)
+    titleLbl.Size = UDim2.new(0, 86, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 26, 0, 0)
     titleLbl.BackgroundTransparency = 1; titleLbl.Font = Enum.Font.GothamBold
     titleLbl.TextSize = 12; titleLbl.TextColor3 = C_TEXT
     titleLbl.Text = FT.fly_title .. "  [" .. flyanim.flyKey.Name .. "]"
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
     titleLbl.TextYAlignment = Enum.TextYAlignment.Center
 
-    -- Separator
     local sep = Instance.new("Frame", topBar)
-    sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, PAD + 126, 0.5, -11)
+    sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, PAD + 118, 0.5, -11)
     sep.BackgroundColor3 = C_PURPLE; sep.BackgroundTransparency = 0.4
 
-    -- Mode icon (separate emoji so font can be Legacy)
-    local modeIconLbl = Instance.new("TextLabel", topBar)
-    modeIconLbl.Size = UDim2.new(0, 22, 1, 0); modeIconLbl.Position = UDim2.new(0, PAD + 134, 0, 0)
-    modeIconLbl.BackgroundTransparency = 1; modeIconLbl.Font = Enum.Font.Legacy
-    modeIconLbl.TextSize = 14; modeIconLbl.TextColor3 = C_GREEN
-    modeIconLbl.Text = "🚀"; modeIconLbl.TextXAlignment = Enum.TextXAlignment.Center
-    modeIconLbl.TextYAlignment = Enum.TextYAlignment.Center
-
-    -- Mode text label
+    -- Mode label only (no emoji in header mode area)
     local modeLbl = Instance.new("TextLabel", topBar)
-    modeLbl.Size = UDim2.new(1, -(PAD + 134 + 22 + DOT_SIZE + 18), 1, 0)
-    modeLbl.Position = UDim2.new(0, PAD + 134 + 26, 0, 0)
+    modeLbl.Size = UDim2.new(1, -(PAD + 118 + 8 + DOT_SIZE + 18), 1, 0)
+    modeLbl.Position = UDim2.new(0, PAD + 126, 0, 0)
     modeLbl.BackgroundTransparency = 1; modeLbl.Font = Enum.Font.GothamBold
     modeLbl.TextSize = 12; modeLbl.TextColor3 = C_GREEN
     modeLbl.Text = FT.mode_normal
-    modeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    modeLbl.TextXAlignment = Enum.TextXAlignment.Center
     modeLbl.TextYAlignment = Enum.TextYAlignment.Center
 
-    -- Expand dot button (far right)
     local dotBtn = Instance.new("TextButton", topBar)
     dotBtn.Size = UDim2.new(0, DOT_SIZE + 10, 1, 0)
     dotBtn.Position = UDim2.new(1, -(DOT_SIZE + 14), 0, 0)
@@ -3485,56 +3484,86 @@ local function _flyBuildGui()
     dot.BackgroundColor3 = C_ACCENT
     Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-    -- ── Expand zone: positioned strictly BELOW the header ────────
+    -- ── Expand zone (below header) ────────────────────────────────
     local expandZone = Instance.new("Frame", panel)
-    expandZone.Size = UDim2.new(1, -2*PAD+4, 0, CONTENT_H)
+    expandZone.Size = UDim2.new(1, -2*PAD + 4, 0, CONTENT_H)
     expandZone.Position = UDim2.new(0, PAD - 2, 0, H_MINI + 4)
-    expandZone.BackgroundColor3 = C_DIM; expandZone.BackgroundTransparency = 0.3
+    expandZone.BackgroundTransparency = 1
     expandZone.BorderSizePixel = 0; expandZone.Visible = false
-    Instance.new("UICorner", expandZone).CornerRadius = UDim.new(0, 8)
-    local exStroke = Instance.new("UIStroke", expandZone)
-    exStroke.Color = C_PURPLE; exStroke.Thickness = 1; exStroke.Transparency = 0.55
 
-    -- UIListLayout drives all sections in expandZone
     local layout = Instance.new("UIListLayout", expandZone)
     layout.Padding = UDim.new(0, 6)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     layout.VerticalAlignment = Enum.VerticalAlignment.Top
-    Instance.new("UIPadding", expandZone).PaddingTop    = UDim.new(0, 8)
 
-    -- Section factory
-    local function makeSection(h, bgColor)
+    -- Section factory with per-section gradient color
+    local function makeSection(h, bgColor, strokeColor)
         local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, -8, 0, h)
-        f.BackgroundColor3 = bgColor or Color3.fromRGB(30, 10, 50)
-        f.BackgroundTransparency = 0.25; f.BorderSizePixel = 0
-        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+        f.Size = UDim2.new(1, 0, 0, h)
+        f.BackgroundColor3 = bgColor; f.BackgroundTransparency = 0.15
+        f.BorderSizePixel = 0
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 7)
         local s = Instance.new("UIStroke", f)
-        s.Color = C_ACCENT; s.Thickness = 1; s.Transparency = 0.6
+        s.Color = strokeColor or C_ACCENT; s.Thickness = 1; s.Transparency = 0.55
         return f
     end
 
-    -- ── LOCK section ─────────────────────────────────────────────
-    local lockSec = makeSection(34); lockSec.Parent = expandZone
+    -- Helper: row container inside a section, uniform height
+    local function makeRow(parent, yPos)
+        local row = Instance.new("Frame", parent)
+        row.Size = UDim2.new(1, -16, 0, ROW_H)
+        row.Position = UDim2.new(0, 8, 0, yPos)
+        row.BackgroundTransparency = 1
+        return row
+    end
 
-    local lockIconEmoji = Instance.new("TextLabel", lockSec)
-    lockIconEmoji.Size = UDim2.new(0, 20, 1, 0); lockIconEmoji.Position = UDim2.new(0, 8, 0, 0)
+    -- Helper: left-aligned text label inside a row
+    local function rowLabel(row, text, font, size, color, xOffset)
+        local lbl = Instance.new("TextLabel", row)
+        lbl.Size = UDim2.new(1, -(TOGGLE_W + 14 + (xOffset or 0)), 1, 0)
+        lbl.Position = UDim2.new(0, xOffset or 0, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = font or Enum.Font.Gotham
+        lbl.TextSize = size or 10; lbl.TextColor3 = color or C_TEXT
+        lbl.Text = text
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextYAlignment = Enum.TextYAlignment.Center
+        return lbl
+    end
+
+    -- Helper: right-aligned toggle inside a row
+    local function rowToggle(row, initialState, onChange)
+        local xPos = row.Size.X.Scale == 1
+            and (W - 2*PAD + 4 - 16 - TOGGLE_W)  -- absolute fallback
+            or  (W - 2*PAD - 16 - TOGGLE_W - 8)
+        createToggle(row, row.AbsoluteSize.X > 0
+            and (row.AbsoluteSize.X - TOGGLE_W - 2)
+            or  (W - 52), 2, initialState, onChange)
+    end
+
+    -- ── LOCK section (gradient top = lightest) ────────────────────
+    local lockSec = makeSection(H_LOCK, C_SEC1, C_ACCENT)
+    lockSec.Parent = expandZone
+
+    local lockRow = makeRow(lockSec, (H_LOCK - ROW_H) / 2)
+    local lockIconEmoji = Instance.new("TextLabel", lockRow)
+    lockIconEmoji.Size = UDim2.new(0, 18, 1, 0); lockIconEmoji.Position = UDim2.new(0, 0, 0, 0)
     lockIconEmoji.BackgroundTransparency = 1; lockIconEmoji.Font = Enum.Font.Legacy
-    lockIconEmoji.TextSize = 14; lockIconEmoji.TextColor3 = C_GOLD
+    lockIconEmoji.TextSize = 13; lockIconEmoji.TextColor3 = C_GOLD
     lockIconEmoji.Text = "🎯"; lockIconEmoji.TextXAlignment = Enum.TextXAlignment.Center
     lockIconEmoji.TextYAlignment = Enum.TextYAlignment.Center
 
-    local lockLabel = Instance.new("TextLabel", lockSec)
-    lockLabel.Size = UDim2.new(0, 90, 1, 0); lockLabel.Position = UDim2.new(0, 34, 0, 0)
+    local lockLabel = Instance.new("TextLabel", lockRow)
+    lockLabel.Size = UDim2.new(0, 100, 1, 0); lockLabel.Position = UDim2.new(0, 22, 0, 0)
     lockLabel.BackgroundTransparency = 1; lockLabel.Font = Enum.Font.GothamBold
     lockLabel.TextSize = 11; lockLabel.TextColor3 = C_TEXT
     lockLabel.Text = FT.lock_label .. "  [" .. flyanim.lockKey.Name .. "]"
     lockLabel.TextXAlignment = Enum.TextXAlignment.Left
     lockLabel.TextYAlignment = Enum.TextYAlignment.Center
 
-    local lockHint = Instance.new("TextLabel", lockSec)
-    lockHint.Size = UDim2.new(1, -130, 1, 0); lockHint.Position = UDim2.new(0, 126, 0, 0)
+    local lockHint = Instance.new("TextLabel", lockRow)
+    lockHint.Size = UDim2.new(1, -128, 1, 0); lockHint.Position = UDim2.new(0, 124, 0, 0)
     lockHint.BackgroundTransparency = 1; lockHint.Font = Enum.Font.Gotham
     lockHint.TextSize = 9; lockHint.TextColor3 = C_SUBTEXT
     lockHint.Text = FT.lock_hint_prefix .. flyanim.lockKey.Name
@@ -3542,83 +3571,115 @@ local function _flyBuildGui()
     lockHint.TextYAlignment = Enum.TextYAlignment.Center
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
-    -- ── NOCLIP section ───────────────────────────────────────────
-    local noclipSec = makeSection(90); noclipSec.Parent = expandZone
+    -- ── NOCLIP section (gradient mid) ────────────────────────────
+    local noclipSec = makeSection(H_NOCLIP, C_SEC2, C_PURPLE)
+    noclipSec.Parent = expandZone
 
+    -- Title row
     local noclipTitleEmoji = Instance.new("TextLabel", noclipSec)
-    noclipTitleEmoji.Size = UDim2.new(0, 20, 0, 18); noclipTitleEmoji.Position = UDim2.new(0, 8, 0, 6)
+    noclipTitleEmoji.Size = UDim2.new(0, 18, 0, 20); noclipTitleEmoji.Position = UDim2.new(0, 8, 0, 8)
     noclipTitleEmoji.BackgroundTransparency = 1; noclipTitleEmoji.Font = Enum.Font.Legacy
     noclipTitleEmoji.TextSize = 13; noclipTitleEmoji.TextColor3 = C_TEXT
     noclipTitleEmoji.Text = "👻"; noclipTitleEmoji.TextXAlignment = Enum.TextXAlignment.Center
     noclipTitleEmoji.TextYAlignment = Enum.TextYAlignment.Center
 
     local noclipTitle = Instance.new("TextLabel", noclipSec)
-    noclipTitle.Size = UDim2.new(1, -36, 0, 18); noclipTitle.Position = UDim2.new(0, 34, 0, 6)
+    noclipTitle.Size = UDim2.new(1, -32, 0, 20); noclipTitle.Position = UDim2.new(0, 30, 0, 8)
     noclipTitle.BackgroundTransparency = 1; noclipTitle.Font = Enum.Font.GothamBold
     noclipTitle.TextSize = 11; noclipTitle.TextColor3 = C_TEXT
     noclipTitle.Text = FT.noclip_title
     noclipTitle.TextXAlignment = Enum.TextXAlignment.Left
     noclipTitle.TextYAlignment = Enum.TextYAlignment.Center
 
-    local function makeNoclipRow(parent, yPos, labelText, initialState, onChange)
-        local row = Instance.new("Frame", parent)
-        row.Size = UDim2.new(1, -16, 0, 22); row.Position = UDim2.new(0, 8, 0, yPos)
+    -- 3 toggle rows, evenly spaced, toggle pinned to right edge
+    local NOCLIP_ROW_START = 8 + 20 + 4   -- after title
+    local NOCLIP_ROW_STEP  = ROW_H + 4
+
+    local function makeNoclipRow(yPos, labelText, initialState, onChange)
+        local row = Instance.new("Frame", noclipSec)
+        row.Size = UDim2.new(1, -16, 0, ROW_H); row.Position = UDim2.new(0, 8, 0, yPos)
         row.BackgroundTransparency = 1
         local lbl = Instance.new("TextLabel", row)
-        lbl.Size = UDim2.new(1, -44, 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+        lbl.Size = UDim2.new(1, -(TOGGLE_W + 8), 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
-        lbl.Text = labelText; lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = labelText
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        createToggle(row, 196, 2, initialState, onChange)
-        return row
+        -- toggle right-aligned: anchor at (rowWidth - TOGGLE_W - 4)
+        -- rowWidth = (W - 2*PAD + 4) - 16 = 280 - 20 + 4 - 16 = 248
+        createToggle(row, 248 - TOGGLE_W - 4, (ROW_H - 18) / 2, initialState, onChange)
     end
 
-    makeNoclipRow(noclipSec, 26, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
-    makeNoclipRow(noclipSec, 50, FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
+    makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
+    makeNoclipRow(NOCLIP_ROW_START + 1*NOCLIP_ROW_STEP, FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
 
+    -- Mega row (has leading emoji + text, same toggle position)
+    local megaYPos = NOCLIP_ROW_START + 2*NOCLIP_ROW_STEP
     local megaRow = Instance.new("Frame", noclipSec)
-    megaRow.Size = UDim2.new(1, -16, 0, 22); megaRow.Position = UDim2.new(0, 8, 0, 64)
+    megaRow.Size = UDim2.new(1, -16, 0, ROW_H); megaRow.Position = UDim2.new(0, 8, 0, megaYPos)
     megaRow.BackgroundTransparency = 1
     local megaEmojiLbl = Instance.new("TextLabel", megaRow)
-    megaEmojiLbl.Size = UDim2.new(0, 18, 1, 0); megaEmojiLbl.Position = UDim2.new(0, 0, 0, 0)
+    megaEmojiLbl.Size = UDim2.new(0, 16, 1, 0); megaEmojiLbl.Position = UDim2.new(0, 0, 0, 0)
     megaEmojiLbl.BackgroundTransparency = 1; megaEmojiLbl.Font = Enum.Font.Legacy
     megaEmojiLbl.TextSize = 12; megaEmojiLbl.TextColor3 = C_CYAN
     megaEmojiLbl.Text = "🚅"; megaEmojiLbl.TextXAlignment = Enum.TextXAlignment.Center
     megaEmojiLbl.TextYAlignment = Enum.TextYAlignment.Center
     local megaLabel = Instance.new("TextLabel", megaRow)
-    megaLabel.Size = UDim2.new(1, -62, 1, 0); megaLabel.Position = UDim2.new(0, 22, 0, 0)
+    megaLabel.Size = UDim2.new(1, -(TOGGLE_W + 8 + 20), 1, 0); megaLabel.Position = UDim2.new(0, 20, 0, 0)
     megaLabel.BackgroundTransparency = 1; megaLabel.Font = Enum.Font.Gotham
     megaLabel.TextSize = 10; megaLabel.TextColor3 = C_TEXT
-    megaLabel.Text = FT.noclip_mega; megaLabel.TextXAlignment = Enum.TextXAlignment.Left
+    megaLabel.Text = FT.noclip_mega
+    megaLabel.TextXAlignment = Enum.TextXAlignment.Left
     megaLabel.TextYAlignment = Enum.TextYAlignment.Center
-    createToggle(megaRow, 196, 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
+    createToggle(megaRow, 248 - TOGGLE_W - 4, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
 
-    -- ── SPEED section ────────────────────────────────────────────
-    local speedSec = makeSection(110, Color3.fromRGB(25, 12, 55)); speedSec.Parent = expandZone
-    local speedStroke = Instance.new("UIStroke", speedSec)
-    speedStroke.Color = C_PURPLE; speedStroke.Thickness = 1; speedStroke.Transparency = 0.6
+    -- ── SPEED section (gradient bottom = darkest) ─────────────────
+    local speedSec = makeSection(H_SPEED, C_SEC3, C_PURPLE)
+    speedSec.Parent = expandZone
 
-    local function makeSpeedRow(emojiText, labelText, yPos, defaultVal, minVal, maxVal)
+    -- makeSpeedRow: emoji | label | [input box] with limits hint below
+    local SPEED_ROW_START = 8
+    local SPEED_ROW_STEP  = ROW_H + 6
+
+    local function makeSpeedRow(emojiText, labelText, rowIdx, defaultVal, minVal, maxVal)
+        local yTop = SPEED_ROW_START + rowIdx * SPEED_ROW_STEP
+
         local emojiLbl = Instance.new("TextLabel", speedSec)
-        emojiLbl.Size = UDim2.new(0, 20, 0, 20); emojiLbl.Position = UDim2.new(0, 8, 0, yPos)
+        emojiLbl.Size = UDim2.new(0, 18, 0, ROW_H); emojiLbl.Position = UDim2.new(0, 8, 0, yTop)
         emojiLbl.BackgroundTransparency = 1; emojiLbl.Font = Enum.Font.Legacy; emojiLbl.TextSize = 13
         emojiLbl.TextColor3 = C_ACCENT
         emojiLbl.Text = emojiText; emojiLbl.TextXAlignment = Enum.TextXAlignment.Center
         emojiLbl.TextYAlignment = Enum.TextYAlignment.Center
+
         local lbl = Instance.new("TextLabel", speedSec)
-        lbl.Size = UDim2.new(0, 72, 0, 20); lbl.Position = UDim2.new(0, 32, 0, yPos)
+        lbl.Size = UDim2.new(0, 76, 0, ROW_H); lbl.Position = UDim2.new(0, 30, 0, yTop)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
         lbl.Text = labelText; lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
+
+        -- Input box (right half)
+        local BOX_X    = 112
+        local BOX_W    = W - 2*PAD + 4 - 16 - BOX_X - 8  -- fills remaining width
         local box = Instance.new("TextBox", speedSec)
-        box.Size = UDim2.new(1, -116, 0, 20); box.Position = UDim2.new(0, 108, 0, yPos)
-        box.BackgroundColor3 = Color3.fromRGB(18, 6, 32); box.BackgroundTransparency = 0.05
+        box.Size = UDim2.new(0, BOX_W, 0, ROW_H); box.Position = UDim2.new(0, BOX_X, 0, yTop)
+        box.BackgroundColor3 = Color3.fromRGB(15, 5, 28); box.BackgroundTransparency = 0.05
         box.BorderSizePixel = 0; box.Font = Enum.Font.GothamBold; box.TextSize = 11
         box.TextColor3 = C_TEXT; box.Text = tostring(defaultVal); box.ClearTextOnFocus = true
-        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-        local bs = Instance.new("UIStroke", box); bs.Color = C_ACCENT; bs.Thickness = 1; bs.Transparency = 0.55
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+        local bs = Instance.new("UIStroke", box); bs.Color = C_ACCENT; bs.Thickness = 1; bs.Transparency = 0.5
+
+        -- Limits hint (small, below right side of row)
+        local limitsLbl = Instance.new("TextLabel", speedSec)
+        limitsLbl.Size = UDim2.new(0, BOX_W, 0, 11)
+        limitsLbl.Position = UDim2.new(0, BOX_X, 0, yTop + ROW_H + 1)
+        limitsLbl.BackgroundTransparency = 1; limitsLbl.Font = Enum.Font.Gotham
+        limitsLbl.TextSize = 8; limitsLbl.TextColor3 = C_SUBTEXT
+        limitsLbl.Text = "min " .. tostring(minVal) .. "  ·  max " .. tostring(maxVal)
+        limitsLbl.TextXAlignment = Enum.TextXAlignment.Right
+        limitsLbl.TextYAlignment = Enum.TextYAlignment.Center
+
         box:GetPropertyChangedSignal("Text"):Connect(function()
             local n = tonumber(box.Text:match("[%d%.]+"))
             if n then
@@ -3629,17 +3690,19 @@ local function _flyBuildGui()
         return box
     end
 
-    local speedBox = makeSpeedRow("🚀", FT.speed_base,       8,  BASE_SPEED, 1, 10000)
-    local fastBox  = makeSpeedRow("🚄", FT.speed_turbo_mult, 34, FAST_MULT,  1, 1000)
-    local turboBox = makeSpeedRow("🚅", FT.speed_mega_mult,  60, TURBO_MULT, 1, 1000)
+    local speedBox = makeSpeedRow("🚀", FT.speed_base,       0, BASE_SPEED, 1, 10000)
+    local fastBox  = makeSpeedRow("🚄", FT.speed_turbo_mult, 1, FAST_MULT,  1, 1000)
+    local turboBox = makeSpeedRow("🚅", FT.speed_mega_mult,  2, TURBO_MULT, 1, 1000)
 
+    local RESET_Y  = SPEED_ROW_START + 3*SPEED_ROW_STEP + 2
     local resetBtn = Instance.new("TextButton", speedSec)
-    resetBtn.Size = UDim2.new(0, 100, 0, 22); resetBtn.Position = UDim2.new(0.5, -50, 0, 84)
+    resetBtn.Size = UDim2.new(0, 110, 0, 24); resetBtn.Position = UDim2.new(0.5, -55, 0, RESET_Y)
     resetBtn.BackgroundColor3 = Color3.fromRGB(60, 10, 110); resetBtn.BackgroundTransparency = 0.2
     resetBtn.BorderSizePixel = 0; resetBtn.Font = Enum.Font.Legacy
     resetBtn.TextSize = 11; resetBtn.TextColor3 = C_TEXT
     resetBtn.Text = "🔄  " .. FT.speed_reset
-    Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 5)
+    Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", resetBtn).Color = C_PURPLE
 
     local function recalcSpeed()
         if isnan(BASE_SPEED) then BASE_SPEED = DEFAULT_BASE end
