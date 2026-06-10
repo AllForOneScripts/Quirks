@@ -1,4 +1,4 @@
-print("version 2.02")
+print("version 2.03")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -3394,10 +3394,10 @@ local function _flyBuildGui()
     local C_RED     = Color3.fromRGB(255,  80,  80)
     local C_CYAN    = Color3.fromRGB(80,  200, 255)
     local C_GOLD    = Color3.fromRGB(255, 220,  80)
-    -- Gradient suave y continuo: diferencia mínima entre secciones para transición imperceptible
-    local C_SEC1    = Color3.fromRGB(42,  14,  80)   -- LOCK    (base)
-    local C_SEC2    = Color3.fromRGB(36,  11,  68)   -- NOCLIP  (barely darker)
-    local C_SEC3    = Color3.fromRGB(30,   9,  56)   -- SPEED   (slightly darker still)
+    -- Gradient suave y continuo: mismo tono base, pasos de ~8 unidades por canal
+    local C_SEC1    = Color3.fromRGB(44,  15,  82)   -- LOCK
+    local C_SEC2    = Color3.fromRGB(36,  12,  68)   -- NOCLIP
+    local C_SEC3    = Color3.fromRGB(28,   9,  54)   -- SPEED
 
     -- ── Layout ───────────────────────────────────────────────────
     local W        = 280
@@ -3453,7 +3453,7 @@ local function _flyBuildGui()
     iconLbl.TextYAlignment = Enum.TextYAlignment.Center
 
     local titleLbl = Instance.new("TextLabel", topBar)
-    titleLbl.Size = UDim2.new(0, 96, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 26, 0, 0)
+    titleLbl.Size = UDim2.new(0, 96, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 30, 0, 0)
     titleLbl.BackgroundTransparency = 1; titleLbl.Font = Enum.Font.GothamBold
     titleLbl.TextSize = 12; titleLbl.TextColor3 = C_TEXT
     titleLbl.Text = FT.fly_title .. "  [" .. flyanim.flyKey.Name .. "]"
@@ -3502,11 +3502,11 @@ local function _flyBuildGui()
     local function makeSection(h, bgColor, strokeColor)
         local f = Instance.new("Frame")
         f.Size = UDim2.new(1, 0, 0, h)
-        f.BackgroundColor3 = bgColor; f.BackgroundTransparency = 0.15
+        f.BackgroundColor3 = bgColor; f.BackgroundTransparency = 0
         f.BorderSizePixel = 0
         Instance.new("UICorner", f).CornerRadius = UDim.new(0, 7)
         local s = Instance.new("UIStroke", f)
-        s.Color = strokeColor or C_ACCENT; s.Thickness = 1; s.Transparency = 0.55
+        s.Color = C_ACCENT; s.Thickness = 1; s.Transparency = 0.75
         return f
     end
 
@@ -3607,9 +3607,8 @@ local function _flyBuildGui()
         lbl.Text = labelText
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        -- Toggle centrado horizontalmente: mismo eje X que los inputs de Speed (BOX_X = 112)
-        local toggleX = 112 - 8  -- alineado con el inicio del input box menos padding de row
-        createToggle(row, toggleX, (ROW_H - 18) / 2, initialState, onChange)
+        -- Centro de la row: rowWidth(248) / 2 - TOGGLE_W(36) / 2 = 124 - 18 = 106
+        createToggle(row, 106, (ROW_H - 18) / 2, initialState, onChange)
     end
 
     makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
@@ -3633,7 +3632,7 @@ local function _flyBuildGui()
     megaLabel.Text = FT.noclip_mega
     megaLabel.TextXAlignment = Enum.TextXAlignment.Left
     megaLabel.TextYAlignment = Enum.TextYAlignment.Center
-    createToggle(megaRow, 112 - 8, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
+    createToggle(megaRow, 106, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
 
     -- ── SPEED section (gradient bottom = darkest) ─────────────────
     local speedSec = makeSection(H_SPEED, C_SEC3, C_PURPLE)
