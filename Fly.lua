@@ -1,4 +1,4 @@
-print("version 2.1")
+print("version 2.01")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -4915,4 +4915,4 @@ function M.GetFlyKey()  return flyanim.flyKey  end
 function M.GetLockKey() return flyanim.lockKey end
 function M.IsEnabled()  return flyanim.enabled end
  
-return M}
+return M
