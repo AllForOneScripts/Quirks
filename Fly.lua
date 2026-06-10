@@ -463,6 +463,15 @@ end
 
 local function cleanupMotors(root, preserveVelY, skipStateChange)
     if not root then return end
+    -- Capturar físicas previas ANTES de destruir los motores
+    local preVelX, preVelZ = 0, 0
+    local preVelY = 0
+    pcall(function()
+        local v = root.AssemblyLinearVelocity
+        if safepos(v) then
+            preVelX = v.X; preVelY = v.Y; preVelZ = v.Z
+        end
+    end)
     for _, v in ipairs(root:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
         or v:IsA("BodyAngularVelocity") or v:IsA("BodyForce")
@@ -481,11 +490,12 @@ local function cleanupMotors(root, preserveVelY, skipStateChange)
         end)
     end
     if preserveVelY then
-        local currentVelY = 0
-        pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
-        if isnan(currentVelY) then currentVelY = 0 end
-        local finalVelY = (currentVelY >= 0) and -4 or currentVelY
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, finalVelY, 0) end)
+        -- Restaurar la velocidad horizontal previa + velocidad Y corregida
+        local finalVelY = (preVelY >= 0) and -4 or preVelY
+        if isnan(finalVelY) then finalVelY = -4 end
+        if isnan(preVelX) then preVelX = 0 end
+        if isnan(preVelZ) then preVelZ = 0 end
+        pcall(function() root.AssemblyLinearVelocity = Vector3.new(preVelX * 0.1, finalVelY, preVelZ * 0.1) end)
     else
         pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
     end
@@ -2142,7 +2152,7 @@ local function sonicBoomEffect(intensity)
                 local d = cam.CFrame.Position - root.Position
                 if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
             end
-            p.Parent = workspace
+            p.Parent = _getParticleFolder()
             local sg = Instance.new("SurfaceGui", p)
             sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
             sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
@@ -2217,13 +2227,14 @@ local function spawnLandingEffects(position, velocity)
         snd:Play()
         snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
+        -- Flash inicial
         task.spawn(function()
             local flashSize = smokeScale * 6
             local pf = Instance.new("Part")
             pf.Anchored=true; pf.CanCollide=false; pf.CanTouch=false; pf.CastShadow=false
             pf.Transparency=1; pf.Size=Vector3.new(flashSize, flashSize, 0.05)
             pf.CFrame=CFrame.new(groundPos + Vector3.new(0,0.08,0)) * CFrame.Angles(math.rad(90),0,0)
-            pf.Parent=workspace
+            pf.Parent = _getParticleFolder() -- CORREGIDO
             local sgf = Instance.new("SurfaceGui", pf)
             sgf.Adornee=pf; sgf.Face=Enum.NormalId.Front; sgf.AlwaysOnTop=false
             sgf.LightInfluence=0; sgf.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sgf.PixelsPerStud=40
@@ -2237,13 +2248,15 @@ local function spawnLandingEffects(position, velocity)
                 {ImageTransparency=1}):Play()
             task.delay(0.25, function() pcall(function() pf:Destroy() end) end)
         end)
+
+        -- Anillo de humo principal
         task.spawn(function()
             local ringSize = smokeScale * 10
             local p = Instance.new("Part")
             p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false
             p.Transparency=1; p.Size=Vector3.new(ringSize, ringSize, 0.05)
             p.CFrame=CFrame.new(groundPos + Vector3.new(0,0.14,0)) * CFrame.Angles(math.rad(90),0,0)
-            p.Parent=workspace
+            p.Parent = _getParticleFolder() -- CORREGIDO
             local sg = Instance.new("SurfaceGui", p)
             sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false
             sg.LightInfluence=0; sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=40
@@ -2258,6 +2271,8 @@ local function spawnLandingEffects(position, velocity)
             ft1.Completed:Connect(function() pcall(function() if p and p.Parent then p:Destroy() end end) end)
             task.delay(smokeDuration + 0.05, function() pcall(function() if p and p.Parent then p:Destroy() end end) end)
         end)
+
+        -- Anillo de humo secundario
         task.spawn(function()
             task.wait(0.03)
             local ringSize2 = smokeScale * 7
@@ -2265,7 +2280,7 @@ local function spawnLandingEffects(position, velocity)
             p2.Anchored=true; p2.CanCollide=false; p2.CanTouch=false; p2.CastShadow=false
             p2.Transparency=1; p2.Size=Vector3.new(ringSize2, ringSize2, 0.05)
             p2.CFrame=CFrame.new(groundPos + Vector3.new(0,0.10,0)) * CFrame.Angles(math.rad(90),0,0)
-            p2.Parent=workspace
+            p2.Parent = _getParticleFolder() -- CORREGIDO
             local sg2 = Instance.new("SurfaceGui", p2)
             sg2.Adornee=p2; sg2.Face=Enum.NormalId.Front; sg2.AlwaysOnTop=false
             sg2.LightInfluence=0; sg2.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud=40
@@ -2281,6 +2296,8 @@ local function spawnLandingEffects(position, velocity)
             ft2.Completed:Connect(function() pcall(function() if p2 and p2.Parent then p2:Destroy() end end) end)
             task.delay(dur2 + 0.10, function() pcall(function() if p2 and p2.Parent then p2:Destroy() end end) end)
         end)
+
+        -- Anillo de humo interior
         task.spawn(function()
             task.wait(0.07)
             local ringSize3 = smokeScale * 4
@@ -2288,7 +2305,7 @@ local function spawnLandingEffects(position, velocity)
             p3.Anchored=true; p3.CanCollide=false; p3.CanTouch=false; p3.CastShadow=false
             p3.Transparency=1; p3.Size=Vector3.new(ringSize3, ringSize3, 0.05)
             p3.CFrame=CFrame.new(groundPos + Vector3.new(0,0.05,0)) * CFrame.Angles(math.rad(90),0,0)
-            p3.Parent=workspace
+            p3.Parent = _getParticleFolder() -- CORREGIDO
             local sg3 = Instance.new("SurfaceGui", p3)
             sg3.Adornee=p3; sg3.Face=Enum.NormalId.Front; sg3.AlwaysOnTop=false
             sg3.LightInfluence=0; sg3.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg3.PixelsPerStud=40
@@ -2304,6 +2321,8 @@ local function spawnLandingEffects(position, velocity)
             ft3.Completed:Connect(function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
             task.delay(dur3 + 0.10, function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
         end)
+
+        -- Generación de Rocas
         task.spawn(function()
             local ROCK_BASE = Color3.fromRGB(130, 125, 118)
             local batchSize = 6
@@ -2325,15 +2344,19 @@ local function spawnLandingEffects(position, velocity)
                             groundPos.Y + 0.05,
                             groundPos.Z + math.sin(angle) * radius
                         )
-                        rock.Parent = workspace
+                        rock.Parent = _getParticleFolder() -- CORREGIDO
                         local outDir  = Vector3.new(math.cos(angle), 0.55 + math.random() * 0.9, math.sin(angle)).Unit
                         local power   = (3.5 + t * 9) * (0.65 + math.random() * 0.7)
                         rock.AssemblyLinearVelocity = outDir * power
                         local fadeTime = 0.35 + math.random() * 0.35
                         task.delay(0.04, function()
-                            if not rock or not rock.Parent then return end
-                            TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                                {Transparency = 1}):Play()
+                            if not rock then return end
+                            -- CORREGIDO: Solo aplicar el Tween si tiene Parent,
+                            -- pero garantizar la ejecución del Destroy sin importar la condición.
+                            if rock.Parent then
+                                TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                                    {Transparency = 1}):Play()
+                            end
                             task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
                         end)
                     end)
@@ -2571,7 +2594,9 @@ local function doLanding(char, epicFall)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
+    -- Efectos de aterrizaje: siempre se generan si la altura lo justifica
     spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5))
+    -- Animación épica: SOLO si epicFall=true (es decir, hubo TP desde >45 studs)
     if epicFall and altura >= 25 then
         if not animator or not animator.Parent then restoreGameAnimations(char); return end
         local animObjBase = Instance.new("Animation")
@@ -4499,57 +4524,170 @@ end
 -- EVENTOS GLOBALES
 -- ============================================================
  
+local function triggerDash(direction, speed, duration)
+    local cam = workspace.CurrentCamera
+    local dashDir
+    if direction == "back"    then local l = cam.CFrame.LookVector; dashDir = Vector3.new(-l.X, 0, -l.Z)
+    elseif direction == "left"  then local r = cam.CFrame.RightVector; dashDir = Vector3.new(-r.X, 0, -r.Z)
+    elseif direction == "right" then local r = cam.CFrame.RightVector; dashDir = Vector3.new(r.X, 0, r.Z)
+    elseif direction == "forward" then local l = cam.CFrame.LookVector; dashDir = Vector3.new(l.X, 0, l.Z) end
+    if not dashDir or dashDir.Magnitude < 0.01 then return end
+    flyanim.dashVel   = dashDir.Unit * (speed or flyanim.DASH_SPEED)
+    flyanim.dashTimer = duration or flyanim.DASH_DURATION
+    startDashCollisionDetection()
+end
+
+local function activateMegaTurbo()
+    if flyanim.mode ~= "fast" then return end
+    flyanim.mode  = "turbo"
+    flyanim.speed = BASE_SPEED * TURBO_MULT
+    if flyanim.updateMode then flyanim.updateMode("turbo") end
+    if flyanim.noclipMegaEnabled then setNoclip(true) end
+    shakeCamera(3.5, 0.4)
+    playLocalSound(SFX_MEGA_TURBO, 0.88)
+    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
+    triggerDash("forward", flyanim.TURBO_DASH_SPEED * 1.5, flyanim.TURBO_DASH_DURATION * 1.2)
+    startParticleEmitter(); detenerPoseTurbo(); iniciarPoseMega()
+end
+
 local function handleQPress()
     if not flyanim.enabled then return end
     if isTyping() then return end
-    local now = tick()
-    -- Reducir ventana de doble tap para turbo/mega: 0.20 s (antes 0.30)
-    -- Esto hace que el spam de Q sea más responsivo en peleas
-    if now - flyanim.qLastPress < 0.20 then
-        if flyanim.mode == "turbo" then
-            flyanim.mode  = "normal"
-            flyanim.speed = BASE_SPEED
-            flyanim.qLastPress = 0
-            if flyanim.updateMode then flyanim.updateMode("normal") end
-            if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
-            stopParticleEmitter()
-            detenerPoseMega()
-            detenerPoseTurbo()
-            flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-            restaurarC0Inmediato()
-            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-            iniciarCicloNormal(flyanim._normalPlayId)
-        elseif flyanim.mode == "fast" or flyanim.mode == "normal" then
-            flyanim.mode  = "turbo"
-            flyanim.speed = BASE_SPEED * TURBO_MULT
-            flyanim.qLastPress = 0
-            if flyanim.updateMode then flyanim.updateMode("turbo") end
-            if flyanim.noclipMegaEnabled then setNoclip(true) end
-            detenerPoseTurbo()
-            iniciarPoseMega()
-            startParticleEmitter()
-            playLocalSound(SFX_MEGA_TURBO, 0.85)
-            sonicBoomEffect(2)
-            airShockAura(2)
-            speedWhiteFlash("turbo")
+    if flyanim.turboPreImpulsoActivo then return end
+
+    local wDown = UserInputService:IsKeyDown(Enum.KeyCode.W)
+    local sDown = UserInputService:IsKeyDown(Enum.KeyCode.S)
+    local aDown = UserInputService:IsKeyDown(Enum.KeyCode.A)
+    local dDown = UserInputService:IsKeyDown(Enum.KeyCode.D)
+
+    if not wDown then
+        if sDown and not aDown and not dDown then
+            triggerDash("back", flyanim.BACK_DASH_SPEED, flyanim.DASH_DURATION * 1.2)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.sq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
         end
+
+        if aDown and not sDown and not dDown then
+            triggerDash("left", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.sq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
+        end
+
+        if dDown and not sDown and not aDown then
+            triggerDash("right", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.dq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.dq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
+        end
+    end
+
+    if flyanim.mode == "fast" then
+        local elapsed = tick() - flyanim.turboActivatedAt
+        if elapsed >= 0.75 then activateMegaTurbo() end
+        return
+    end
+    if flyanim.mode == "turbo" then
+        flyanim.mode  = "normal"
+        flyanim.speed = BASE_SPEED
         flyanim.qLastPress = 0
+        if flyanim.updateMode then flyanim.updateMode("normal") end
+        if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
+        stopParticleEmitter()
+        detenerPoseMega()
+        detenerPoseTurbo()
+        flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+        restaurarC0Inmediato()
+        flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+        iniciarCicloNormal(flyanim._normalPlayId)
         return
     end
     if flyanim.mode == "normal" then
+        flyanim.isSpaceAdv = false
+        if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
+        detenerEspacioAvanzado()
+        if flyanim.noclipSpaceActive then
+            flyanim.noclipSpaceActive = false
+        end
+        flyanim.noclipCtrlActive = false
         flyanim.mode  = "fast"
         flyanim.speed = BASE_SPEED * FAST_MULT
+        flyanim.qLastPress       = tick()
+        flyanim.turboActivatedAt = tick()
         if flyanim.updateMode then flyanim.updateMode("fast") end
-        if not flyanim.turboPreImpulsoActivo then
-            iniciarPoseTurbo()
-            startParticleEmitter()
-            playLocalSound(SFX_TURBO, 0.85)
-            sonicBoomEffect(1)
-            airShockAura(1)
-            speedWhiteFlash("fast")
-        end
+        setNoclip(false)
+        shakeCamera(2.0, 0.3)
+        playLocalSound(SFX_TURBO, 0.82)
+        sonicBoomEffect(1); airShockAura(1); speedWhiteFlash("fast")
+        triggerDash("forward", flyanim.TURBO_DASH_SPEED, flyanim.TURBO_DASH_DURATION)
+        startParticleEmitter()
+        detenerNormalTracks(0.1); detenerEspacioAvanzado()
+        iniciarPoseTurbo()
     end
-    flyanim.qLastPress = now
 end
  
 local _inputConn     = nil
