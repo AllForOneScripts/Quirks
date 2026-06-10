@@ -9,14 +9,14 @@ local SoundService     = game:GetService("SoundService")
 
 local FlyLang = {
     ES = {
-        fly_title        = "🚀 VUELO",
-        mode_normal      = "🚀 NORMAL",
-        mode_fast        = "🚄 TURBO  x",
-        mode_mega        = "🚅 MEGA  x",
-        mode_megaup      = "🚅 MEGA UP  x",
-        lock_label       = "🎯 LOCK",
+        fly_title        = "VUELO",
+        mode_normal      = "NORMAL",
+        mode_fast        = "TURBO  x",
+        mode_mega        = "MEGA  x",
+        mode_megaup      = "MEGA UP  x",
+        lock_label       = "LOCK",
         lock_hint_prefix = "Apuntar + ",
-        noclip_title     = "👻 NOCLIP",
+        noclip_title     = "NOCLIP",
         noclip_space     = "Espacio",
         noclip_ctrl      = "Ctrl (bajar)",
         noclip_mega      = "Mega Turbo",
@@ -24,19 +24,19 @@ local FlyLang = {
         height_above     = "studs arriba",
         height_same      = "mismo nivel",
         speed_base       = "Vel. base",
-        speed_turbo_mult = "🚄 Turbo x",
-        speed_mega_mult  = "🚅 Mega x",
-        speed_reset      = "🔄 Reset",
+        speed_turbo_mult = "Turbo x",
+        speed_mega_mult  = "Mega x",
+        speed_reset      = "Reset",
     },
     EN = {
-        fly_title        = "🚀 FLY",
-        mode_normal      = "🚀 NORMAL",
-        mode_fast        = "🚄 TURBO  x",
-        mode_mega        = "🚅 MEGA  x",
-        mode_megaup      = "🚅 MEGA UP  x",
-        lock_label       = "🎯 LOCK",
+        fly_title        = "FLY",
+        mode_normal      = "NORMAL",
+        mode_fast        = "TURBO  x",
+        mode_mega        = "MEGA  x",
+        mode_megaup      = "MEGA UP  x",
+        lock_label       = "LOCK",
         lock_hint_prefix = "Aim + ",
-        noclip_title     = "👻 NOCLIP",
+        noclip_title     = "NOCLIP",
         noclip_space     = "Space",
         noclip_ctrl      = "Ctrl (down)",
         noclip_mega      = "Mega Turbo",
@@ -44,9 +44,9 @@ local FlyLang = {
         height_above     = "studs above",
         height_same      = "same level",
         speed_base       = "Base speed",
-        speed_turbo_mult = "🚄 Turbo x",
-        speed_mega_mult  = "🚅 Mega x",
-        speed_reset      = "🔄 Reset",
+        speed_turbo_mult = "Turbo x",
+        speed_mega_mult  = "Mega x",
+        speed_reset      = "Reset",
     },
 }
 
@@ -202,7 +202,6 @@ local COMBO_HOLD_INTERVAL  = 0.10
 local ANOMALY_COOLDOWN     = 0.12
 local MOTOR_RESET_COOLDOWN = 0.5
 
--- CAMBIO: Q debounce reducido de 0.18 a 0.10 para respuesta más rápida en combate
 local Q_DEBOUNCE = 0.10
 
 local flyanim = {
@@ -387,7 +386,6 @@ local function startTeleportGuard()
     flyanim.isTeleportGuardActive = true
     local mySession = flyanim.sessionToken
     flyanim.teleportGuardConn = RunService.Stepped:Connect(function()
-        -- CAMBIO: Guard enabled
         if not flyanim.enabled then
             if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
             flyanim.isTeleportGuardActive = false
@@ -463,15 +461,6 @@ end
 
 local function cleanupMotors(root, preserveVelY, skipStateChange)
     if not root then return end
-    -- Capturar físicas previas ANTES de destruir los motores
-    local preVelX, preVelZ = 0, 0
-    local preVelY = 0
-    pcall(function()
-        local v = root.AssemblyLinearVelocity
-        if safepos(v) then
-            preVelX = v.X; preVelY = v.Y; preVelZ = v.Z
-        end
-    end)
     for _, v in ipairs(root:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
         or v:IsA("BodyAngularVelocity") or v:IsA("BodyForce")
@@ -490,12 +479,11 @@ local function cleanupMotors(root, preserveVelY, skipStateChange)
         end)
     end
     if preserveVelY then
-        -- Restaurar la velocidad horizontal previa + velocidad Y corregida
-        local finalVelY = (preVelY >= 0) and -4 or preVelY
-        if isnan(finalVelY) then finalVelY = -4 end
-        if isnan(preVelX) then preVelX = 0 end
-        if isnan(preVelZ) then preVelZ = 0 end
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(preVelX * 0.1, finalVelY, preVelZ * 0.1) end)
+        local currentVelY = 0
+        pcall(function() currentVelY = root.AssemblyLinearVelocity.Y end)
+        if isnan(currentVelY) then currentVelY = 0 end
+        local finalVelY = (currentVelY >= 0) and -4 or currentVelY
+        pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, finalVelY, 0) end)
     else
         pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
     end
@@ -645,7 +633,6 @@ local function detenerEspacioAvanzado()
     end
 end
 
--- CAMBIO: cancelar brazos por cualquier acción externa
 local function cancelarBrazos()
     if flyanim.isBrazosActive then
         flyanim.isBrazosActive = false
@@ -684,7 +671,6 @@ local function startBlocking()
     if flyanim.blockCancelledByCombo then return end
     local bt = flyanim.blockTrack
     if not bt or flyanim.isBlocking then return end
-    -- CAMBIO: cancelar brazos al bloquear
     cancelarBrazos()
     flyanim.isBlocking = true
     local length = (bt.Length and bt.Length > 0) and bt.Length or 1
@@ -890,7 +876,6 @@ local function evaluarMovimientoNormal()
     if flyanim.turboPreImpulsoActivo then return end
     local nt = flyanim.normalTracks
     if not nt then return end
-    -- CAMBIO: cualquier movimiento cancela brazos y resetea timer inmediatamente
     local anyMove = flyanim.isWDown or flyanim.isSDown or flyanim.isADown or flyanim.isDDown
     if anyMove then
         cancelarBrazos()
@@ -1027,7 +1012,6 @@ local function manejarEspacioPresionadoNormal()
     if nt.lateral     and nt.lateral.IsPlaying     then pcall(function() nt.lateral:Stop(0.1) end) end
     if nt.mov_brazos  and nt.mov_brazos.IsPlaying  then pcall(function() nt.mov_brazos:Stop(0.1) end) end
     if nt.brazos      and nt.brazos.IsPlaying       then pcall(function() nt.brazos:Stop(0.05) end) end
-    -- CAMBIO: cancelar brazos al presionar espacio
     cancelarBrazos()
     flyanim.currentAtrasId   = flyanim.currentAtrasId   + 1; flyanim.atrasKilled   = true
     flyanim.currentLateralId = flyanim.currentLateralId + 1; flyanim.lateralKilled = true
@@ -1079,7 +1063,6 @@ iniciarCicloNormal = function(thisPlay)
             if nt.estatica then pcall(function() nt.estatica:AdjustSpeed(0) end) end
         end
     end)
-    -- CAMBIO: resetear brazos al iniciar ciclo normal (no heredar estado sucio)
     flyanim.idleTimerAnim  = 0
     flyanim.isBrazosActive = false
     if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect() end
@@ -1125,7 +1108,6 @@ iniciarCicloNormal = function(thisPlay)
                 if nt2.brazos then pcall(function() nt2.brazos:Play(ANIM_NORMAL.TIEMPO_TRANSICION) end) end
             end
         else
-            -- CAMBIO: cualquier movimiento cancela brazos inmediatamente
             flyanim.idleTimerAnim = 0
             if flyanim.isBrazosActive then
                 flyanim.isBrazosActive = false
@@ -1300,7 +1282,6 @@ local function iniciarPoseTurbo()
         if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect() end
         local myC0TkLoop = flyanim.c0ControlToken
         flyanim.turboRenderConn = RunService.RenderStepped:Connect(function()
-            -- CAMBIO: guard enabled
             if not flyanim.enabled or flyanim.mode ~= "fast" then
                 if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
                 if myC0TkLoop == flyanim.c0ControlToken then
@@ -1418,7 +1399,6 @@ local function iniciarPoseMega()
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     local myC0Token = flyanim.c0ControlToken
     flyanim.megaRenderConn = RunService.RenderStepped:Connect(function()
-        -- CAMBIO: guard enabled
         if not flyanim.enabled or flyanim.mode ~= "turbo" then
             if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
             if myC0Token == flyanim.c0ControlToken then
@@ -1507,7 +1487,6 @@ local function startAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
     local mySession = flyanim.sessionToken
     flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
-        -- CAMBIO: guard enabled primero
         if not flyanim.enabled then
             if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
             return
@@ -1649,7 +1628,6 @@ local function startAnomalyProtection()
     flyanim.lastKnownPos = nil
     local mySession = flyanim.sessionToken
     flyanim.anomalyConn = RunService.Stepped:Connect(function()
-        -- CAMBIO: guard enabled primero
         if not flyanim.enabled then
             if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
             flyanim.lastKnownPos = nil
@@ -1725,7 +1703,6 @@ local function startAnimBlockLoop()
     ownAnimIds[CAIDA_OVERLAY_ID] = true
     local mySession = flyanim.sessionToken
     flyanim.animBlockRenderConn = RunService.RenderStepped:Connect(function()
-        -- CAMBIO: guard enabled primero
         if not flyanim.enabled then
             if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
             return
@@ -1782,7 +1759,6 @@ local function startBrakeSystem()
             if brakeConn then brakeConn:Disconnect(); brakeConn = nil end
             return
         end
-        -- CAMBIO: guard enabled
         if not flyanim.enabled then return end
         if flyanim.mode ~= "fast" and flyanim.mode ~= "turbo" then return end
         if not flyanim.lockActive or not flyanim.lockedTarget then return end
@@ -1830,7 +1806,6 @@ local function startDashCollisionDetection()
             if dashConnection then dashConnection:Disconnect(); dashConnection = nil end
             return
         end
-        -- CAMBIO: guard enabled
         if not flyanim.enabled then
             if dashConnection then dashConnection:Disconnect(); dashConnection = nil end
             return
@@ -1896,7 +1871,6 @@ end
 local _particleFolder = nil
 
 local function _getParticleFolder()
-    -- CAMBIO: verificar si el folder sigue en workspace
     if _particleFolder and _particleFolder.Parent == workspace then
         return _particleFolder
     end
@@ -1909,7 +1883,6 @@ local function _getParticleFolder()
     return folder
 end
 
--- CAMBIO: killActiveParticles garantiza cero residuos
 local function killActiveParticles()
     -- Limpiar la lista de referencias
     local list = flyanim.particleList
@@ -1934,7 +1907,6 @@ local function killActiveParticles()
 end
 
 local function createParticle(isMega)
-    -- CAMBIO: verificar enabled en cada creación
     if not flyanim.enabled then return end
     if flyanim.megaTurboUpActive or flyanim.mode == "megaup" then return end
     local char = lplr and lplr.Character
@@ -1980,7 +1952,6 @@ local function createParticle(isMega)
     local targetPos  = spawnPos + awayDir * travelDist
     local alive = true
 
-    -- CAMBIO: ref guardada en lista para limpieza garantizada
     local particleRef = {part = part, dead = false}
     table.insert(flyanim.particleList, particleRef)
 
@@ -1998,7 +1969,6 @@ local function createParticle(isMega)
     fadeTween.Completed:Connect(destroyPart)
     task.delay(FADE_TIME + 0.05, destroyPart)
 
-    -- CAMBIO: limpiar entradas muertas de la lista periódicamente
     task.delay(FADE_TIME + 0.1, function()
         local pl = flyanim.particleList
         for i = #pl, 1, -1 do
@@ -2029,7 +1999,6 @@ local function startParticleEmitter()
         end
         flyanim.particleRunning = false
         flyanim.particleConn    = nil
-        -- CAMBIO: limpiar partículas al terminar el emitter
         killActiveParticles()
     end)
 end
@@ -2037,7 +2006,6 @@ end
 stopParticleEmitter = function()
     if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
     flyanim.particleRunning = false
-    -- CAMBIO: limpiar partículas al detener
     killActiveParticles()
 end
 
@@ -2152,7 +2120,7 @@ local function sonicBoomEffect(intensity)
                 local d = cam.CFrame.Position - root.Position
                 if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
             end
-            p.Parent = _getParticleFolder()
+            p.Parent = workspace
             local sg = Instance.new("SurfaceGui", p)
             sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
             sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
@@ -2227,14 +2195,13 @@ local function spawnLandingEffects(position, velocity)
         snd:Play()
         snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
         task.delay(8, function() pcall(function() snd:Destroy() end) end)
-        -- Flash inicial
         task.spawn(function()
             local flashSize = smokeScale * 6
             local pf = Instance.new("Part")
             pf.Anchored=true; pf.CanCollide=false; pf.CanTouch=false; pf.CastShadow=false
             pf.Transparency=1; pf.Size=Vector3.new(flashSize, flashSize, 0.05)
             pf.CFrame=CFrame.new(groundPos + Vector3.new(0,0.08,0)) * CFrame.Angles(math.rad(90),0,0)
-            pf.Parent = _getParticleFolder() -- CORREGIDO
+            pf.Parent=workspace
             local sgf = Instance.new("SurfaceGui", pf)
             sgf.Adornee=pf; sgf.Face=Enum.NormalId.Front; sgf.AlwaysOnTop=false
             sgf.LightInfluence=0; sgf.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sgf.PixelsPerStud=40
@@ -2248,15 +2215,13 @@ local function spawnLandingEffects(position, velocity)
                 {ImageTransparency=1}):Play()
             task.delay(0.25, function() pcall(function() pf:Destroy() end) end)
         end)
-
-        -- Anillo de humo principal
         task.spawn(function()
             local ringSize = smokeScale * 10
             local p = Instance.new("Part")
             p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false
             p.Transparency=1; p.Size=Vector3.new(ringSize, ringSize, 0.05)
             p.CFrame=CFrame.new(groundPos + Vector3.new(0,0.14,0)) * CFrame.Angles(math.rad(90),0,0)
-            p.Parent = _getParticleFolder() -- CORREGIDO
+            p.Parent=workspace
             local sg = Instance.new("SurfaceGui", p)
             sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false
             sg.LightInfluence=0; sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=40
@@ -2271,8 +2236,6 @@ local function spawnLandingEffects(position, velocity)
             ft1.Completed:Connect(function() pcall(function() if p and p.Parent then p:Destroy() end end) end)
             task.delay(smokeDuration + 0.05, function() pcall(function() if p and p.Parent then p:Destroy() end end) end)
         end)
-
-        -- Anillo de humo secundario
         task.spawn(function()
             task.wait(0.03)
             local ringSize2 = smokeScale * 7
@@ -2280,7 +2243,7 @@ local function spawnLandingEffects(position, velocity)
             p2.Anchored=true; p2.CanCollide=false; p2.CanTouch=false; p2.CastShadow=false
             p2.Transparency=1; p2.Size=Vector3.new(ringSize2, ringSize2, 0.05)
             p2.CFrame=CFrame.new(groundPos + Vector3.new(0,0.10,0)) * CFrame.Angles(math.rad(90),0,0)
-            p2.Parent = _getParticleFolder() -- CORREGIDO
+            p2.Parent=workspace
             local sg2 = Instance.new("SurfaceGui", p2)
             sg2.Adornee=p2; sg2.Face=Enum.NormalId.Front; sg2.AlwaysOnTop=false
             sg2.LightInfluence=0; sg2.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg2.PixelsPerStud=40
@@ -2296,8 +2259,6 @@ local function spawnLandingEffects(position, velocity)
             ft2.Completed:Connect(function() pcall(function() if p2 and p2.Parent then p2:Destroy() end end) end)
             task.delay(dur2 + 0.10, function() pcall(function() if p2 and p2.Parent then p2:Destroy() end end) end)
         end)
-
-        -- Anillo de humo interior
         task.spawn(function()
             task.wait(0.07)
             local ringSize3 = smokeScale * 4
@@ -2305,7 +2266,7 @@ local function spawnLandingEffects(position, velocity)
             p3.Anchored=true; p3.CanCollide=false; p3.CanTouch=false; p3.CastShadow=false
             p3.Transparency=1; p3.Size=Vector3.new(ringSize3, ringSize3, 0.05)
             p3.CFrame=CFrame.new(groundPos + Vector3.new(0,0.05,0)) * CFrame.Angles(math.rad(90),0,0)
-            p3.Parent = _getParticleFolder() -- CORREGIDO
+            p3.Parent=workspace
             local sg3 = Instance.new("SurfaceGui", p3)
             sg3.Adornee=p3; sg3.Face=Enum.NormalId.Front; sg3.AlwaysOnTop=false
             sg3.LightInfluence=0; sg3.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg3.PixelsPerStud=40
@@ -2321,8 +2282,6 @@ local function spawnLandingEffects(position, velocity)
             ft3.Completed:Connect(function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
             task.delay(dur3 + 0.10, function() pcall(function() if p3 and p3.Parent then p3:Destroy() end end) end)
         end)
-
-        -- Generación de Rocas
         task.spawn(function()
             local ROCK_BASE = Color3.fromRGB(130, 125, 118)
             local batchSize = 6
@@ -2344,19 +2303,15 @@ local function spawnLandingEffects(position, velocity)
                             groundPos.Y + 0.05,
                             groundPos.Z + math.sin(angle) * radius
                         )
-                        rock.Parent = _getParticleFolder() -- CORREGIDO
+                        rock.Parent = workspace
                         local outDir  = Vector3.new(math.cos(angle), 0.55 + math.random() * 0.9, math.sin(angle)).Unit
                         local power   = (3.5 + t * 9) * (0.65 + math.random() * 0.7)
                         rock.AssemblyLinearVelocity = outDir * power
                         local fadeTime = 0.35 + math.random() * 0.35
                         task.delay(0.04, function()
-                            if not rock then return end
-                            -- CORREGIDO: Solo aplicar el Tween si tiene Parent,
-                            -- pero garantizar la ejecución del Destroy sin importar la condición.
-                            if rock.Parent then
-                                TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                                    {Transparency = 1}):Play()
-                            end
+                            if not rock or not rock.Parent then return end
+                            TweenService:Create(rock, TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                                {Transparency = 1}):Play()
                             task.delay(fadeTime + 0.05, function() pcall(function() rock:Destroy() end) end)
                         end)
                     end)
@@ -2527,17 +2482,14 @@ local function doLanding(char, epicFall)
     if epicFall and altura < 25 then epicFall = false end
     if not animator then restoreGameAnimations(char); return end
 
-    -- CAMBIO: resetear TODOS los flags de movimiento y evalToken al entrar en landing
     -- Esto evita que el primer frame del ciclo normal detecte movimiento fantasma
     flyanim.idleTimerAnim  = 0
     flyanim.isBrazosActive = false
     flyanim.evalToken      = (flyanim.evalToken or 0) + 1
-    -- CAMBIO: limpiar estado de teclas para evitar movimiento fantasma
     flyanim.isWDown = false; flyanim.isSDown = false
     flyanim.isADown = false; flyanim.isDDown = false
     flyanim.wDown   = false; flyanim.sDown   = false
     flyanim.aDown   = false; flyanim.dDown   = false
-    -- CAMBIO: cancelar brazos completamente
     flyanim.isBrazosActive = false
     flyanim.idleTimerAnim  = 0
 
@@ -2594,9 +2546,7 @@ local function doLanding(char, epicFall)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
-    -- Efectos de aterrizaje: siempre se generan si la altura lo justifica
     spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5))
-    -- Animación épica: SOLO si epicFall=true (es decir, hubo TP desde >45 studs)
     if epicFall and altura >= 25 then
         if not animator or not animator.Parent then restoreGameAnimations(char); return end
         local animObjBase = Instance.new("Animation")
@@ -2683,7 +2633,6 @@ local function _launchComboAnim(animId, speed)
     if t.IsPlaying then pcall(function() t:Stop(0) end) end
     pcall(function() t:Play(0.05, 1, 1) end)
     pcall(function() t:AdjustSpeed(speed or 3.0) end)
-    -- CAMBIO: cancelar brazos al iniciar combo
     cancelarBrazos()
 end
 
@@ -2698,7 +2647,6 @@ local function stopComboC0Lock()
     if flyanim.comboC0Conn then flyanim.comboC0Conn:Disconnect(); flyanim.comboC0Conn = nil end
 end
 
--- CAMBIO: cancelComboIfActive - cancela el combo activo completamente
 local function cancelComboIfActive()
     if not flyanim.comboPlaying then return end
     flyanim.comboToken = (flyanim.comboToken or 0) + 1
@@ -2912,7 +2860,6 @@ local function handleComboClick()
         stopBlocking()
         flyanim.blockCancelledByCombo = true
     end
-    -- CAMBIO: cancelar brazos al iniciar combo (por si acaso)
     cancelarBrazos()
     flyanim.comboPlaying   = true
     flyanim.comboLastClick = now
@@ -2999,7 +2946,6 @@ function MegaUpLogic.Activate()
     local myToken = MegaUpLogic.Token
     stopParticleEmitter()
     killActiveParticles()
-    -- CAMBIO: cancelar brazos al activar MegaUp
     cancelarBrazos()
     playLocalSound(SFX_MEGA_TURBO, 0.90)
     sonicBoomEffect(2)
@@ -3018,7 +2964,6 @@ function MegaUpLogic.Activate()
     local startT = os.clock()
     MegaUpLogic.LoopConn = RunService.Heartbeat:Connect(function()
         if MegaUpLogic.Token ~= myToken then return end
-        -- CAMBIO: guard enabled
         if not flyanim.enabled or not MegaUpLogic.Active then
             MegaUpLogic.Deactivate()
             flyanim.megaTurboUpActive = false
@@ -3188,7 +3133,6 @@ local function createLockInfoGui(parentFrame)
     Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 8)
     local stroke = Instance.new("UIStroke", infoFrame)
     stroke.Color = C_PURPLE; stroke.Thickness = 1; stroke.Transparency = 0.5
-    -- CAMBIO: emoji con Font.Legacy para renderizar correctamente
     local iconLbl = Instance.new("TextLabel", infoFrame)
     iconLbl.Size=UDim2.new(0,28,0,28); iconLbl.Position=UDim2.new(0,6,0.5,-14)
     iconLbl.BackgroundTransparency=1; iconLbl.Font=Enum.Font.Legacy
@@ -3253,7 +3197,6 @@ local function updateLockInfoGui()
     if healthLabel and humanoid then
         local rawHealth = math.max(humanoid.Health, 0)
         local maxHealth = math.max(humanoid.MaxHealth, 1)
-        -- CAMBIO: mostrar decimales SOLO si parte entera es 0 y hay decimales
         local healthStr
         local intPart = math.floor(rawHealth)
         if intPart == 0 and rawHealth > 0 then
@@ -3276,7 +3219,6 @@ local function updateLockInfoGui()
         else
             heartEmoji = "❤️"
         end
-        -- CAMBIO: Font.Legacy para emojis en healthLabel
         healthLabel.Font = Enum.Font.Legacy
         healthLabel.Text = heartEmoji .. " " .. healthStr .. "/" .. tostring(math.floor(maxHealth + 0.5))
         if rawHealth <= 0 then
@@ -3440,143 +3382,243 @@ end
 local function _flyBuildGui()
     _reloadFT()
     _flyDestroyGui()
-    local C_PURPLE = Color3.fromRGB(110,30,180);  local C_DIM    = Color3.fromRGB(40,6,72)
-    local C_BLACK  = Color3.fromRGB(6,4,12);      local C_ACCENT = Color3.fromRGB(160,60,255)
-    local C_TEXT   = Color3.fromRGB(220,190,255); local C_GREEN  = Color3.fromRGB(80,255,150)
-    local C_YELLOW = Color3.fromRGB(255,220,60);  local C_RED    = Color3.fromRGB(255,80,80)
-    local C_CYAN   = Color3.fromRGB(80,200,255)
-    local W = 280; local H_MINI = 48; local DOT_SIZE = 10
-    local CONTENT_H = 8 + 30 + 6 + 82 + 6 + 104 + 8
-    local H_FULL    = H_MINI + CONTENT_H
-    local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-    local sg = Instance.new("ScreenGui")
-    sg.Name="AFO_FlyHUD"; sg.ResetOnSpawn=false; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-    sg.IgnoreGuiInset=true; sg.Parent=CoreGui; flyanim.gui=sg
-    local root = Instance.new("Frame", sg)
-    root.Size=UDim2.new(0,W,0,H_FULL); root.Position=UDim2.new(0.5,-W/2,0,6)
-    root.BackgroundTransparency=1; root.BorderSizePixel=0
-    local panel = Instance.new("Frame", root)
-    panel.Size=UDim2.new(1,0,0,H_MINI); panel.BackgroundColor3=C_BLACK
-    panel.BackgroundTransparency=0.06; panel.BorderSizePixel=0
-    Instance.new("UICorner", panel).CornerRadius=UDim.new(0,12)
-    local stroke = Instance.new("UIStroke", panel)
-    stroke.Color=C_PURPLE; stroke.Thickness=1.2; stroke.Transparency=0.75
-    local topBar = Instance.new("Frame", panel)
-    topBar.Size=UDim2.new(1,0,0,H_MINI); topBar.BackgroundTransparency=1
-    -- CAMBIO: emoji con Font.Legacy para renderizar correctamente en Roblox
-    local iconLbl = Instance.new("TextLabel", topBar)
-    iconLbl.Size=UDim2.new(0,34,1,0); iconLbl.Position=UDim2.new(0,4,0,0)
-    iconLbl.BackgroundTransparency=1; iconLbl.Font=Enum.Font.Legacy
-    iconLbl.TextSize=18; iconLbl.TextColor3=C_ACCENT; iconLbl.Text="🚀"; iconLbl.TextXAlignment=Enum.TextXAlignment.Center
-    local titleLbl = Instance.new("TextLabel", topBar)
-    titleLbl.Size=UDim2.new(0,75,1,0); titleLbl.Position=UDim2.new(0,34,0,0)
-    titleLbl.BackgroundTransparency=1; titleLbl.Font=Enum.Font.GothamBold
-    titleLbl.TextSize=12; titleLbl.TextColor3=C_TEXT
-    titleLbl.Text=FT.fly_title.." ["..flyanim.flyKey.Name.."]"; titleLbl.TextXAlignment=Enum.TextXAlignment.Left
-    local sep = Instance.new("Frame", topBar)
-    sep.Size=UDim2.new(0,1,0,22); sep.Position=UDim2.new(0,113,0.5,-11)
-    sep.BackgroundColor3=C_PURPLE; sep.BackgroundTransparency=0.4
-    local modeLbl = Instance.new("TextLabel", topBar)
-    modeLbl.Size=UDim2.new(1,-134,1,0); modeLbl.Position=UDim2.new(0,119,0,0)
-    modeLbl.BackgroundTransparency=1; modeLbl.Font=Enum.Font.Legacy
-    modeLbl.TextSize=12; modeLbl.TextColor3=C_GREEN; modeLbl.Text=FT.mode_normal; modeLbl.TextXAlignment=Enum.TextXAlignment.Center
-    local dotBtn = Instance.new("TextButton", topBar)
-    dotBtn.Size=UDim2.new(0,DOT_SIZE+10,1,0); dotBtn.Position=UDim2.new(1,-(DOT_SIZE+14),0,0)
-    dotBtn.BackgroundTransparency=1; dotBtn.Text=""
-    local dot = Instance.new("Frame", dotBtn)
-    dot.Size=UDim2.new(0,DOT_SIZE,0,DOT_SIZE); dot.Position=UDim2.new(0.5,-DOT_SIZE/2,0.5,-DOT_SIZE/2)
-    dot.BackgroundColor3=C_ACCENT; Instance.new("UICorner", dot).CornerRadius=UDim.new(1,0)
-    -- CAMBIO: expandZone 10px más arriba (H_MINI - 20 en lugar de H_MINI - 10)
-    local expandZone = Instance.new("Frame", panel)
-    expandZone.Size=UDim2.new(1,-16,0,CONTENT_H); expandZone.Position=UDim2.new(0,8,0,H_MINI - 20)
-    expandZone.BackgroundColor3=C_DIM; expandZone.BackgroundTransparency=0.3
-    expandZone.BorderSizePixel=0; expandZone.Visible=false
-    Instance.new("UICorner", expandZone).CornerRadius=UDim.new(0,8)
-    local exStroke = Instance.new("UIStroke", expandZone)
-    exStroke.Color=C_PURPLE; exStroke.Thickness=1; exStroke.Transparency=0.55
-    local layout = Instance.new("UIListLayout", expandZone)
-    layout.Padding=UDim.new(0,6); layout.SortOrder=Enum.SortOrder.LayoutOrder; layout.HorizontalAlignment=Enum.HorizontalAlignment.Center
-    local topSpacer = Instance.new("Frame")
-    topSpacer.Size=UDim2.new(1,0,0,5); topSpacer.BackgroundTransparency=1; topSpacer.BorderSizePixel=0; topSpacer.Parent=expandZone
 
-    local function makeSection(h)
+    local C_PURPLE  = Color3.fromRGB(110, 30, 180)
+    local C_DIM     = Color3.fromRGB(40,   6,  72)
+    local C_BLACK   = Color3.fromRGB(6,    4,  12)
+    local C_ACCENT  = Color3.fromRGB(160,  60, 255)
+    local C_TEXT    = Color3.fromRGB(255, 255, 255)
+    local C_SUBTEXT = Color3.fromRGB(200, 175, 230)
+    local C_GREEN   = Color3.fromRGB(80,  255, 150)
+    local C_YELLOW  = Color3.fromRGB(255, 220,  60)
+    local C_RED     = Color3.fromRGB(255,  80,  80)
+    local C_CYAN    = Color3.fromRGB(80,  200, 255)
+    local C_GOLD    = Color3.fromRGB(255, 220,  80)
+
+    -- Layout constants
+    local W        = 280
+    local H_MINI   = 48
+    local DOT_SIZE = 10
+    local PAD      = 10
+
+    -- expandZone rows: lock(34) + noclip(90) + speed(110) + spacer(8)*3 + toppad(8) + botpad(8)
+    local CONTENT_H = 8 + 34 + 8 + 90 + 8 + 110 + 8
+    local H_FULL    = H_MINI + CONTENT_H + 6
+
+    local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "AFO_FlyHUD"; sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.IgnoreGuiInset = true; sg.Parent = CoreGui
+    flyanim.gui = sg
+
+    -- Root container
+    local root = Instance.new("Frame", sg)
+    root.Size = UDim2.new(0, W, 0, H_FULL)
+    root.Position = UDim2.new(0.5, -W/2, 0, 6)
+    root.BackgroundTransparency = 1; root.BorderSizePixel = 0
+
+    -- Background panel (full height, clipped)
+    local panel = Instance.new("Frame", root)
+    panel.Size = UDim2.new(1, 0, 0, H_MINI)
+    panel.BackgroundColor3 = C_BLACK
+    panel.BackgroundTransparency = 0.06; panel.BorderSizePixel = 0
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = C_PURPLE; stroke.Thickness = 1.2; stroke.Transparency = 0.75
+
+    -- ── Top bar (header) ─────────────────────────────────────────
+    local topBar = Instance.new("Frame", panel)
+    topBar.Size = UDim2.new(1, 0, 0, H_MINI)
+    topBar.Position = UDim2.new(0, 0, 0, 0)
+    topBar.BackgroundTransparency = 1
+
+    -- Rocket icon (left)
+    local iconLbl = Instance.new("TextLabel", topBar)
+    iconLbl.Size = UDim2.new(0, 26, 1, 0); iconLbl.Position = UDim2.new(0, PAD, 0, 0)
+    iconLbl.BackgroundTransparency = 1; iconLbl.Font = Enum.Font.Legacy
+    iconLbl.TextSize = 18; iconLbl.TextColor3 = C_ACCENT
+    iconLbl.Text = "🚀"; iconLbl.TextXAlignment = Enum.TextXAlignment.Center
+    iconLbl.TextYAlignment = Enum.TextYAlignment.Center
+
+    -- Title label (fly name + key)
+    local titleLbl = Instance.new("TextLabel", topBar)
+    titleLbl.Size = UDim2.new(0, 90, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 30, 0, 0)
+    titleLbl.BackgroundTransparency = 1; titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 12; titleLbl.TextColor3 = C_TEXT
+    titleLbl.Text = FT.fly_title .. "  [" .. flyanim.flyKey.Name .. "]"
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.TextYAlignment = Enum.TextYAlignment.Center
+
+    -- Separator
+    local sep = Instance.new("Frame", topBar)
+    sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, PAD + 126, 0.5, -11)
+    sep.BackgroundColor3 = C_PURPLE; sep.BackgroundTransparency = 0.4
+
+    -- Mode icon (separate emoji so font can be Legacy)
+    local modeIconLbl = Instance.new("TextLabel", topBar)
+    modeIconLbl.Size = UDim2.new(0, 22, 1, 0); modeIconLbl.Position = UDim2.new(0, PAD + 134, 0, 0)
+    modeIconLbl.BackgroundTransparency = 1; modeIconLbl.Font = Enum.Font.Legacy
+    modeIconLbl.TextSize = 14; modeIconLbl.TextColor3 = C_GREEN
+    modeIconLbl.Text = "🚀"; modeIconLbl.TextXAlignment = Enum.TextXAlignment.Center
+    modeIconLbl.TextYAlignment = Enum.TextYAlignment.Center
+
+    -- Mode text label
+    local modeLbl = Instance.new("TextLabel", topBar)
+    modeLbl.Size = UDim2.new(1, -(PAD + 134 + 22 + DOT_SIZE + 18), 1, 0)
+    modeLbl.Position = UDim2.new(0, PAD + 134 + 26, 0, 0)
+    modeLbl.BackgroundTransparency = 1; modeLbl.Font = Enum.Font.GothamBold
+    modeLbl.TextSize = 12; modeLbl.TextColor3 = C_GREEN
+    modeLbl.Text = FT.mode_normal
+    modeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    modeLbl.TextYAlignment = Enum.TextYAlignment.Center
+
+    -- Expand dot button (far right)
+    local dotBtn = Instance.new("TextButton", topBar)
+    dotBtn.Size = UDim2.new(0, DOT_SIZE + 10, 1, 0)
+    dotBtn.Position = UDim2.new(1, -(DOT_SIZE + 14), 0, 0)
+    dotBtn.BackgroundTransparency = 1; dotBtn.Text = ""
+    local dot = Instance.new("Frame", dotBtn)
+    dot.Size = UDim2.new(0, DOT_SIZE, 0, DOT_SIZE)
+    dot.Position = UDim2.new(0.5, -DOT_SIZE/2, 0.5, -DOT_SIZE/2)
+    dot.BackgroundColor3 = C_ACCENT
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    -- ── Expand zone: positioned strictly BELOW the header ────────
+    local expandZone = Instance.new("Frame", panel)
+    expandZone.Size = UDim2.new(1, -2*PAD+4, 0, CONTENT_H)
+    expandZone.Position = UDim2.new(0, PAD - 2, 0, H_MINI + 4)
+    expandZone.BackgroundColor3 = C_DIM; expandZone.BackgroundTransparency = 0.3
+    expandZone.BorderSizePixel = 0; expandZone.Visible = false
+    Instance.new("UICorner", expandZone).CornerRadius = UDim.new(0, 8)
+    local exStroke = Instance.new("UIStroke", expandZone)
+    exStroke.Color = C_PURPLE; exStroke.Thickness = 1; exStroke.Transparency = 0.55
+
+    -- UIListLayout drives all sections in expandZone
+    local layout = Instance.new("UIListLayout", expandZone)
+    layout.Padding = UDim.new(0, 6)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.VerticalAlignment = Enum.VerticalAlignment.Top
+    Instance.new("UIPadding", expandZone).PaddingTop    = UDim.new(0, 8)
+
+    -- Section factory
+    local function makeSection(h, bgColor)
         local f = Instance.new("Frame")
-        f.Size=UDim2.new(1,-20,0,h); f.BackgroundColor3=Color3.fromRGB(30,10,50); f.BackgroundTransparency=0.3
-        Instance.new("UICorner", f).CornerRadius=UDim.new(0,6)
-        local s = Instance.new("UIStroke", f); s.Color=C_ACCENT; s.Thickness=1; s.Transparency=0.6
+        f.Size = UDim2.new(1, -8, 0, h)
+        f.BackgroundColor3 = bgColor or Color3.fromRGB(30, 10, 50)
+        f.BackgroundTransparency = 0.25; f.BorderSizePixel = 0
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+        local s = Instance.new("UIStroke", f)
+        s.Color = C_ACCENT; s.Thickness = 1; s.Transparency = 0.6
         return f
     end
 
-    local lockSec = makeSection(30); lockSec.Parent=expandZone
-    -- CAMBIO: emoji en label con Font.Legacy
+    -- ── LOCK section ─────────────────────────────────────────────
+    local lockSec = makeSection(34); lockSec.Parent = expandZone
+
     local lockIconEmoji = Instance.new("TextLabel", lockSec)
-    lockIconEmoji.Size=UDim2.new(0,22,1,0); lockIconEmoji.Position=UDim2.new(0,6,0,0)
-    lockIconEmoji.BackgroundTransparency=1; lockIconEmoji.Font=Enum.Font.Legacy
-    lockIconEmoji.TextSize=14; lockIconEmoji.TextColor3=Color3.fromRGB(255,220,80); lockIconEmoji.Text="🎯"
+    lockIconEmoji.Size = UDim2.new(0, 20, 1, 0); lockIconEmoji.Position = UDim2.new(0, 8, 0, 0)
+    lockIconEmoji.BackgroundTransparency = 1; lockIconEmoji.Font = Enum.Font.Legacy
+    lockIconEmoji.TextSize = 14; lockIconEmoji.TextColor3 = C_GOLD
+    lockIconEmoji.Text = "🎯"; lockIconEmoji.TextXAlignment = Enum.TextXAlignment.Center
+    lockIconEmoji.TextYAlignment = Enum.TextYAlignment.Center
+
     local lockLabel = Instance.new("TextLabel", lockSec)
-    lockLabel.Size=UDim2.new(0,80,1,0); lockLabel.Position=UDim2.new(0,28,0,0)
-    lockLabel.BackgroundTransparency=1; lockLabel.Font=Enum.Font.GothamBold
-    lockLabel.TextSize=11; lockLabel.TextColor3=C_TEXT
-    lockLabel.Text="LOCK ["..flyanim.lockKey.Name.."]"; lockLabel.TextXAlignment=Enum.TextXAlignment.Left
+    lockLabel.Size = UDim2.new(0, 90, 1, 0); lockLabel.Position = UDim2.new(0, 34, 0, 0)
+    lockLabel.BackgroundTransparency = 1; lockLabel.Font = Enum.Font.GothamBold
+    lockLabel.TextSize = 11; lockLabel.TextColor3 = C_TEXT
+    lockLabel.Text = FT.lock_label .. "  [" .. flyanim.lockKey.Name .. "]"
+    lockLabel.TextXAlignment = Enum.TextXAlignment.Left
+    lockLabel.TextYAlignment = Enum.TextYAlignment.Center
+
     local lockHint = Instance.new("TextLabel", lockSec)
-    lockHint.Size=UDim2.new(1,-110,1,0); lockHint.Position=UDim2.new(0,105,0,0)
-    lockHint.BackgroundTransparency=1; lockHint.Font=Enum.Font.Gotham
-    lockHint.TextSize=9; lockHint.TextColor3=Color3.fromRGB(150,120,200)
-    lockHint.Text="Apuntar + "..flyanim.lockKey.Name; lockHint.TextXAlignment=Enum.TextXAlignment.Right
+    lockHint.Size = UDim2.new(1, -130, 1, 0); lockHint.Position = UDim2.new(0, 126, 0, 0)
+    lockHint.BackgroundTransparency = 1; lockHint.Font = Enum.Font.Gotham
+    lockHint.TextSize = 9; lockHint.TextColor3 = C_SUBTEXT
+    lockHint.Text = FT.lock_hint_prefix .. flyanim.lockKey.Name
+    lockHint.TextXAlignment = Enum.TextXAlignment.Right
+    lockHint.TextYAlignment = Enum.TextYAlignment.Center
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
-    local noclipSec = makeSection(82); noclipSec.Parent=expandZone
-    -- CAMBIO: emoji noclip con Font.Legacy
+    -- ── NOCLIP section ───────────────────────────────────────────
+    local noclipSec = makeSection(90); noclipSec.Parent = expandZone
+
     local noclipTitleEmoji = Instance.new("TextLabel", noclipSec)
-    noclipTitleEmoji.Size=UDim2.new(0,20,0,16); noclipTitleEmoji.Position=UDim2.new(0,6,0,2)
-    noclipTitleEmoji.BackgroundTransparency=1; noclipTitleEmoji.Font=Enum.Font.Legacy
-    noclipTitleEmoji.TextSize=13; noclipTitleEmoji.TextColor3=C_TEXT; noclipTitleEmoji.Text="👻"
+    noclipTitleEmoji.Size = UDim2.new(0, 20, 0, 18); noclipTitleEmoji.Position = UDim2.new(0, 8, 0, 6)
+    noclipTitleEmoji.BackgroundTransparency = 1; noclipTitleEmoji.Font = Enum.Font.Legacy
+    noclipTitleEmoji.TextSize = 13; noclipTitleEmoji.TextColor3 = C_TEXT
+    noclipTitleEmoji.Text = "👻"; noclipTitleEmoji.TextXAlignment = Enum.TextXAlignment.Center
+    noclipTitleEmoji.TextYAlignment = Enum.TextYAlignment.Center
+
     local noclipTitle = Instance.new("TextLabel", noclipSec)
-    noclipTitle.Size=UDim2.new(1,-32,0,16); noclipTitle.Position=UDim2.new(0,26,0,2)
-    noclipTitle.BackgroundTransparency=1; noclipTitle.Font=Enum.Font.GothamBold
-    noclipTitle.TextSize=11; noclipTitle.TextColor3=C_TEXT; noclipTitle.Text="NOCLIP"; noclipTitle.TextXAlignment=Enum.TextXAlignment.Left
-    local spaceRow = Instance.new("Frame", noclipSec)
-    spaceRow.Size=UDim2.new(1,-12,0,20); spaceRow.Position=UDim2.new(0,6,0,18); spaceRow.BackgroundTransparency=1
-    local spaceLabel = Instance.new("TextLabel", spaceRow)
-    spaceLabel.Size=UDim2.new(0,88,1,0); spaceLabel.BackgroundTransparency=1; spaceLabel.Font=Enum.Font.Gotham
-    spaceLabel.TextSize=10; spaceLabel.TextColor3=C_TEXT; spaceLabel.Text=FT.noclip_space; spaceLabel.TextXAlignment=Enum.TextXAlignment.Left
-    createToggle(spaceRow, 146, 1, flyanim.noclipSpaceEnabled, function(state) flyanim.noclipSpaceEnabled = state end)
-    local ctrlRow = Instance.new("Frame", noclipSec)
-    ctrlRow.Size=UDim2.new(1,-12,0,20); ctrlRow.Position=UDim2.new(0,6,0,40); ctrlRow.BackgroundTransparency=1
-    local ctrlLabel = Instance.new("TextLabel", ctrlRow)
-    ctrlLabel.Size=UDim2.new(0,88,1,0); ctrlLabel.BackgroundTransparency=1; ctrlLabel.Font=Enum.Font.Gotham
-    ctrlLabel.TextSize=10; ctrlLabel.TextColor3=C_TEXT; ctrlLabel.Text=FT.noclip_ctrl; ctrlLabel.TextXAlignment=Enum.TextXAlignment.Left
-    createToggle(ctrlRow, 146, 1, flyanim.noclipCtrlEnabled, function(state) flyanim.noclipCtrlEnabled = state end)
+    noclipTitle.Size = UDim2.new(1, -36, 0, 18); noclipTitle.Position = UDim2.new(0, 34, 0, 6)
+    noclipTitle.BackgroundTransparency = 1; noclipTitle.Font = Enum.Font.GothamBold
+    noclipTitle.TextSize = 11; noclipTitle.TextColor3 = C_TEXT
+    noclipTitle.Text = FT.noclip_title
+    noclipTitle.TextXAlignment = Enum.TextXAlignment.Left
+    noclipTitle.TextYAlignment = Enum.TextYAlignment.Center
+
+    local function makeNoclipRow(parent, yPos, labelText, initialState, onChange)
+        local row = Instance.new("Frame", parent)
+        row.Size = UDim2.new(1, -16, 0, 22); row.Position = UDim2.new(0, 8, 0, yPos)
+        row.BackgroundTransparency = 1
+        local lbl = Instance.new("TextLabel", row)
+        lbl.Size = UDim2.new(1, -44, 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+        lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
+        lbl.Text = labelText; lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextYAlignment = Enum.TextYAlignment.Center
+        createToggle(row, 196, 2, initialState, onChange)
+        return row
+    end
+
+    makeNoclipRow(noclipSec, 26, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
+    makeNoclipRow(noclipSec, 50, FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
+
     local megaRow = Instance.new("Frame", noclipSec)
-    megaRow.Size=UDim2.new(1,-12,0,20); megaRow.Position=UDim2.new(0,6,0,62); megaRow.BackgroundTransparency=1
-    -- CAMBIO: emoji mega con Font.Legacy
+    megaRow.Size = UDim2.new(1, -16, 0, 22); megaRow.Position = UDim2.new(0, 8, 0, 64)
+    megaRow.BackgroundTransparency = 1
     local megaEmojiLbl = Instance.new("TextLabel", megaRow)
-    megaEmojiLbl.Size=UDim2.new(0,18,1,0); megaEmojiLbl.BackgroundTransparency=1; megaEmojiLbl.Font=Enum.Font.Legacy
-    megaEmojiLbl.TextSize=12; megaEmojiLbl.TextColor3=C_CYAN; megaEmojiLbl.Text="🚅"
+    megaEmojiLbl.Size = UDim2.new(0, 18, 1, 0); megaEmojiLbl.Position = UDim2.new(0, 0, 0, 0)
+    megaEmojiLbl.BackgroundTransparency = 1; megaEmojiLbl.Font = Enum.Font.Legacy
+    megaEmojiLbl.TextSize = 12; megaEmojiLbl.TextColor3 = C_CYAN
+    megaEmojiLbl.Text = "🚅"; megaEmojiLbl.TextXAlignment = Enum.TextXAlignment.Center
+    megaEmojiLbl.TextYAlignment = Enum.TextYAlignment.Center
     local megaLabel = Instance.new("TextLabel", megaRow)
-    megaLabel.Size=UDim2.new(0,72,1,0); megaLabel.Position=UDim2.new(0,18,0,0); megaLabel.BackgroundTransparency=1; megaLabel.Font=Enum.Font.Gotham
-    megaLabel.TextSize=10; megaLabel.TextColor3=C_TEXT; megaLabel.Text="Mega Turbo"; megaLabel.TextXAlignment=Enum.TextXAlignment.Left
-    createToggle(megaRow, 146, 1, flyanim.noclipMegaEnabled, function(state) flyanim.noclipMegaEnabled = state end)
+    megaLabel.Size = UDim2.new(1, -62, 1, 0); megaLabel.Position = UDim2.new(0, 22, 0, 0)
+    megaLabel.BackgroundTransparency = 1; megaLabel.Font = Enum.Font.Gotham
+    megaLabel.TextSize = 10; megaLabel.TextColor3 = C_TEXT
+    megaLabel.Text = FT.noclip_mega; megaLabel.TextXAlignment = Enum.TextXAlignment.Left
+    megaLabel.TextYAlignment = Enum.TextYAlignment.Center
+    createToggle(megaRow, 196, 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
 
-    local speedSec = makeSection(104); speedSec.BackgroundColor3=Color3.fromRGB(25,12,55); speedSec.Parent=expandZone
-    local speedStroke = Instance.new("UIStroke", speedSec); speedStroke.Color=C_PURPLE; speedStroke.Thickness=1; speedStroke.Transparency=0.6
+    -- ── SPEED section ────────────────────────────────────────────
+    local speedSec = makeSection(110, Color3.fromRGB(25, 12, 55)); speedSec.Parent = expandZone
+    local speedStroke = Instance.new("UIStroke", speedSec)
+    speedStroke.Color = C_PURPLE; speedStroke.Thickness = 1; speedStroke.Transparency = 0.6
 
-    local function makeRow(emojiText, labelText, yPos, defaultVal, minVal, maxVal)
-        -- CAMBIO: emoji separado en label con Font.Legacy
+    local function makeSpeedRow(emojiText, labelText, yPos, defaultVal, minVal, maxVal)
         local emojiLbl = Instance.new("TextLabel", speedSec)
-        emojiLbl.Size=UDim2.new(0,18,0,18); emojiLbl.Position=UDim2.new(0,6,0,yPos)
-        emojiLbl.BackgroundTransparency=1; emojiLbl.Font=Enum.Font.Legacy; emojiLbl.TextSize=12
-        emojiLbl.TextColor3=C_ACCENT; emojiLbl.Text=emojiText
+        emojiLbl.Size = UDim2.new(0, 20, 0, 20); emojiLbl.Position = UDim2.new(0, 8, 0, yPos)
+        emojiLbl.BackgroundTransparency = 1; emojiLbl.Font = Enum.Font.Legacy; emojiLbl.TextSize = 13
+        emojiLbl.TextColor3 = C_ACCENT
+        emojiLbl.Text = emojiText; emojiLbl.TextXAlignment = Enum.TextXAlignment.Center
+        emojiLbl.TextYAlignment = Enum.TextYAlignment.Center
         local lbl = Instance.new("TextLabel", speedSec)
-        lbl.Size=UDim2.new(0,70,0,18); lbl.Position=UDim2.new(0,24,0,yPos)
-        lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamSemibold; lbl.TextSize=10; lbl.TextColor3=C_TEXT
-        lbl.Text=labelText; lbl.TextXAlignment=Enum.TextXAlignment.Left
+        lbl.Size = UDim2.new(0, 72, 0, 20); lbl.Position = UDim2.new(0, 32, 0, yPos)
+        lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold
+        lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
+        lbl.Text = labelText; lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextYAlignment = Enum.TextYAlignment.Center
         local box = Instance.new("TextBox", speedSec)
-        box.Size=UDim2.new(1,-100,0,18); box.Position=UDim2.new(0,94,0,yPos)
-        box.BackgroundColor3=Color3.fromRGB(18,6,32); box.BackgroundTransparency=0.05; box.BorderSizePixel=0
-        box.Font=Enum.Font.GothamBold; box.TextSize=10; box.TextColor3=C_ACCENT; box.Text=tostring(defaultVal); box.ClearTextOnFocus=true
-        Instance.new("UICorner", box).CornerRadius=UDim.new(0,4)
-        local bs = Instance.new("UIStroke", box); bs.Color=C_ACCENT; bs.Thickness=1; bs.Transparency=0.55
+        box.Size = UDim2.new(1, -116, 0, 20); box.Position = UDim2.new(0, 108, 0, yPos)
+        box.BackgroundColor3 = Color3.fromRGB(18, 6, 32); box.BackgroundTransparency = 0.05
+        box.BorderSizePixel = 0; box.Font = Enum.Font.GothamBold; box.TextSize = 11
+        box.TextColor3 = C_TEXT; box.Text = tostring(defaultVal); box.ClearTextOnFocus = true
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+        local bs = Instance.new("UIStroke", box); bs.Color = C_ACCENT; bs.Thickness = 1; bs.Transparency = 0.55
         box:GetPropertyChangedSignal("Text"):Connect(function()
             local n = tonumber(box.Text:match("[%d%.]+"))
             if n then
@@ -3587,23 +3629,17 @@ local function _flyBuildGui()
         return box
     end
 
-    -- CAMBIO: emojis separados en makeRow
-    local speedBox = makeRow("🚀", "Vel. base",  6,  BASE_SPEED, 1, 10000)
-    local fastBox  = makeRow("🚄", "Turbo x",   30, FAST_MULT,  1, 1000)
-    local turboBox = makeRow("🚅", "Mega x",    54, TURBO_MULT, 1, 1000)
+    local speedBox = makeSpeedRow("🚀", FT.speed_base,       8,  BASE_SPEED, 1, 10000)
+    local fastBox  = makeSpeedRow("🚄", FT.speed_turbo_mult, 34, FAST_MULT,  1, 1000)
+    local turboBox = makeSpeedRow("🚅", FT.speed_mega_mult,  60, TURBO_MULT, 1, 1000)
 
-    -- CAMBIO: botón reset con emoji separado
-    local resetBtnFrame = Instance.new("Frame", speedSec)
-    resetBtnFrame.Size=UDim2.new(0,100,0,20); resetBtnFrame.Position=UDim2.new(0.5,-50,0,82)
-    resetBtnFrame.BackgroundTransparency=1
-    local resetBtn = Instance.new("TextButton", resetBtnFrame)
-    resetBtn.Size=UDim2.new(1,0,1,0)
-    resetBtn.BackgroundColor3=Color3.fromRGB(60,10,110); resetBtn.BackgroundTransparency=0.2
-    resetBtn.BorderSizePixel=0; resetBtn.Font=Enum.Font.GothamBold; resetBtn.TextSize=10
-    resetBtn.TextColor3=C_TEXT; resetBtn.Text="🔄 Reset"
-    -- CAMBIO: usar Font.Legacy en el botón reset para que el emoji funcione
-    resetBtn.Font = Enum.Font.Legacy
-    Instance.new("UICorner", resetBtn).CornerRadius=UDim.new(0,5)
+    local resetBtn = Instance.new("TextButton", speedSec)
+    resetBtn.Size = UDim2.new(0, 100, 0, 22); resetBtn.Position = UDim2.new(0.5, -50, 0, 84)
+    resetBtn.BackgroundColor3 = Color3.fromRGB(60, 10, 110); resetBtn.BackgroundTransparency = 0.2
+    resetBtn.BorderSizePixel = 0; resetBtn.Font = Enum.Font.Legacy
+    resetBtn.TextSize = 11; resetBtn.TextColor3 = C_TEXT
+    resetBtn.Text = "🔄  " .. FT.speed_reset
+    Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 5)
 
     local function recalcSpeed()
         if isnan(BASE_SPEED) then BASE_SPEED = DEFAULT_BASE end
@@ -3704,23 +3740,26 @@ local function _flyBuildGui()
     end)
     flyanim._dragInputConn = dragInputConn
 
-    flyanim.updateLbl  = function(keyName) pcall(function() titleLbl.Text=FT.fly_title.." ["..keyName.."]" end) end
+    flyanim.updateLbl  = function(keyName) pcall(function() titleLbl.Text = FT.fly_title .. "  [" .. keyName .. "]" end) end
     flyanim.updateMode = function(modeName)
         pcall(function()
             local multF = math.floor(FAST_MULT*10+0.5)/10
             local multT = math.floor(TURBO_MULT*10+0.5)/10
-            -- CAMBIO: emojis en labels de modo - usando Font.Legacy en modeLbl
-            local labels   = {
-                normal = "🚀 NORMAL",
-                fast   = "🚄 TURBO  x"..tostring(multF),
-                turbo  = "🚅 MEGA  x"..tostring(multT),
-                megaup = "🚅 MEGA UP  x"..tostring(multT)
+            local modeEmojis = { normal="🚀", fast="🚄", turbo="🚅", megaup="🚅" }
+            local modeTexts  = {
+                normal = FT.mode_normal,
+                fast   = FT.mode_fast  .. tostring(multF),
+                turbo  = FT.mode_mega  .. tostring(multT),
+                megaup = FT.mode_megaup.. tostring(multT),
             }
-            local colors   = { normal=C_GREEN, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
+            local colors    = { normal=C_GREEN, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
             local dotColors = { normal=C_ACCENT, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
-            modeLbl.Font       = Enum.Font.Legacy
-            modeLbl.Text       = labels[modeName]   or modeName
-            modeLbl.TextColor3 = colors[modeName]   or C_GREEN
+            modeIconLbl.Font       = Enum.Font.Legacy
+            modeIconLbl.Text       = modeEmojis[modeName] or "🚀"
+            modeLbl.Font           = Enum.Font.GothamBold
+            modeLbl.Text           = modeTexts[modeName]  or modeName
+            modeLbl.TextColor3     = colors[modeName]     or C_GREEN
+            modeIconLbl.TextColor3 = colors[modeName]     or C_GREEN
             TweenService:Create(dot, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3=dotColors[modeName] or C_ACCENT}):Play()
         end)
     end
@@ -4524,170 +4563,57 @@ end
 -- EVENTOS GLOBALES
 -- ============================================================
  
-local function triggerDash(direction, speed, duration)
-    local cam = workspace.CurrentCamera
-    local dashDir
-    if direction == "back"    then local l = cam.CFrame.LookVector; dashDir = Vector3.new(-l.X, 0, -l.Z)
-    elseif direction == "left"  then local r = cam.CFrame.RightVector; dashDir = Vector3.new(-r.X, 0, -r.Z)
-    elseif direction == "right" then local r = cam.CFrame.RightVector; dashDir = Vector3.new(r.X, 0, r.Z)
-    elseif direction == "forward" then local l = cam.CFrame.LookVector; dashDir = Vector3.new(l.X, 0, l.Z) end
-    if not dashDir or dashDir.Magnitude < 0.01 then return end
-    flyanim.dashVel   = dashDir.Unit * (speed or flyanim.DASH_SPEED)
-    flyanim.dashTimer = duration or flyanim.DASH_DURATION
-    startDashCollisionDetection()
-end
-
-local function activateMegaTurbo()
-    if flyanim.mode ~= "fast" then return end
-    flyanim.mode  = "turbo"
-    flyanim.speed = BASE_SPEED * TURBO_MULT
-    if flyanim.updateMode then flyanim.updateMode("turbo") end
-    if flyanim.noclipMegaEnabled then setNoclip(true) end
-    shakeCamera(3.5, 0.4)
-    playLocalSound(SFX_MEGA_TURBO, 0.88)
-    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
-    triggerDash("forward", flyanim.TURBO_DASH_SPEED * 1.5, flyanim.TURBO_DASH_DURATION * 1.2)
-    startParticleEmitter(); detenerPoseTurbo(); iniciarPoseMega()
-end
-
 local function handleQPress()
     if not flyanim.enabled then return end
     if isTyping() then return end
-    if flyanim.turboPreImpulsoActivo then return end
-
-    local wDown = UserInputService:IsKeyDown(Enum.KeyCode.W)
-    local sDown = UserInputService:IsKeyDown(Enum.KeyCode.S)
-    local aDown = UserInputService:IsKeyDown(Enum.KeyCode.A)
-    local dDown = UserInputService:IsKeyDown(Enum.KeyCode.D)
-
-    if not wDown then
-        if sDown and not aDown and not dDown then
-            triggerDash("back", flyanim.BACK_DASH_SPEED, flyanim.DASH_DURATION * 1.2)
-            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
-            local myDashToken = flyanim.dashAnimToken
-            task.spawn(function()
-                local t = getTrack(ANIM.sq_anim)
-                if not t then return end
-                local timeout = tick() + 2
-                while t.Length == 0 and tick() < timeout do task.wait() end
-                if flyanim.dashAnimToken ~= myDashToken then return end
-                if not flyanim.enabled then return end
-                for id, track in pairs(flyanim.tracks) do
-                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
-                        pcall(function() track:Stop(0.04) end)
-                    end
-                end
-                for key, track in pairs(flyanim.normalTracks) do
-                    if key ~= "levitacion" then
-                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
-                    end
-                end
-                if t.IsPlaying then pcall(function() t:Stop(0) end) end
-                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
-                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
-            end)
-            return
+    local now = tick()
+    -- Reducir ventana de doble tap para turbo/mega: 0.20 s (antes 0.30)
+    -- Esto hace que el spam de Q sea más responsivo en peleas
+    if now - flyanim.qLastPress < 0.20 then
+        if flyanim.mode == "turbo" then
+            flyanim.mode  = "normal"
+            flyanim.speed = BASE_SPEED
+            flyanim.qLastPress = 0
+            if flyanim.updateMode then flyanim.updateMode("normal") end
+            if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
+            stopParticleEmitter()
+            detenerPoseMega()
+            detenerPoseTurbo()
+            flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+            restaurarC0Inmediato()
+            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+            iniciarCicloNormal(flyanim._normalPlayId)
+        elseif flyanim.mode == "fast" or flyanim.mode == "normal" then
+            flyanim.mode  = "turbo"
+            flyanim.speed = BASE_SPEED * TURBO_MULT
+            flyanim.qLastPress = 0
+            if flyanim.updateMode then flyanim.updateMode("turbo") end
+            if flyanim.noclipMegaEnabled then setNoclip(true) end
+            detenerPoseTurbo()
+            iniciarPoseMega()
+            startParticleEmitter()
+            playLocalSound(SFX_MEGA_TURBO, 0.85)
+            sonicBoomEffect(2)
+            airShockAura(2)
+            speedWhiteFlash("turbo")
         end
-
-        if aDown and not sDown and not dDown then
-            triggerDash("left", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
-            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
-            local myDashToken = flyanim.dashAnimToken
-            task.spawn(function()
-                local t = getTrack(ANIM.sq_anim)
-                if not t then return end
-                local timeout = tick() + 2
-                while t.Length == 0 and tick() < timeout do task.wait() end
-                if flyanim.dashAnimToken ~= myDashToken then return end
-                if not flyanim.enabled then return end
-                for id, track in pairs(flyanim.tracks) do
-                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
-                        pcall(function() track:Stop(0.04) end)
-                    end
-                end
-                for key, track in pairs(flyanim.normalTracks) do
-                    if key ~= "levitacion" then
-                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
-                    end
-                end
-                if t.IsPlaying then pcall(function() t:Stop(0) end) end
-                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
-                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
-            end)
-            return
-        end
-
-        if dDown and not sDown and not aDown then
-            triggerDash("right", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
-            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
-            local myDashToken = flyanim.dashAnimToken
-            task.spawn(function()
-                local t = getTrack(ANIM.dq_anim)
-                if not t then return end
-                local timeout = tick() + 2
-                while t.Length == 0 and tick() < timeout do task.wait() end
-                if flyanim.dashAnimToken ~= myDashToken then return end
-                if not flyanim.enabled then return end
-                for id, track in pairs(flyanim.tracks) do
-                    if id ~= ANIM.dq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
-                        pcall(function() track:Stop(0.04) end)
-                    end
-                end
-                for key, track in pairs(flyanim.normalTracks) do
-                    if key ~= "levitacion" then
-                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
-                    end
-                end
-                if t.IsPlaying then pcall(function() t:Stop(0) end) end
-                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
-                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
-            end)
-            return
-        end
-    end
-
-    if flyanim.mode == "fast" then
-        local elapsed = tick() - flyanim.turboActivatedAt
-        if elapsed >= 0.75 then activateMegaTurbo() end
-        return
-    end
-    if flyanim.mode == "turbo" then
-        flyanim.mode  = "normal"
-        flyanim.speed = BASE_SPEED
         flyanim.qLastPress = 0
-        if flyanim.updateMode then flyanim.updateMode("normal") end
-        if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
-        stopParticleEmitter()
-        detenerPoseMega()
-        detenerPoseTurbo()
-        flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-        restaurarC0Inmediato()
-        flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-        iniciarCicloNormal(flyanim._normalPlayId)
         return
     end
     if flyanim.mode == "normal" then
-        flyanim.isSpaceAdv = false
-        if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
-        detenerEspacioAvanzado()
-        if flyanim.noclipSpaceActive then
-            flyanim.noclipSpaceActive = false
-        end
-        flyanim.noclipCtrlActive = false
         flyanim.mode  = "fast"
         flyanim.speed = BASE_SPEED * FAST_MULT
-        flyanim.qLastPress       = tick()
-        flyanim.turboActivatedAt = tick()
         if flyanim.updateMode then flyanim.updateMode("fast") end
-        setNoclip(false)
-        shakeCamera(2.0, 0.3)
-        playLocalSound(SFX_TURBO, 0.82)
-        sonicBoomEffect(1); airShockAura(1); speedWhiteFlash("fast")
-        triggerDash("forward", flyanim.TURBO_DASH_SPEED, flyanim.TURBO_DASH_DURATION)
-        startParticleEmitter()
-        detenerNormalTracks(0.1); detenerEspacioAvanzado()
-        iniciarPoseTurbo()
+        if not flyanim.turboPreImpulsoActivo then
+            iniciarPoseTurbo()
+            startParticleEmitter()
+            playLocalSound(SFX_TURBO, 0.85)
+            sonicBoomEffect(1)
+            airShockAura(1)
+            speedWhiteFlash("fast")
+        end
     end
+    flyanim.qLastPress = now
 end
  
 local _inputConn     = nil
@@ -4905,8 +4831,8 @@ end
 function M.SetLockKey(keyCode)
     flyanim.lockKey = keyCode
     if flyanim.lockLabels then
-        flyanim.lockLabels.label.Text = FT.lock_label.." ["..keyCode.Name.."]"
-        flyanim.lockLabels.hint.Text  = FT.lock_hint_prefix..keyCode.Name
+        flyanim.lockLabels.label.Text = FT.lock_label .. "  [" .. keyCode.Name .. "]"
+        flyanim.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
     end
     if flyanim.lockConn then flyanim.lockConn:Disconnect(); flyanim.lockConn = nil end
     if flyanim.enabled then startLockSystem() end
