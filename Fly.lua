@@ -1,4 +1,4 @@
-print("version 2.01")
+print("version 2.02")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -38,7 +38,7 @@ local FlyLang = {
         lock_hint_prefix = "Aim + ",
         noclip_title     = "NOCLIP",
         noclip_space     = "⬆  Space (Up)",
-        noclip_ctrl      = "⬇  Ctrl (down)",
+        noclip_ctrl      = "⬇  Ctrl (Down)",
         noclip_mega      = "Mega Turbo",
         height_below     = "studs below",
         height_above     = "studs above",
@@ -3394,19 +3394,10 @@ local function _flyBuildGui()
     local C_RED     = Color3.fromRGB(255,  80,  80)
     local C_CYAN    = Color3.fromRGB(80,  200, 255)
     local C_GOLD    = Color3.fromRGB(255, 220,  80)
-    -- Gradient: single smooth purple ramp, top=lightest → bottom=darkest
-    -- Each section picks its color by its vertical midpoint within CONTENT_H
-    local function gradientColor(midY)
-        local t = math.clamp(midY / CONTENT_H, 0, 1)
-        -- top  RGB(55, 20, 100)  →  bottom RGB(18, 6, 40)
-        local r = 55  + (18  - 55)  * t
-        local g = 20  + (6   - 20)  * t
-        local b = 100 + (40  - 100) * t
-        return Color3.fromRGB(math.floor(r+0.5), math.floor(g+0.5), math.floor(b+0.5))
-    end
-    local C_SEC1 = gradientColor(H_LOCK / 2)
-    local C_SEC2 = gradientColor(H_LOCK + 6 + H_NOCLIP / 2)
-    local C_SEC3 = gradientColor(H_LOCK + 6 + H_NOCLIP + 6 + H_SPEED / 2)
+    -- Gradient suave y continuo: diferencia mínima entre secciones para transición imperceptible
+    local C_SEC1    = Color3.fromRGB(42,  14,  80)   -- LOCK    (base)
+    local C_SEC2    = Color3.fromRGB(36,  11,  68)   -- NOCLIP  (barely darker)
+    local C_SEC3    = Color3.fromRGB(30,   9,  56)   -- SPEED   (slightly darker still)
 
     -- ── Layout ───────────────────────────────────────────────────
     local W        = 280
@@ -3416,12 +3407,13 @@ local function _flyBuildGui()
     local ROW_H    = 22   -- altura uniforme de todas las filas
     local TOGGLE_W = 36   -- ancho del toggle switch
 
-    -- LOCK:  1 fila de datos                          = PAD(8) + ROW_H + PAD(8)  = 38
-    -- NOCLIP: título(20) + 3 filas de toggle          = 8+20+4 + 3*(ROW_H+4) + 8 = 118
-    -- SPEED:  3 filas input (sin hints debajo) + reset = 8 + 3*(ROW_H+6) + 6 + 28 + 8
+    -- Alturas de sección calculadas desde las filas que contienen
+    -- LOCK:  1 fila de datos                             = PAD(8) + ROW_H + PAD(8)  = 38
+    -- NOCLIP: título(20) + 3 filas de toggle             = 8+20+4 + 3*(ROW_H+4) + 8 = 118
+    -- SPEED:  3 filas input (sin limits externos) + reset btn = 8 + 3*(ROW_H+6) + 10 + 28 + 8
     local H_LOCK   = 38
     local H_NOCLIP = 8 + 20 + 4 + 3*(ROW_H + 4) + 8
-    local H_SPEED  = 8 + 3*(ROW_H + 6) + 6 + 28 + 8
+    local H_SPEED  = 8 + 3*(ROW_H + 6) + 8 + 28 + 8
     local CONTENT_H = H_LOCK + 6 + H_NOCLIP + 6 + H_SPEED + 4
     local H_FULL   = H_MINI + 4 + CONTENT_H + 4
 
@@ -3453,35 +3445,30 @@ local function _flyBuildGui()
     topBar.Position = UDim2.new(0, 0, 0, 0)
     topBar.BackgroundTransparency = 1
 
-    -- Emoji rocket icon — also used by updateMode to swap per speed mode
-    local ICON_W   = 20
-    local ICON_PAD = 6
-    local modeIconLbl = Instance.new("TextLabel", topBar)
-    modeIconLbl.Size = UDim2.new(0, ICON_W, 1, 0)
-    modeIconLbl.Position = UDim2.new(0, PAD, 0, 0)
-    modeIconLbl.BackgroundTransparency = 1; modeIconLbl.Font = Enum.Font.Legacy
-    modeIconLbl.TextSize = 16; modeIconLbl.TextColor3 = C_ACCENT
-    modeIconLbl.Text = "🚀"; modeIconLbl.TextXAlignment = Enum.TextXAlignment.Center
-    modeIconLbl.TextYAlignment = Enum.TextYAlignment.Center
+    local iconLbl = Instance.new("TextLabel", topBar)
+    iconLbl.Size = UDim2.new(0, 20, 1, 0); iconLbl.Position = UDim2.new(0, PAD, 0, 0)
+    iconLbl.BackgroundTransparency = 1; iconLbl.Font = Enum.Font.Legacy
+    iconLbl.TextSize = 15; iconLbl.TextColor3 = C_ACCENT
+    iconLbl.Text = "🚀"; iconLbl.TextXAlignment = Enum.TextXAlignment.Center
+    iconLbl.TextYAlignment = Enum.TextYAlignment.Center
 
-    local TITLE_X = PAD + ICON_W + ICON_PAD
     local titleLbl = Instance.new("TextLabel", topBar)
-    titleLbl.Size = UDim2.new(0, 96, 1, 0); titleLbl.Position = UDim2.new(0, TITLE_X, 0, 0)
+    titleLbl.Size = UDim2.new(0, 96, 1, 0); titleLbl.Position = UDim2.new(0, PAD + 26, 0, 0)
     titleLbl.BackgroundTransparency = 1; titleLbl.Font = Enum.Font.GothamBold
     titleLbl.TextSize = 12; titleLbl.TextColor3 = C_TEXT
     titleLbl.Text = FT.fly_title .. "  [" .. flyanim.flyKey.Name .. "]"
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
     titleLbl.TextYAlignment = Enum.TextYAlignment.Center
-    titleLbl.TextTruncate = Enum.TextTruncate.None
+    titleLbl.TextScaled = false
 
-    local SEP_X = TITLE_X + 96 + 4
     local sep = Instance.new("Frame", topBar)
-    sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, SEP_X, 0.5, -11)
+    sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, PAD + 118, 0.5, -11)
     sep.BackgroundColor3 = C_PURPLE; sep.BackgroundTransparency = 0.4
 
+    -- Mode label only (no emoji in header mode area)
     local modeLbl = Instance.new("TextLabel", topBar)
-    modeLbl.Size = UDim2.new(1, -(SEP_X + 8 + DOT_SIZE + 14), 1, 0)
-    modeLbl.Position = UDim2.new(0, SEP_X + 8, 0, 0)
+    modeLbl.Size = UDim2.new(1, -(PAD + 118 + 8 + DOT_SIZE + 18), 1, 0)
+    modeLbl.Position = UDim2.new(0, PAD + 126, 0, 0)
     modeLbl.BackgroundTransparency = 1; modeLbl.Font = Enum.Font.GothamBold
     modeLbl.TextSize = 12; modeLbl.TextColor3 = C_GREEN
     modeLbl.Text = FT.mode_normal
@@ -3506,7 +3493,7 @@ local function _flyBuildGui()
     expandZone.BorderSizePixel = 0; expandZone.Visible = false
 
     local layout = Instance.new("UIListLayout", expandZone)
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 4)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     layout.VerticalAlignment = Enum.VerticalAlignment.Top
@@ -3564,7 +3551,7 @@ local function _flyBuildGui()
     local lockIconEmoji = Instance.new("TextLabel", lockRow)
     lockIconEmoji.Size = UDim2.new(0, 18, 1, 0); lockIconEmoji.Position = UDim2.new(0, 0, 0, 0)
     lockIconEmoji.BackgroundTransparency = 1; lockIconEmoji.Font = Enum.Font.Legacy
-    lockIconEmoji.TextSize = 13; lockIconEmoji.TextColor3 = C_GOLD
+    lockIconEmoji.TextSize = 11; lockIconEmoji.TextColor3 = C_GOLD
     lockIconEmoji.Text = "🎯"; lockIconEmoji.TextXAlignment = Enum.TextXAlignment.Center
     lockIconEmoji.TextYAlignment = Enum.TextYAlignment.Center
 
@@ -3593,7 +3580,7 @@ local function _flyBuildGui()
     local noclipTitleEmoji = Instance.new("TextLabel", noclipSec)
     noclipTitleEmoji.Size = UDim2.new(0, 18, 0, 20); noclipTitleEmoji.Position = UDim2.new(0, 8, 0, 8)
     noclipTitleEmoji.BackgroundTransparency = 1; noclipTitleEmoji.Font = Enum.Font.Legacy
-    noclipTitleEmoji.TextSize = 13; noclipTitleEmoji.TextColor3 = C_TEXT
+    noclipTitleEmoji.TextSize = 11; noclipTitleEmoji.TextColor3 = C_TEXT
     noclipTitleEmoji.Text = "👻"; noclipTitleEmoji.TextXAlignment = Enum.TextXAlignment.Center
     noclipTitleEmoji.TextYAlignment = Enum.TextYAlignment.Center
 
@@ -3609,23 +3596,20 @@ local function _flyBuildGui()
     local NOCLIP_ROW_START = 8 + 20 + 4   -- after title
     local NOCLIP_ROW_STEP  = ROW_H + 4
 
-    -- Toggle position: centred on the right-half column (same visual axis as speed input boxes)
-    -- Speed boxes start at BOX_X=112, width BOX_W≈128, so their centre is ~176px from section left edge
-    -- Section left edge is at expandZone x+8 offset, so within the row (width=W-2*PAD+4-16≈248) use x≈142
-    local NOCLIP_TOGGLE_X = 142   -- x within the row frame (row width ≈ 248px)
-
     local function makeNoclipRow(yPos, labelText, initialState, onChange)
         local row = Instance.new("Frame", noclipSec)
         row.Size = UDim2.new(1, -16, 0, ROW_H); row.Position = UDim2.new(0, 8, 0, yPos)
         row.BackgroundTransparency = 1
         local lbl = Instance.new("TextLabel", row)
-        lbl.Size = UDim2.new(0, NOCLIP_TOGGLE_X - 4, 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+        lbl.Size = UDim2.new(1, -(TOGGLE_W + 8), 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
         lbl.Text = labelText
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        createToggle(row, NOCLIP_TOGGLE_X, (ROW_H - 18) / 2, initialState, onChange)
+        -- Toggle centrado horizontalmente: mismo eje X que los inputs de Speed (BOX_X = 112)
+        local toggleX = 112 - 8  -- alineado con el inicio del input box menos padding de row
+        createToggle(row, toggleX, (ROW_H - 18) / 2, initialState, onChange)
     end
 
     makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
@@ -3643,13 +3627,13 @@ local function _flyBuildGui()
     megaEmojiLbl.Text = "🚅"; megaEmojiLbl.TextXAlignment = Enum.TextXAlignment.Center
     megaEmojiLbl.TextYAlignment = Enum.TextYAlignment.Center
     local megaLabel = Instance.new("TextLabel", megaRow)
-    megaLabel.Size = UDim2.new(0, NOCLIP_TOGGLE_X - 20, 1, 0); megaLabel.Position = UDim2.new(0, 20, 0, 0)
+    megaLabel.Size = UDim2.new(1, -(TOGGLE_W + 8 + 20), 1, 0); megaLabel.Position = UDim2.new(0, 20, 0, 0)
     megaLabel.BackgroundTransparency = 1; megaLabel.Font = Enum.Font.Gotham
     megaLabel.TextSize = 10; megaLabel.TextColor3 = C_TEXT
     megaLabel.Text = FT.noclip_mega
     megaLabel.TextXAlignment = Enum.TextXAlignment.Left
     megaLabel.TextYAlignment = Enum.TextYAlignment.Center
-    createToggle(megaRow, NOCLIP_TOGGLE_X, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
+    createToggle(megaRow, 112 - 8, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
 
     -- ── SPEED section (gradient bottom = darkest) ─────────────────
     local speedSec = makeSection(H_SPEED, C_SEC3, C_PURPLE)
@@ -3664,7 +3648,7 @@ local function _flyBuildGui()
 
         local emojiLbl = Instance.new("TextLabel", speedSec)
         emojiLbl.Size = UDim2.new(0, 18, 0, ROW_H); emojiLbl.Position = UDim2.new(0, 8, 0, yTop)
-        emojiLbl.BackgroundTransparency = 1; emojiLbl.Font = Enum.Font.Legacy; emojiLbl.TextSize = 13
+        emojiLbl.BackgroundTransparency = 1; emojiLbl.Font = Enum.Font.Legacy; emojiLbl.TextSize = 11
         emojiLbl.TextColor3 = C_ACCENT
         emojiLbl.Text = emojiText; emojiLbl.TextXAlignment = Enum.TextXAlignment.Center
         emojiLbl.TextYAlignment = Enum.TextYAlignment.Center
@@ -3678,15 +3662,15 @@ local function _flyBuildGui()
 
         -- Input box (right half)
         local BOX_X    = 112
-        local BOX_W    = W - 2*PAD + 4 - 16 - BOX_X - 8
+        local BOX_W    = W - 2*PAD + 4 - 16 - BOX_X - 8  -- fills remaining width
         local box = Instance.new("TextBox", speedSec)
         box.Size = UDim2.new(0, BOX_W, 0, ROW_H); box.Position = UDim2.new(0, BOX_X, 0, yTop)
         box.BackgroundColor3 = Color3.fromRGB(15, 5, 28); box.BackgroundTransparency = 0.05
         box.BorderSizePixel = 0; box.Font = Enum.Font.GothamBold; box.TextSize = 11
         box.TextColor3 = C_TEXT; box.Text = tostring(defaultVal); box.ClearTextOnFocus = true
-        -- min/max shown as placeholder text (background hint) — only visible when field is empty
-        box.PlaceholderText = "min " .. tostring(minVal) .. " – max " .. tostring(maxVal)
-        box.PlaceholderColor3 = Color3.fromRGB(140, 110, 170)
+        -- Placeholder muestra min/max solo cuando el campo está vacío (como fondo elegante)
+        box.PlaceholderText = tostring(minVal) .. "–" .. tostring(maxVal)
+        box.PlaceholderColor3 = Color3.fromRGB(130, 100, 180)
         Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
         local bs = Instance.new("UIStroke", box); bs.Color = C_ACCENT; bs.Thickness = 1; bs.Transparency = 0.5
 
@@ -3704,7 +3688,7 @@ local function _flyBuildGui()
     local fastBox  = makeSpeedRow("🚄", FT.speed_turbo_mult, 1, FAST_MULT,  1, 1000)
     local turboBox = makeSpeedRow("🚅", FT.speed_mega_mult,  2, TURBO_MULT, 1, 1000)
 
-    local RESET_Y  = SPEED_ROW_START + 3*SPEED_ROW_STEP
+    local RESET_Y  = SPEED_ROW_START + 3*SPEED_ROW_STEP + 4
     local resetBtn = Instance.new("TextButton", speedSec)
     resetBtn.Size = UDim2.new(0, 110, 0, 24); resetBtn.Position = UDim2.new(0.5, -55, 0, RESET_Y)
     resetBtn.BackgroundColor3 = Color3.fromRGB(60, 10, 110); resetBtn.BackgroundTransparency = 0.2
