@@ -17,8 +17,8 @@ local FlyLang = {
         lock_label       = "LOCK",
         lock_hint_prefix = "Apuntar + ",
         noclip_title     = "NOCLIP",
-        noclip_space     = "⬆  Espacio (arriba)",
-        noclip_ctrl      = "⬇  Ctrl (bajar)",
+        noclip_space     = " ⬆  Espacio (arriba)",
+        noclip_ctrl      = " ⬇  Ctrl (bajar)",
         noclip_mega      = "Mega Turbo",
         height_below     = "studs abajo",
         height_above     = "studs arriba",
@@ -37,8 +37,8 @@ local FlyLang = {
         lock_label       = "LOCK",
         lock_hint_prefix = "Aim + ",
         noclip_title     = "NOCLIP",
-        noclip_space     = "⬆  Space (Up)",
-        noclip_ctrl      = "⬇  Ctrl (Down)",
+        noclip_space     = " ⬆  Space (Up)",
+        noclip_ctrl      = " ⬇  Ctrl (Down)",
         noclip_mega      = "Mega Turbo",
         height_below     = "studs below",
         height_above     = "studs above",
@@ -3394,10 +3394,10 @@ local function _flyBuildGui()
     local C_RED     = Color3.fromRGB(255,  80,  80)
     local C_CYAN    = Color3.fromRGB(80,  200, 255)
     local C_GOLD    = Color3.fromRGB(255, 220,  80)
-    -- Gradient suave y continuo: mismo tono base, pasos de ~8 unidades por canal
-    local C_SEC1    = Color3.fromRGB(44,  15,  82)   -- LOCK
-    local C_SEC2    = Color3.fromRGB(36,  12,  68)   -- NOCLIP
-    local C_SEC3    = Color3.fromRGB(28,   9,  54)   -- SPEED
+    -- Gradient suave y continuo: mismo tono base, pasos uniformes por canal (~14 R, ~5 G, ~22 B)
+    local C_SEC1    = Color3.fromRGB(52,  17,  90)   -- LOCK   (más claro)
+    local C_SEC2    = Color3.fromRGB(38,  12,  68)   -- NOCLIP (medio)
+    local C_SEC3    = Color3.fromRGB(24,   7,  46)   -- SPEED  (más oscuro)
 
     -- ── Layout ───────────────────────────────────────────────────
     local W        = 280
@@ -3601,14 +3601,15 @@ local function _flyBuildGui()
         row.Size = UDim2.new(1, -16, 0, ROW_H); row.Position = UDim2.new(0, 8, 0, yPos)
         row.BackgroundTransparency = 1
         local lbl = Instance.new("TextLabel", row)
-        lbl.Size = UDim2.new(1, -(TOGGLE_W + 8), 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+        lbl.Size = UDim2.new(1, -(TOGGLE_W + 10), 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
         lbl.Text = labelText
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        -- Centro de la row: rowWidth(248) / 2 - TOGGLE_W(36) / 2 = 124 - 18 = 106
-        createToggle(row, 106, (ROW_H - 18) / 2, initialState, onChange)
+        -- Toggle alineado a la derecha de la fila (escala 1 - ancho toggle - 4px margen)
+        local tgl = createToggle(row, 0, (ROW_H - 18) / 2, initialState, onChange)
+        tgl.Position = UDim2.new(1, -(TOGGLE_W + 4), 0, (ROW_H - 18) / 2)
     end
 
     makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
@@ -3632,7 +3633,8 @@ local function _flyBuildGui()
     megaLabel.Text = FT.noclip_mega
     megaLabel.TextXAlignment = Enum.TextXAlignment.Left
     megaLabel.TextYAlignment = Enum.TextYAlignment.Center
-    createToggle(megaRow, 106, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
+    local megaTgl = createToggle(megaRow, 0, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
+    megaTgl.Position = UDim2.new(1, -(TOGGLE_W + 4), 0, (ROW_H - 18) / 2)
 
     -- ── SPEED section (gradient bottom = darkest) ─────────────────
     local speedSec = makeSection(H_SPEED, C_SEC3, C_PURPLE)
