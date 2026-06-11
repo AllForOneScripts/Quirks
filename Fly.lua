@@ -2165,7 +2165,149 @@ local function sonicBoomEffect(intensity)
     end)
 end
 
-local function spawnLandingEffects(position, velocity) end
+local function spawnLandingEffects(position, velocity)
+    if not position then return end
+    task.spawn(function()
+        -- Intensidad 0→1 basada en la velocidad de impacto
+        local intensity = math.clamp(velocity / 150, 0, 1)
+        if intensity < 0.05 then return end
+
+        -- ── Shockwave ring horizontal en el suelo ────────────────────────
+        local ringCount = intensity > 0.5 and 2 or 1
+        for i = 1, ringCount do
+            task.spawn(function()
+                if i > 1 then task.wait(0.07) end
+                local peakSize  = 6 + intensity * 20
+                local expandDur = 0.16 + intensity * 0.10
+                local fadeDur   = 0.14 + intensity * 0.10
+                local initSize  = math.max(0.4, peakSize * 0.06)
+
+                local p = Instance.new("Part")
+                p.Anchored = true; p.CanCollide = false; p.CanTouch = false
+                p.CastShadow = false; p.Transparency = 1
+                p.Size = Vector3.new(initSize * 2, 0.05, initSize * 2)
+                p.CFrame = CFrame.new(position)
+                p.Parent = workspace
+
+                local sg = Instance.new("SurfaceGui", p)
+                sg.Adornee = p; sg.Face = Enum.NormalId.Top
+                sg.AlwaysOnTop = false; sg.LightInfluence = 0
+                sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+                sg.PixelsPerStud = 50
+                sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+
+                local outer = Instance.new("ImageLabel", sg)
+                outer.Image = RING_ID; outer.Size = UDim2.new(1, 0, 1, 0)
+                outer.BackgroundTransparency = 1
+                outer.ImageColor3 = Color3.fromRGB(210, 195, 170)
+                outer.ImageTransparency = 0.08; outer.ZIndex = 3
+
+                local is = 0.65
+                local inner = Instance.new("ImageLabel", sg)
+                inner.Image = RING_ID
+                inner.Size = UDim2.new(is, 0, is, 0)
+                inner.Position = UDim2.new((1 - is) / 2, 0, (1 - is) / 2, 0)
+                inner.BackgroundTransparency = 1
+                inner.ImageColor3 = Color3.fromRGB(225, 210, 185)
+                inner.ImageTransparency = 0.22; inner.ZIndex = 2
+
+                TweenService:Create(p,
+                    TweenInfo.new(expandDur, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                    {Size = Vector3.new(peakSize * 2, 0.05, peakSize * 2)}):Play()
+                TweenService:Create(outer,
+                    TweenInfo.new(fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                    {ImageTransparency = 1}):Play()
+                TweenService:Create(inner,
+                    TweenInfo.new(fadeDur * 0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                    {ImageTransparency = 1}):Play()
+
+                task.delay(expandDur + fadeDur + 0.06, function()
+                    pcall(function() p:Destroy() end)
+                end)
+            end)
+        end
+
+        -- ── Burst de polvo / impacto (BillboardGui sobre el punto de impacto) ─
+        task.spawn(function()
+            local startPx = math.floor(50 + intensity * 70)
+            local peakPx  = math.floor(130 + intensity * 320)
+
+            local anchor = Instance.new("Part")
+            anchor.Anchored = true; anchor.CanCollide = false; anchor.CanTouch = false
+            anchor.CastShadow = false; anchor.Transparency = 1
+            anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+            anchor.Position = position + Vector3.new(0, 1.2, 0)
+            anchor.Parent = workspace
+
+            local bb = Instance.new("BillboardGui")
+            bb.Adornee = anchor; bb.AlwaysOnTop = false; bb.LightInfluence = 0
+            bb.Size = UDim2.new(0, startPx, 0, startPx)
+            bb.ResetOnSpawn = false; bb.Parent = anchor
+
+            local img = Instance.new("ImageLabel", bb)
+            img.Image = AIR_SHOCK_ID; img.Size = UDim2.new(1, 0, 1, 0)
+            img.BackgroundTransparency = 1
+            img.ImageColor3 = Color3.fromRGB(195, 180, 155)
+            img.ImageTransparency = 0.05; img.ScaleType = Enum.ScaleType.Fit
+
+            TweenService:Create(bb,
+                TweenInfo.new(0.11, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = UDim2.new(0, peakPx, 0, peakPx)}):Play()
+            task.wait(0.05)
+            if img and img.Parent then
+                TweenService:Create(img,
+                    TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                    {ImageTransparency = 1}):Play()
+            end
+            task.delay(0.30, function() pcall(function() anchor:Destroy() end) end)
+        end)
+
+        -- ── Debris: pequeñas rocas que salen volando del punto de impacto ─
+        if intensity > 0.15 then
+            local debrisCount = math.floor(3 + intensity * 6)
+            for j = 1, debrisCount do
+                task.spawn(function()
+                    task.wait(math.random() * 0.04)
+                    local sz = 0.12 + math.random() * 0.28 * intensity
+                    local d  = Instance.new("Part")
+                    d.CanCollide = false; d.CanTouch = false; d.CastShadow = false
+                    d.Size = Vector3.new(sz, sz, sz)
+                    local angle = math.random() * math.pi * 2
+                    local rad   = math.random() * 0.4
+                    d.CFrame = CFrame.new(
+                        position + Vector3.new(math.cos(angle) * rad, 0.15, math.sin(angle) * rad)
+                    )
+                    d.Color = Color3.fromRGB(
+                        115 + math.random(0, 45),
+                        95  + math.random(0, 35),
+                        75  + math.random(0, 25)
+                    )
+                    d.Material = Enum.Material.SmoothPlastic
+                    d.Parent = workspace
+                    local dist = 1.5 + math.random() * 4.5 * intensity
+                    local rise = 1.8 + math.random() * 3.5 * intensity
+                    local target = position + Vector3.new(
+                        math.cos(angle) * dist, rise, math.sin(angle) * dist
+                    )
+                    local moveT = 0.22 + math.random() * 0.18
+                    TweenService:Create(d,
+                        TweenInfo.new(moveT, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                        {Position = target}):Play()
+                    task.wait(moveT * 0.45)
+                    if d and d.Parent then
+                        local fadeT = 0.14 + math.random() * 0.10
+                        TweenService:Create(d,
+                            TweenInfo.new(fadeT, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+                            {Transparency = 1}):Play()
+                        task.delay(fadeT + 0.08, function()
+                            pcall(function() d:Destroy() end)
+                        end)
+                    end
+                end)
+            end
+        end
+    end)
+end
 
 local function startIdleWatcher()
     if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer = nil end
@@ -2340,8 +2482,8 @@ local function doLanding(char)
     local fallLevel = _calcFallLevel(altura)
     if fallLevel <= 0 then restoreGameAnimations(char); return end
 
-    -- nivel >= 2 (~530 studs) → animación completa; nivel 1–2 → solo shake
-    local useFullAnim = (fallLevel >= 2)
+    -- nivel >= 1.3 (~190 studs) → animación completa; nivel 1–1.3 → solo shake + efectos
+    local useFullAnim = (fallLevel >= 1.3)
 
     if not animator then restoreGameAnimations(char); return end
 
@@ -4350,17 +4492,10 @@ local function _flyOff()
     
     
     if isEpicFallByFlyOff and rootCurrent then
-        
-        pcall(function()
-            local bf = Instance.new("BodyForce")
-            bf.Name  = "EpicLandGravCancel"
-            bf.Force = Vector3.new(0, workspace.Gravity * (rootCurrent.AssemblyMass or 1), 0)
-            bf.Parent = rootCurrent
-            task.delay(0.28, function()
-                if bf and bf.Parent then bf:Destroy() end
-            end)
-        end)
-        
+        -- El personaje ya fue teleportado al suelo con velocidad cero.
+        -- NO se usa anti-gravedad: ese BodyForce hacía que flotara 0.28s
+        -- y luego cayera de nuevo (el "me devuelve arriba"). Simplemente
+        -- forzamos el estado Landed para que el humanoid se asiente.
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.Landed) end)
     else
         hum:ChangeState(Enum.HumanoidStateType.Freefall)
