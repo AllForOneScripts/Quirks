@@ -1401,8 +1401,6 @@ local function updateAnimForMovement()
     end
 end
 
-end
-
 local function activateGyroProtection()
     if flyanim.gyroProtectionActive then return end
     if not flyanim.bg then return end
