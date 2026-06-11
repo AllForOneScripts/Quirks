@@ -1943,8 +1943,6 @@ local function sonicBoomEffect(intensity)
 end
 
 
-local function startIdleWatcher
-
 local function startIdleWatcher()
     if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer = nil end
     flyanim.idleTimer = task.spawn(function()
@@ -2065,8 +2063,6 @@ end
 
 
 
-
-local comboPendingClick
 
 local comboPendingClick = false
 
