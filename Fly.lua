@@ -1,4 +1,4 @@
-print("version 2.08")
+print("version 2.04")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -1112,8 +1112,12 @@ iniciarCicloNormal = function(thisPlay)
     end)
 end
 
+local AIR_SHOCK_ID     = "rbxassetid://112096280571499"
+local SHOCKWAVE_ID     = "rbxassetid://117592591478260"
+local RING_ID          = "rbxassetid://12914395250"
 local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
 local PARTICLE_LENGTH  = 6
+local WHITE            = Color3.fromRGB(255, 255, 255)
 
 local stopParticleEmitter
 local function iniciarPoseTurbo()
@@ -2044,9 +2048,121 @@ local function speedWhiteFlash(mode)
     end)
 end
 
-local function airShockAura(intensity) end
+local function airShockAura(intensity)
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local isMega = intensity == 2
+    task.spawn(function()
+        local bb = Instance.new("BillboardGui")
+        bb.Adornee=root; bb.AlwaysOnTop=false; bb.LightInfluence=0
+        bb.Size=UDim2.new(0,50,0,50); bb.ResetOnSpawn=false; bb.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb.Parent=root
+        local img = Instance.new("ImageLabel", bb)
+        img.Image=AIR_SHOCK_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
+        img.ImageColor3=Color3.fromRGB(210,240,255); img.ImageTransparency=0.25; img.ScaleType=Enum.ScaleType.Fit
+        local img2 = Instance.new("ImageLabel", bb)
+        img2.Image=AIR_SHOCK_ID; img2.Size=UDim2.new(1.3,0,1.3,0); img2.Position=UDim2.new(-0.15,0,-0.15,0)
+        img2.BackgroundTransparency=1; img2.ImageColor3=Color3.fromRGB(180,220,255); img2.ImageTransparency=0.45
+        img2.ScaleType=Enum.ScaleType.Fit; img2.Rotation=45
+        TweenService:Create(bb, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size=UDim2.new(0,200,0,200)}):Play()
+        task.wait(0.05)
+        if not bb or not bb.Parent then return end
+        TweenService:Create(bb, TweenInfo.new(0.20, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+            {Size=UDim2.new(0,280,0,280)}):Play()
+        TweenService:Create(img,  TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+        TweenService:Create(img2, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+        task.delay(0.32, function() pcall(function() bb:Destroy() end) end)
+    end)
+    if isMega then
+        task.spawn(function()
+            task.wait(0.05)
+            if not root or not root.Parent then return end
+            local bb2 = Instance.new("BillboardGui")
+            bb2.Adornee=root; bb2.AlwaysOnTop=false; bb2.LightInfluence=0
+            bb2.Size=UDim2.new(0,50,0,50); bb2.ResetOnSpawn=false; bb2.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb2.Parent=root
+            local i1 = Instance.new("ImageLabel", bb2)
+            i1.Image=AIR_SHOCK_ID; i1.Size=UDim2.new(1,0,1,0); i1.BackgroundTransparency=1
+            i1.ImageColor3=Color3.fromRGB(220,245,255); i1.ImageTransparency=0.15; i1.ScaleType=Enum.ScaleType.Fit; i1.Rotation=22
+            local i2 = Instance.new("ImageLabel", bb2)
+            i2.Image=AIR_SHOCK_ID; i2.Size=UDim2.new(1.5,0,1.5,0); i2.Position=UDim2.new(-0.25,0,-0.25,0)
+            i2.BackgroundTransparency=1; i2.ImageColor3=Color3.fromRGB(190,225,255); i2.ImageTransparency=0.30
+            i2.ScaleType=Enum.ScaleType.Fit; i2.Rotation=60
+            TweenService:Create(bb2, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size=UDim2.new(0,480,0,480)}):Play()
+            task.wait(0.10)
+            if not bb2 or not bb2.Parent then return end
+            TweenService:Create(bb2, TweenInfo.new(0.26, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+                {Size=UDim2.new(0,680,0,680)}):Play()
+            TweenService:Create(i1, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+            TweenService:Create(i2, TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+            task.delay(0.40, function() pcall(function() bb2:Destroy() end) end)
+        end)
+    end
+end
 
-local function sonicBoomEffect(intensity) end
+local function sonicBoomEffect(intensity)
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local isMega = intensity == 2
+    local scale  = isMega and 0.95 or 0.55
+    local rings  = {
+        { start=(isMega and 5 or 3)*scale,   peak=(isMega and 140 or 80)*scale,  exp=isMega and 0.32 or 0.20, fadeDelay=isMega and 0.14 or 0.08, fadeDur=isMega and 0.26 or 0.16 },
+        { start=(isMega and 4 or 2)*scale,   peak=(isMega and 90 or 52)*scale,   exp=isMega and 0.20 or 0.12, fadeDelay=isMega and 0.06 or 0.04, fadeDur=isMega and 0.18 or 0.10 },
+        { start=(isMega and 3 or 1.5)*scale, peak=(isMega and 55 or 32)*scale,   exp=isMega and 0.12 or 0.07, fadeDelay=0,                        fadeDur=isMega and 0.10 or 0.06 },
+    }
+    for i, r in ipairs(rings) do
+        task.spawn(function()
+            task.wait(i == 1 and 0 or (i == 2 and 0.02 or 0.04))
+            if not root or not root.Parent then return end
+            local p = Instance.new("Part")
+            p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false; p.Transparency=1
+            p.Size=Vector3.new(r.start*2, r.start*2, 0.01); p.CFrame=root.CFrame
+            local cam = workspace.CurrentCamera
+            if cam then
+                local d = cam.CFrame.Position - root.Position
+                if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
+            end
+            p.Parent = workspace
+            local sg = Instance.new("SurfaceGui", p)
+            sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
+            sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
+            local outer = Instance.new("ImageLabel", sg)
+            outer.Image=RING_ID; outer.Size=UDim2.new(1,0,1,0); outer.BackgroundTransparency=1
+            outer.ImageColor3=WHITE; outer.ImageTransparency=0.06; outer.ZIndex=3
+            local innerScale = 0.72 - (i-1)*0.08
+            local inner = Instance.new("ImageLabel", sg)
+            inner.Image=RING_ID; inner.Size=UDim2.new(innerScale,0,innerScale,0)
+            inner.Position=UDim2.new((1-innerScale)/2,0,(1-innerScale)/2,0)
+            inner.BackgroundTransparency=1; inner.ImageColor3=WHITE; inner.ImageTransparency=0.20; inner.ZIndex=2
+            TweenService:Create(p, TweenInfo.new(r.exp, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size=Vector3.new(r.peak*2, r.peak*2, 0.01)}):Play()
+            task.delay(r.fadeDelay, function()
+                if not p or not p.Parent then return end
+                TweenService:Create(outer, TweenInfo.new(r.fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+                TweenService:Create(inner, TweenInfo.new(r.fadeDur*0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+            end)
+            task.delay(r.fadeDelay + r.fadeDur + 0.08, function() pcall(function() p:Destroy() end) end)
+        end)
+    end
+    task.spawn(function()
+        local startPx = isMega and 90 or 60
+        local peakPx  = isMega and 780 or 460
+        local bb = Instance.new("BillboardGui")
+        bb.Adornee=root; bb.AlwaysOnTop=true; bb.LightInfluence=0
+        bb.Size=UDim2.new(0,startPx,0,startPx); bb.ResetOnSpawn=false; bb.Parent=root
+        local img = Instance.new("ImageLabel", bb)
+        img.Image=SHOCKWAVE_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
+        img.ImageColor3=WHITE; img.ImageTransparency=0; img.ScaleType=Enum.ScaleType.Fit
+        TweenService:Create(bb, TweenInfo.new(0.10, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size=UDim2.new(0,peakPx,0,peakPx)}):Play()
+        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
+        task.wait(0.04)
+        if not img or not img.Parent then return end
+        TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
+    end)
+end
 
 local function spawnLandingEffects(position, velocity) end
 
