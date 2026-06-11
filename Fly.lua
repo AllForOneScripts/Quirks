@@ -2165,146 +2165,270 @@ local function sonicBoomEffect(intensity)
     end)
 end
 
+-- ── IDs adicionales para el efecto de aterrizaje real ───────────────────
+local SFX_LANDING          = "rbxassetid://135226467234227"
+local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
+-- PARTICLE_TEXTURE ya existe como DOUBLE_SHOCKWAVE_TEX equivalente
+-- CAIDA_BASE_ID, CAIDA_OVERLAY_ID y AIR_SHOCK_ID ya están definidos arriba
+
 local function spawnLandingEffects(position, velocity)
     if not position then return end
     task.spawn(function()
-        -- Intensidad 0→1 basada en la velocidad de impacto
+        -- intensity: 0→1 basada en velocidad (150 studs/s = máximo)
         local intensity = math.clamp(velocity / 150, 0, 1)
         if intensity < 0.05 then return end
 
-        -- ── Shockwave ring horizontal en el suelo ────────────────────────
-        local ringCount = intensity > 0.5 and 2 or 1
-        for i = 1, ringCount do
-            task.spawn(function()
-                if i > 1 then task.wait(0.07) end
-                local peakSize  = 6 + intensity * 20
-                local expandDur = 0.16 + intensity * 0.10
-                local fadeDur   = 0.14 + intensity * 0.10
-                local initSize  = math.max(0.4, peakSize * 0.06)
+        -- Nivel 1-4 proporcional a intensity para reutilizar la lógica de aeffecto
+        local nivelF = 1 + intensity * 3           -- 1.0 a 4.0
+        local nivel  = math.clamp(math.floor(nivelF + 0.5), 1, 4)
+        local multScale = 0.4 + intensity * 1.2    -- 0.4 a 1.6
+        local multEmit  = multScale
 
-                local p = Instance.new("Part")
-                p.Anchored = true; p.CanCollide = false; p.CanTouch = false
-                p.CastShadow = false; p.Transparency = 1
-                p.Size = Vector3.new(initSize * 2, 0.05, initSize * 2)
-                p.CFrame = CFrame.new(position)
-                p.Parent = workspace
+        -- ── Punto de luz de impacto ──────────────────────────────────────
+        local vfxPart = Instance.new("Part")
+        vfxPart.Size = Vector3.new(1, 1, 1)
+        vfxPart.Position = position + Vector3.new(0, 0.5, 0)
+        vfxPart.Anchored = true; vfxPart.CanCollide = false
+        vfxPart.Transparency = 1; vfxPart.Parent = workspace
 
-                local sg = Instance.new("SurfaceGui", p)
-                sg.Adornee = p; sg.Face = Enum.NormalId.Top
-                sg.AlwaysOnTop = false; sg.LightInfluence = 0
-                sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-                sg.PixelsPerStud = 50
-                sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        local impactFlash = Instance.new("PointLight")
+        impactFlash.Color      = Color3.fromRGB(255, 250, 240)
+        impactFlash.Range      = 40 * multScale
+        impactFlash.Brightness = 15 * multScale
+        impactFlash.Shadows    = true
+        impactFlash.Parent     = vfxPart
+        TweenService:Create(impactFlash,
+            TweenInfo.new(0.15 * multScale, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+            {Brightness = 0, Range = 0}):Play()
 
-                local outer = Instance.new("ImageLabel", sg)
-                outer.Image = RING_ID; outer.Size = UDim2.new(1, 0, 1, 0)
-                outer.BackgroundTransparency = 1
-                outer.ImageColor3 = Color3.fromRGB(210, 195, 170)
-                outer.ImageTransparency = 0.08; outer.ZIndex = 3
+        -- ── Sonido de impacto dinámico ───────────────────────────────────
+        local volumeMap = {1.0, 2.5, 4.5, 7.0}
+        local pitchMap  = {1.1, 0.85, 0.65, 0.5}
+        local sfx = Instance.new("Sound")
+        sfx.SoundId              = SFX_LANDING
+        sfx.Volume               = volumeMap[nivel]
+        sfx.PlaybackSpeed        = pitchMap[nivel]
+        sfx.RollOffMaxDistance   = 300 * multScale
+        sfx.Parent               = vfxPart
+        sfx:Play()
+        task.delay(8, function() pcall(function() sfx:Destroy() end) end)
 
-                local is = 0.65
-                local inner = Instance.new("ImageLabel", sg)
-                inner.Image = RING_ID
-                inner.Size = UDim2.new(is, 0, is, 0)
-                inner.Position = UDim2.new((1 - is) / 2, 0, (1 - is) / 2, 0)
-                inner.BackgroundTransparency = 1
-                inner.ImageColor3 = Color3.fromRGB(225, 210, 185)
-                inner.ImageTransparency = 0.22; inner.ZIndex = 2
+        -- ── Attachment central para partículas ───────────────────────────
+        local attachment = Instance.new("Attachment", vfxPart)
 
-                TweenService:Create(p,
-                    TweenInfo.new(expandDur, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = Vector3.new(peakSize * 2, 0.05, peakSize * 2)}):Play()
-                TweenService:Create(outer,
-                    TweenInfo.new(fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                    {ImageTransparency = 1}):Play()
-                TweenService:Create(inner,
-                    TweenInfo.new(fadeDur * 0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                    {ImageTransparency = 1}):Play()
+        -- ── Attachments inclinados para los anillos de choque ────────────
+        local attFlat  = Instance.new("Attachment", vfxPart)
+        attFlat.Orientation = Vector3.new(0, 0, 0)
+        local attTilt1 = Instance.new("Attachment", vfxPart)
+        attTilt1.Orientation = Vector3.new(35, 45, 0)
+        local attTilt2 = Instance.new("Attachment", vfxPart)
+        attTilt2.Orientation = Vector3.new(-25, -60, 15)
 
-                task.delay(expandDur + fadeDur + 0.06, function()
-                    pcall(function() p:Destroy() end)
-                end)
+        -- Helper: escalar NumberSequence
+        local function scaleNS(ns, scale)
+            local kps = {}
+            for _, kp in ipairs(ns.Keypoints) do
+                table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * scale, kp.Envelope * scale))
+            end
+            return NumberSequence.new(kps)
+        end
+        local function scaleNR(nr, scale)
+            return NumberRange.new(nr.Min * scale, nr.Max * scale)
+        end
+
+        -- ── Anillos de choque (ParticleEmitter orientado VelocityPerpendicular)
+        local function emitirAnillo(textura, att, sizeMult, color)
+            local ring = Instance.new("ParticleEmitter")
+            ring.Texture      = textura
+            ring.Orientation  = Enum.ParticleOrientation.VelocityPerpendicular
+            ring.EmissionDirection = Enum.NormalId.Top
+            ring.Speed        = NumberRange.new(0.01)
+            ring.Size         = scaleNS(
+                NumberSequence.new({
+                    NumberSequenceKeypoint.new(0,   0),
+                    NumberSequenceKeypoint.new(0.1, 20 * sizeMult),
+                    NumberSequenceKeypoint.new(1,   60 * sizeMult),
+                }), multScale)
+            ring.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0,   0.4),
+                NumberSequenceKeypoint.new(0.2, 0.7),
+                NumberSequenceKeypoint.new(1,   1),
+            })
+            ring.Color        = ColorSequence.new(color)
+            ring.Lifetime     = NumberRange.new(0.35 + nivel * 0.05)
+            ring.LightEmission = 0.8
+            ring.Rate         = 0
+            ring.Parent       = att
+            ring:Emit(2)
+            task.delay(2, function() pcall(function() ring:Destroy() end) end)
+        end
+
+        emitirAnillo(SHOCKWAVE_CIRCLE_TEX, attFlat, 1.2, Color3.fromRGB(255, 255, 255))
+        if nivel > 1 then
+            emitirAnillo(PARTICLE_TEXTURE,      attFlat,  1.4, Color3.fromRGB(230, 230, 235))
+            emitirAnillo(SHOCKWAVE_CIRCLE_TEX,  attTilt1, 0.9, Color3.fromRGB(210, 210, 220))
+            emitirAnillo(PARTICLE_TEXTURE,      attTilt2, 1.1, Color3.fromRGB(220, 220, 230))
+        end
+
+        -- ── Polvo rodante (rolling dust) ─────────────────────────────────
+        local rollingDust1 = Instance.new("ParticleEmitter")
+        rollingDust1.Texture      = CAIDA_BASE_ID
+        rollingDust1.Size         = scaleNS(NumberSequence.new({
+            NumberSequenceKeypoint.new(0,   5),
+            NumberSequenceKeypoint.new(0.2, 14),
+            NumberSequenceKeypoint.new(1,   22),
+        }), multScale)
+        rollingDust1.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0,   0),
+            NumberSequenceKeypoint.new(0.1, 0.1),
+            NumberSequenceKeypoint.new(0.8, 0.7),
+            NumberSequenceKeypoint.new(1,   1),
+        })
+        rollingDust1.Color        = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(235, 235, 240)),
+            ColorSequenceKeypoint.new(0.6, Color3.fromRGB(200, 200, 205)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(160, 160, 165)),
+        })
+        rollingDust1.Lifetime     = scaleNR(NumberRange.new(1.2, 1.8), 1 + nivel * 0.1)
+        rollingDust1.Speed        = scaleNR(NumberRange.new(55, 90), multScale)
+        rollingDust1.SpreadAngle  = Vector2.new(180, 180)
+        rollingDust1.RotSpeed     = NumberRange.new(-250, 250)
+        rollingDust1.Drag         = 14
+        rollingDust1.Acceleration = Vector3.new(0, -40 * multScale, 0)
+        rollingDust1.ZOffset      = 2
+        rollingDust1.Rate         = 0
+        rollingDust1.Parent       = attachment
+
+        local rollingDust2 = Instance.new("ParticleEmitter")
+        rollingDust2.Texture      = AIR_SHOCK_ID   -- humo esponjoso
+        rollingDust2.Size         = rollingDust1.Size
+        rollingDust2.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.3),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        rollingDust2.Color        = rollingDust1.Color
+        rollingDust2.Lifetime     = rollingDust1.Lifetime
+        rollingDust2.Speed        = rollingDust1.Speed
+        rollingDust2.SpreadAngle  = rollingDust1.SpreadAngle
+        rollingDust2.RotSpeed     = NumberRange.new(-50, 50)
+        rollingDust2.Drag         = rollingDust1.Drag
+        rollingDust2.Acceleration = rollingDust1.Acceleration
+        rollingDust2.ZOffset      = 1
+        rollingDust2.Rate         = 0
+        rollingDust2.Parent       = attachment
+
+        -- ── Polvo vertical ───────────────────────────────────────────────
+        local verticalDust = Instance.new("ParticleEmitter")
+        verticalDust.Texture         = CAIDA_OVERLAY_ID
+        verticalDust.EmissionDirection = Enum.NormalId.Top
+        verticalDust.Size            = scaleNS(NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 4),
+            NumberSequenceKeypoint.new(1, 18),
+        }), multScale)
+        verticalDust.Transparency    = NumberSequence.new({
+            NumberSequenceKeypoint.new(0,   0.1),
+            NumberSequenceKeypoint.new(0.7, 0.8),
+            NumberSequenceKeypoint.new(1,   1),
+        })
+        verticalDust.Color           = ColorSequence.new(Color3.fromRGB(215, 215, 220))
+        verticalDust.Lifetime        = scaleNR(NumberRange.new(1.5, 2.5), 1 + nivel * 0.1)
+        verticalDust.Speed           = scaleNR(NumberRange.new(25, 55), multScale)
+        verticalDust.SpreadAngle     = Vector2.new(35, 35)
+        verticalDust.RotSpeed        = NumberRange.new(-40, 40)
+        verticalDust.Drag            = 7
+        verticalDust.Acceleration    = Vector3.new(0, -10 * multScale, 0)
+        verticalDust.ZOffset         = 0
+        verticalDust.Rate            = 0
+        verticalDust.Parent          = attachment
+
+        -- Emitir partículas
+        rollingDust1:Emit(math.floor(50 * multEmit))
+        rollingDust2:Emit(math.floor(40 * multEmit))
+        if nivel == 1 then
+            verticalDust:Emit(math.floor(10 * multEmit))
+        else
+            verticalDust:Emit(math.floor(25 * multEmit))
+        end
+
+        -- Limpieza
+        task.delay(8, function() pcall(function() vfxPart:Destroy() end) end)
+
+        -- ── Cráter de corona (anillos de rocas) ──────────────────────────
+        -- Solo para caídas medianas o grandes (nivel >= 2 → intensity >= 0.33)
+        if intensity >= 0.33 then
+            local escalaSize = multScale * 0.7     -- tamaño razonable en el mundo
+            local escalaCantidad = multEmit * 0.7
+            local craterFolder = Instance.new("Folder")
+            craterFolder.Name   = "LandingCrater"
+            craterFolder.Parent = workspace
+
+            -- Detectar color/material del suelo en el punto de impacto
+            local floorColor    = Color3.fromRGB(106, 127, 63)  -- default
+            local floorMaterial = Enum.Material.Grass
+            local rpFloor = RaycastParams.new()
+            rpFloor.FilterType = Enum.RaycastFilterType.Exclude
+            if lplr and lplr.Character then
+                rpFloor.FilterDescendantsInstances = {lplr.Character}
+            end
+            local floorHit = workspace:Raycast(position + Vector3.new(0, 0.5, 0), Vector3.new(0, -5, 0), rpFloor)
+            if floorHit then
+                floorColor    = floorHit.Instance.Color
+                floorMaterial = floorHit.Instance.Material
+            end
+
+            local rings = {
+                {pieces = math.max(4, math.floor(8  * escalaCantidad)), radius = 5  * escalaSize, sizeMult = 1.0 * escalaSize},
+                {pieces = math.max(6, math.floor(12 * escalaCantidad)), radius = 10 * escalaSize, sizeMult = 1.3 * escalaSize},
+                {pieces = math.max(8, math.floor(18 * escalaCantidad)), radius = 16 * escalaSize, sizeMult = 1.6 * escalaSize},
+            }
+            local rocas = {}
+            for _, ring in ipairs(rings) do
+                for i = 1, ring.pieces do
+                    local angle = math.rad((360 / ring.pieces) * i + math.random(-8, 8))
+                    local offset = Vector3.new(math.cos(angle) * ring.radius, 0, math.sin(angle) * ring.radius)
+                    local chunk = Instance.new("Part")
+                    chunk.Size = Vector3.new(
+                        math.random(25, 45) / 10 * ring.sizeMult,
+                        math.random(15, 25) / 10 * (escalaSize ^ 0.5),
+                        math.random(35, 65) / 10 * ring.sizeMult
+                    )
+                    chunk.Position = position + offset - Vector3.new(0, chunk.Size.Y, 0)
+                    chunk.Anchored    = true
+                    chunk.CanCollide  = false
+                    chunk.Material    = floorMaterial
+                    chunk.Color       = floorColor
+                    local lookAt = CFrame.lookAt(chunk.Position, Vector3.new(position.X, chunk.Position.Y, position.Z))
+                    local upTilt = math.rad(-math.random(30, 55) + (ring.radius * 1.5 / escalaSize))
+                    local sideRoll = math.rad(math.random(-15, 15))
+                    chunk.CFrame  = lookAt * CFrame.Angles(upTilt, 0, sideRoll)
+                    chunk.Parent  = craterFolder
+                    table.insert(rocas, chunk)
+                    -- Pequeño tween hacia arriba al aparecer
+                    local targetUp = chunk.CFrame + Vector3.new(0, chunk.Size.Y * 0.9, 0)
+                    TweenService:Create(chunk, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetUp}):Play()
+                end
+            end
+            -- Hundo todas las rocas de vuelta al mismo tiempo
+            local waitDrop = 3.5 + nivel * 0.5
+            task.delay(waitDrop, function()
+                for _, roca in ipairs(rocas) do
+                    if roca and roca.Parent then
+                        TweenService:Create(roca,
+                            TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+                            {CFrame = roca.CFrame - Vector3.new(0, roca.Size.Y * 2, 0)}):Play()
+                    end
+                end
+                task.delay(2, function() pcall(function() craterFolder:Destroy() end) end)
             end)
         end
 
-        -- ── Burst de polvo / impacto (BillboardGui sobre el punto de impacto) ─
-        task.spawn(function()
-            local startPx = math.floor(50 + intensity * 70)
-            local peakPx  = math.floor(130 + intensity * 320)
-
-            local anchor = Instance.new("Part")
-            anchor.Anchored = true; anchor.CanCollide = false; anchor.CanTouch = false
-            anchor.CastShadow = false; anchor.Transparency = 1
-            anchor.Size = Vector3.new(0.1, 0.1, 0.1)
-            anchor.Position = position + Vector3.new(0, 1.2, 0)
-            anchor.Parent = workspace
-
-            local bb = Instance.new("BillboardGui")
-            bb.Adornee = anchor; bb.AlwaysOnTop = false; bb.LightInfluence = 0
-            bb.Size = UDim2.new(0, startPx, 0, startPx)
-            bb.ResetOnSpawn = false; bb.Parent = anchor
-
-            local img = Instance.new("ImageLabel", bb)
-            img.Image = AIR_SHOCK_ID; img.Size = UDim2.new(1, 0, 1, 0)
-            img.BackgroundTransparency = 1
-            img.ImageColor3 = Color3.fromRGB(195, 180, 155)
-            img.ImageTransparency = 0.05; img.ScaleType = Enum.ScaleType.Fit
-
-            TweenService:Create(bb,
-                TweenInfo.new(0.11, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = UDim2.new(0, peakPx, 0, peakPx)}):Play()
-            task.wait(0.05)
-            if img and img.Parent then
-                TweenService:Create(img,
-                    TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                    {ImageTransparency = 1}):Play()
-            end
-            task.delay(0.30, function() pcall(function() anchor:Destroy() end) end)
-        end)
-
-        -- ── Debris: pequeñas rocas que salen volando del punto de impacto ─
-        if intensity > 0.15 then
-            local debrisCount = math.floor(3 + intensity * 6)
-            for j = 1, debrisCount do
-                task.spawn(function()
-                    task.wait(math.random() * 0.04)
-                    local sz = 0.12 + math.random() * 0.28 * intensity
-                    local d  = Instance.new("Part")
-                    d.CanCollide = false; d.CanTouch = false; d.CastShadow = false
-                    d.Size = Vector3.new(sz, sz, sz)
-                    local angle = math.random() * math.pi * 2
-                    local rad   = math.random() * 0.4
-                    d.CFrame = CFrame.new(
-                        position + Vector3.new(math.cos(angle) * rad, 0.15, math.sin(angle) * rad)
-                    )
-                    d.Color = Color3.fromRGB(
-                        115 + math.random(0, 45),
-                        95  + math.random(0, 35),
-                        75  + math.random(0, 25)
-                    )
-                    d.Material = Enum.Material.SmoothPlastic
-                    d.Parent = workspace
-                    local dist = 1.5 + math.random() * 4.5 * intensity
-                    local rise = 1.8 + math.random() * 3.5 * intensity
-                    local target = position + Vector3.new(
-                        math.cos(angle) * dist, rise, math.sin(angle) * dist
-                    )
-                    local moveT = 0.22 + math.random() * 0.18
-                    TweenService:Create(d,
-                        TweenInfo.new(moveT, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                        {Position = target}):Play()
-                    task.wait(moveT * 0.45)
-                    if d and d.Parent then
-                        local fadeT = 0.14 + math.random() * 0.10
-                        TweenService:Create(d,
-                            TweenInfo.new(fadeT, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-                            {Transparency = 1}):Play()
-                        task.delay(fadeT + 0.08, function()
-                            pcall(function() d:Destroy() end)
-                        end)
-                    end
-                end)
-            end
+        -- ── Camera shake escalada por intensidad ──────────────────────────
+        if intensity >= 0.33 then
+            local shakeInt = 2.0 + intensity * 1.5
+            shakeCamera(shakeInt, 0.30)
+        else
+            local shakeInt2 = 0.8 + intensity * 3.6
+            shakeCamera(shakeInt2, 0.18)
         end
     end)
 end
@@ -2583,9 +2707,7 @@ local function doLanding(char)
         if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(0) end)
         pcall(function() landOverlay:AdjustSpeed(0) end)
-        -- Shake escalado por nivel: nivel 2→ 2.0, nivel 4→ 3.5
-        local shakeIntensity = 2.0 + lvlNorm * 1.5
-        shakeCamera(shakeIntensity, 0.30)
+        -- (shake ya aplicado desde spawnLandingEffects)
         task.wait(0.30)
         if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
         pcall(function() landBase:AdjustSpeed(0.3); landOverlay:AdjustSpeed(0.3) end)
@@ -2605,10 +2727,7 @@ local function doLanding(char)
         if _landBaseRef    == landBase    then _landBaseRef    = nil end
         if _landOverlayRef == landOverlay then _landOverlayRef = nil end
     else
-        -- Caída leve: solo shake, escalado por nivel 1→~2
-        -- nivel 1 (lvlNorm=0) → shake 0.8; nivel ~2 (lvlNorm=0.33) → shake 2.0
-        local shakeIntensity2 = 0.8 + lvlNorm * 3.6
-        shakeCamera(shakeIntensity2, 0.18)
+        -- Caída leve: solo animación breve (shake ya desde spawnLandingEffects)
         landAnimConn:Disconnect()
         task.wait(0.3)
     end
@@ -4020,7 +4139,7 @@ local function _flyOn()
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then return end
         if not root:FindFirstChild("BodyGyro") or not root:FindFirstChild("BodyVelocity")
         or ch:GetState() == Enum.HumanoidStateType.Ragdoll then
-            _flyMakeMotors(); return
+            if flyanim.enabled then _flyMakeMotors() end; return
         end
         flyanim.bg = root:FindFirstChildOfClass("BodyGyro")
         flyanim.bv = root:FindFirstChildOfClass("BodyVelocity")
@@ -4381,7 +4500,20 @@ local function _flyOff()
     if rootCurrent and heightFromGround > 45 then
         local safeGroundPos = findSafeGroundBelow(rootCurrent, charCurrent)
         if safeGroundPos then
-            
+            -- Limpieza SINCRONA de motores ANTES del TP para que no quede
+            -- ningún BodyForce activo que empuje al personaje hacia arriba
+            -- después de ser teletransportado (ese era el bug del "vuelve arriba").
+            pcall(function()
+                for _, v in ipairs(rootCurrent:GetChildren()) do
+                    if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                    or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
+                    or v:IsA("LinearVelocity") then
+                        v:Destroy()
+                    end
+                end
+            end)
+            flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
+
             pcall(function()
                 local _, ry, _ = rootCurrent.CFrame:ToOrientation()
                 if isnan(ry) then ry = 0 end
@@ -4389,7 +4521,16 @@ local function _flyOff()
                 rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                 rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end)
-            
+            -- Segunda pasada de velocidad cero: por si Roblox la reinició en el mismo frame
+            task.defer(function()
+                if flyanim.enabled then return end
+                if not rootCurrent or not rootCurrent.Parent then return end
+                pcall(function()
+                    rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+            end)
+
             flyanim.landingHeight = heightFromGround
             isEpicFallByFlyOff   = true
         end
