@@ -1925,8 +1925,10 @@ local function createParticle(isMega)
     if flyanim.aDown then moveDir = moveDir - rightH end
     if flyanim.dDown then moveDir = moveDir + rightH end
     if moveDir.Magnitude < 0.01 then moveDir = lookH else moveDir = moveDir.Unit end
-    local spawnPos = root.Position + (-moveDir * 5)
+    -- Spawnear desde el cuerpo (1 stud atrás) y viajar 5-7 studs hacia atrás
+    -- para que el sonic boom se vea centrado en el personaje y no demasiado lejos
     local awayDir  = -moveDir
+    local spawnPos = root.Position + (awayDir * 1)  -- 1 stud detrás del cuerpo
     local part = Instance.new("Part")
     part.Anchored = true; part.CanCollide = false; part.CastShadow = false
     part.Transparency = 1; part.Size = Vector3.new(0.1, PARTICLE_LENGTH, 0.1)
@@ -1948,7 +1950,7 @@ local function createParticle(isMega)
     img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
 
     local FADE_TIME  = 0.42
-    local travelDist = isMega and 14 or 8
+    local travelDist = isMega and 7 or 5  -- reducido para que el efecto sea visible cerca del cuerpo
     local targetPos  = spawnPos + awayDir * travelDist
     local alive = true
 
@@ -4618,60 +4620,169 @@ local function _flyOff()
 end
  
 -- ============================================================
+-- DASH Y MEGA TURBO
+-- ============================================================
+
+local function triggerDash(direction, speed, duration)
+    local cam = workspace.CurrentCamera
+    local dashDir
+    if direction == "back"    then local l = cam.CFrame.LookVector;  dashDir = Vector3.new(-l.X, 0, -l.Z)
+    elseif direction == "left"  then local r = cam.CFrame.RightVector; dashDir = Vector3.new(-r.X, 0, -r.Z)
+    elseif direction == "right" then local r = cam.CFrame.RightVector; dashDir = Vector3.new( r.X, 0,  r.Z)
+    elseif direction == "forward" then local l = cam.CFrame.LookVector; dashDir = Vector3.new( l.X, 0,  l.Z) end
+    if not dashDir or dashDir.Magnitude < 0.01 then return end
+    flyanim.dashVel   = dashDir.Unit * (speed or flyanim.DASH_SPEED)
+    flyanim.dashTimer = duration or flyanim.DASH_DURATION
+    startDashCollisionDetection()
+end
+
+local function activateMegaTurbo()
+    if flyanim.mode ~= "fast" then return end
+    flyanim.mode  = "turbo"
+    flyanim.speed = BASE_SPEED * TURBO_MULT
+    if flyanim.updateMode then flyanim.updateMode("turbo") end
+    if flyanim.noclipMegaEnabled then setNoclip(true) end
+    shakeCamera(3.5, 0.4)
+    playLocalSound(SFX_MEGA_TURBO, 0.88)
+    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
+    triggerDash("forward", flyanim.TURBO_DASH_SPEED * 1.5, flyanim.TURBO_DASH_DURATION * 1.2)
+    startParticleEmitter(); detenerPoseTurbo(); iniciarPoseMega()
+end
+
+-- ============================================================
 -- EVENTOS GLOBALES
 -- ============================================================
- 
+
 local function handleQPress()
     if not flyanim.enabled then return end
     if isTyping() then return end
-    local now = tick()
-    -- Reducir ventana de doble tap para turbo/mega: 0.20 s (antes 0.30)
-    -- Esto hace que el spam de Q sea más responsivo en peleas
-    if now - flyanim.qLastPress < 0.20 then
-        if flyanim.mode == "turbo" then
-            flyanim.mode  = "normal"
-            flyanim.speed = BASE_SPEED
-            flyanim.qLastPress = 0
-            if flyanim.updateMode then flyanim.updateMode("normal") end
-            if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
-            stopParticleEmitter()
-            detenerPoseMega()
-            detenerPoseTurbo()
-            flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-            restaurarC0Inmediato()
-            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-            iniciarCicloNormal(flyanim._normalPlayId)
-        elseif flyanim.mode == "fast" or flyanim.mode == "normal" then
-            flyanim.mode  = "turbo"
-            flyanim.speed = BASE_SPEED * TURBO_MULT
-            flyanim.qLastPress = 0
-            if flyanim.updateMode then flyanim.updateMode("turbo") end
-            if flyanim.noclipMegaEnabled then setNoclip(true) end
-            detenerPoseTurbo()
-            iniciarPoseMega()
-            startParticleEmitter()
-            playLocalSound(SFX_MEGA_TURBO, 0.85)
-            sonicBoomEffect(2)
-            airShockAura(2)
-            speedWhiteFlash("turbo")
+    if flyanim.turboPreImpulsoActivo then return end
+
+    local wDown = UserInputService:IsKeyDown(Enum.KeyCode.W)
+    local sDown = UserInputService:IsKeyDown(Enum.KeyCode.S)
+    local aDown = UserInputService:IsKeyDown(Enum.KeyCode.A)
+    local dDown = UserInputService:IsKeyDown(Enum.KeyCode.D)
+
+    -- ── DASH DIRECCIONAL (sin W presionado) ────────────────────────────────────
+    if not wDown then
+        if sDown and not aDown and not dDown then
+            triggerDash("back", flyanim.BACK_DASH_SPEED, flyanim.DASH_DURATION * 1.2)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.sq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
         end
-        flyanim.qLastPress = 0
+
+        if aDown and not sDown and not dDown then
+            triggerDash("left", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.sq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.sq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
+        end
+
+        if dDown and not sDown and not aDown then
+            triggerDash("right", flyanim.SIDE_DASH_SPEED, flyanim.DASH_DURATION)
+            flyanim.dashAnimToken = (flyanim.dashAnimToken or 0) + 1
+            local myDashToken = flyanim.dashAnimToken
+            task.spawn(function()
+                local t = getTrack(ANIM.dq_anim)
+                if not t then return end
+                local timeout = tick() + 2
+                while t.Length == 0 and tick() < timeout do task.wait() end
+                if flyanim.dashAnimToken ~= myDashToken then return end
+                if not flyanim.enabled then return end
+                for id, track in pairs(flyanim.tracks) do
+                    if id ~= ANIM.dq_anim and id ~= ANIM.levitacion and track and track.IsPlaying then
+                        pcall(function() track:Stop(0.04) end)
+                    end
+                end
+                for key, track in pairs(flyanim.normalTracks) do
+                    if key ~= "levitacion" then
+                        pcall(function() if track and track.IsPlaying then track:Stop(0.04) end end)
+                    end
+                end
+                if t.IsPlaying then pcall(function() t:Stop(0) end) end
+                t.Looped = false; t.Priority = Enum.AnimationPriority.Action4
+                pcall(function() t:Play(0.04, 1, 1); t:AdjustSpeed(3.0) end)
+            end)
+            return
+        end
+    end
+
+    -- ── TURBO → MEGA TURBO (Q mientras ya estás en turbo) ─────────────────────
+    -- Requiere 0.75s mínimo en turbo para evitar activación accidental por spam rápido
+    if flyanim.mode == "fast" then
+        local elapsed = tick() - flyanim.turboActivatedAt
+        if elapsed >= 0.75 then activateMegaTurbo() end
         return
     end
+
+    -- ── NORMAL → TURBO ─────────────────────────────────────────────────────────
     if flyanim.mode == "normal" then
+        flyanim.isSpaceAdv = false
+        if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
+        detenerEspacioAvanzado()
+
+        if flyanim.noclipSpaceActive then
+            flyanim.noclipSpaceActive = false
+        end
+        flyanim.noclipCtrlActive = false
+
         flyanim.mode  = "fast"
         flyanim.speed = BASE_SPEED * FAST_MULT
+        flyanim.qLastPress       = tick()
+        flyanim.turboActivatedAt = tick()
         if flyanim.updateMode then flyanim.updateMode("fast") end
-        if not flyanim.turboPreImpulsoActivo then
-            iniciarPoseTurbo()
-            startParticleEmitter()
-            playLocalSound(SFX_TURBO, 0.85)
-            sonicBoomEffect(1)
-            airShockAura(1)
-            speedWhiteFlash("fast")
-        end
+        setNoclip(false)
+        shakeCamera(2.0, 0.3)
+        playLocalSound(SFX_TURBO, 0.82)
+        sonicBoomEffect(1); airShockAura(1); speedWhiteFlash("fast")
+        triggerDash("forward", flyanim.TURBO_DASH_SPEED, flyanim.TURBO_DASH_DURATION)
+        startParticleEmitter()
+        detenerNormalTracks(0.1); detenerEspacioAvanzado()
+        iniciarPoseTurbo()
     end
-    flyanim.qLastPress = now
 end
  
 local _inputConn     = nil
