@@ -1567,6 +1567,7 @@ local lastAnomalyFix  = 0
 local lastMotorReset  = 0
 
 local function _flyMakeMotors()
+    if not flyanim.enabled then return end  -- nunca crear motores con fly desactivado
     local char = lplr and lplr.Character; if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     local hum  = char:FindFirstChildOfClass("Humanoid")
@@ -2312,16 +2313,18 @@ local _landOverlayRef = nil
 
 -- Escala de caída:
 -- < 45 studs  → nada (nivel 0)
--- 45 studs    → nivel 1 (entrada al efecto)
+-- 45 studs    → nivel 1 (shake leve)
 -- 45→1500     → interpolación suave nivel 1→4
--- ≥ 1500      → nivel 4 fijo (máximo)
+-- ≥ 1500      → nivel 4 fijo (animación completa máxima)
+-- nivel < 2   → solo shake de cámara
+-- nivel >= 2  → animación completa de aterrizaje + shake escalado
 local function _calcFallLevel(altura)
     if altura < 45 then return 0 end
     local t = math.clamp((altura - 45) / (1500 - 45), 0, 1)
     return 1 + t * 3   -- 1.0 a 4.0
 end
 
-local function doLanding(char, epicFall)
+local function doLanding(char)
     if not char or not char.Parent then return end
     local hum_check = char:FindFirstChildOfClass("Humanoid")
     if not hum_check or hum_check.Health <= 0 then return end
@@ -2333,13 +2336,12 @@ local function doLanding(char, epicFall)
     flyanim.landingVelocity        = 0
     flyanim.landingVelocityCapture = 0
 
-    -- Umbral mínimo: menos de 45 studs = sin efecto
+    -- El nivel depende SOLO de la altura, sin flags externos
     local fallLevel = _calcFallLevel(altura)
     if fallLevel <= 0 then restoreGameAnimations(char); return end
 
-    -- epicFall solo si la caída es lo suficientemente grande (nivel >= 2, es decir ~530 studs)
-    -- por debajo de eso es caída leve (solo shake)
-    if epicFall and fallLevel < 2 then epicFall = false end
+    -- nivel >= 2 (~530 studs) → animación completa; nivel 1–2 → solo shake
+    local useFullAnim = (fallLevel >= 2)
 
     if not animator then restoreGameAnimations(char); return end
 
@@ -2411,8 +2413,8 @@ local function doLanding(char, epicFall)
     -- fallLevel: 1.0 = mínimo (45 studs), 4.0 = máximo (≥1500 studs)
     local lvlNorm = math.clamp((fallLevel - 1) / 3, 0, 1)  -- 0.0 a 1.0
 
-    if epicFall then
-        -- Efecto completo de aterrizaje épico (nivel ~2–4)
+    if useFullAnim then
+        -- Efecto completo de aterrizaje épico (nivel >= 2, ~530 studs)
         if not animator or not animator.Parent then restoreGameAnimations(char); return end
         local animObjBase = Instance.new("Animation")
         animObjBase.AnimationId = CAIDA_BASE_ID
@@ -4178,6 +4180,23 @@ local function _flyOff()
         if _earlyRoot then cleanupMotors(_earlyRoot, true) end
         flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
     end
+    -- Segunda limpieza diferida: por si algún motor fue recreado en el mismo frame
+    -- antes de que las conexiones terminaran de apagarse
+    do
+        local _capturedChar = charCurrent
+        task.defer(function()
+            if flyanim.enabled then return end  -- fly se reactivó, no limpiar
+            local _r = _capturedChar and _capturedChar:FindFirstChild("HumanoidRootPart")
+            if not _r then return end
+            for _, v in ipairs(_r:GetChildren()) do
+                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+                    pcall(function() v:Destroy() end)
+                end
+            end
+            flyanim.bg = nil; flyanim.bv = nil; flyanim.bf = nil
+        end)
+    end
  
     if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
     if flyanim.lockRenderConn      then flyanim.lockRenderConn:Disconnect();      flyanim.lockRenderConn      = nil end
@@ -4414,7 +4433,7 @@ local function _flyOff()
         
         task.delay(0.05, function()
             if not charCurrent or not charCurrent.Parent then return end
-            doLanding(charCurrent, true)  
+            doLanding(charCurrent)  
         end)
         return
     end
@@ -4444,7 +4463,7 @@ local function _flyOff()
             flyanim.landingVelocity        = capturedVelocity
             flyanim.landingVelocityCapture = capturedVelocity
             
-            doLanding(charCurrent, false)
+            doLanding(charCurrent)
         else
             local animSc = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
             flyanim.animScript = nil
