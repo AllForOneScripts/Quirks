@@ -1,4 +1,4 @@
-print("version 2.07")
+print("version 2.08")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -1112,6 +1112,9 @@ iniciarCicloNormal = function(thisPlay)
     end)
 end
 
+local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
+local PARTICLE_LENGTH  = 6
+
 local stopParticleEmitter
 local function iniciarPoseTurbo()
     flyanim.turboPreImpulsoActivo = true
@@ -1874,11 +1877,137 @@ local function shakeCamera(intensity, duration)
 end
 
 
-local function killActiveParticles() flyanim.particleList = {} end
+local _particleFolder = nil
 
+local function _getParticleFolder()
+    if _particleFolder and _particleFolder.Parent == workspace then
+        return _particleFolder
+    end
+    _particleFolder = nil
+    local folder = Instance.new("Folder")
+    folder.Name   = "AFO_Particles"
+    folder.Parent = workspace
+    _particleFolder = folder
+    return folder
+end
 
-local function startParticleEmitter() end
-stopParticleEmitter = function() end
+local function killActiveParticles()
+    local list = flyanim.particleList
+    for i = #list, 1, -1 do
+        local ref = list[i]
+        if ref and ref.part then
+            pcall(function()
+                if ref.part.Parent then ref.part:Destroy() end
+            end)
+            ref.part = nil
+            ref.dead = true
+        end
+    end
+    flyanim.particleList = {}
+    if _particleFolder and _particleFolder.Parent then
+        for _, child in ipairs(_particleFolder:GetChildren()) do
+            pcall(function() child:Destroy() end)
+        end
+    end
+end
+
+local function createParticle(isMega)
+    if not flyanim.enabled then return end
+    if flyanim.megaTurboUpActive or flyanim.mode == "megaup" then return end
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local cam  = workspace.CurrentCamera
+    if not cam then return end
+    local camCF  = cam.CFrame
+    local lookH  = Vector3.new(camCF.LookVector.X,  0, camCF.LookVector.Z)
+    local rightH = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+    if lookH.Magnitude  > 0.01 then lookH  = lookH.Unit  else lookH  = Vector3.new(0, 0, -1) end
+    if rightH.Magnitude > 0.01 then rightH = rightH.Unit else rightH = Vector3.new(1, 0,  0) end
+    local moveDir = Vector3.new(0, 0, 0)
+    if flyanim.wDown then moveDir = moveDir + lookH end
+    if flyanim.sDown then moveDir = moveDir - lookH end
+    if flyanim.aDown then moveDir = moveDir - rightH end
+    if flyanim.dDown then moveDir = moveDir + rightH end
+    if moveDir.Magnitude < 0.01 then moveDir = lookH else moveDir = moveDir.Unit end
+    local awayDir  = -moveDir
+    local spawnPos = root.Position + (awayDir * 1)
+    local part = Instance.new("Part")
+    part.Anchored = true; part.CanCollide = false; part.CastShadow = false
+    part.Transparency = 1; part.Size = Vector3.new(0.1, PARTICLE_LENGTH, 0.1)
+    part.Position = spawnPos; part.Parent = _getParticleFolder()
+    local camPos  = cam.CFrame.Position
+    local toCam   = (camPos - spawnPos)
+    if toCam.Magnitude > 0.01 then toCam = toCam.Unit else toCam = Vector3.new(0, 0, -1) end
+    local upDir    = awayDir.Unit
+    local rightDir = upDir:Cross(toCam)
+    if rightDir.Magnitude < 0.01 then rightDir = Vector3.new(1, 0, 0) else rightDir = rightDir.Unit end
+    local lookDir  = rightDir:Cross(upDir).Unit
+    part.CFrame = CFrame.fromMatrix(spawnPos, rightDir, upDir, lookDir)
+    local sg  = Instance.new("SurfaceGui", part)
+    sg.Adornee = part; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = true
+    sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 50
+    local img = Instance.new("ImageLabel", sg)
+    img.Image = PARTICLE_TEXTURE; img.Size = UDim2.new(1, 0, 1, 0); img.BackgroundTransparency = 1
+    img.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
+    local FADE_TIME  = 0.42
+    local travelDist = isMega and 7 or 5
+    local targetPos  = spawnPos + awayDir * travelDist
+    local alive = true
+    local particleRef = {part = part, dead = false}
+    table.insert(flyanim.particleList, particleRef)
+    local function destroyPart()
+        if not alive then return end
+        alive = false
+        particleRef.dead = true
+        particleRef.part = nil
+        pcall(function() if part and part.Parent then part:Destroy() end end)
+    end
+    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
+    fadeTween:Play()
+    TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
+    fadeTween.Completed:Connect(destroyPart)
+    task.delay(FADE_TIME + 0.05, destroyPart)
+    task.delay(FADE_TIME + 0.1, function()
+        local pl = flyanim.particleList
+        for i = #pl, 1, -1 do
+            if pl[i] and pl[i].dead then table.remove(pl, i) end
+        end
+    end)
+end
+
+local function startParticleEmitter()
+    if not flyanim.enabled then return end
+    if flyanim.particleRunning then return end
+    flyanim.particleRunning = true
+    local emitSession = flyanim.sessionToken
+    flyanim.particleConn = task.spawn(function()
+        while flyanim.enabled
+            and flyanim.sessionToken == emitSession
+            and (flyanim.mode == "fast" or flyanim.mode == "turbo")
+            and not flyanim.megaTurboUpActive
+            and flyanim.mode ~= "megaup"
+        do
+            local char = lplr and lplr.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local isMega = (flyanim.mode == "turbo")
+                createParticle(isMega)
+                if isMega then task.wait(0.04); createParticle(true) end
+            end
+            task.wait(0.12)
+        end
+        flyanim.particleRunning = false
+        flyanim.particleConn    = nil
+        killActiveParticles()
+    end)
+end
+
+stopParticleEmitter = function()
+    if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
+    flyanim.particleRunning = false
+    killActiveParticles()
+end
 
 local function getBrightnessFactor(speed)
     if speed <= 1 then return 0 end
@@ -3194,24 +3323,30 @@ local function _flyBuildGui()
     local NOCLIP_ROW_START = 8 + 20 + 4   
     local NOCLIP_ROW_STEP  = ROW_H + 4
 
-    local function makeNoclipRow(yPos, labelText, initialState, onChange)
+    local function makeNoclipRow(yPos, emojiText, labelText, initialState, onChange)
         local row = Instance.new("Frame", noclipSec)
         row.Size = UDim2.new(1, -16, 0, ROW_H); row.Position = UDim2.new(0, 8, 0, yPos)
         row.BackgroundTransparency = 1
+        local emojiLbl = Instance.new("TextLabel", row)
+        emojiLbl.Size = UDim2.new(0, 16, 1, 0); emojiLbl.Position = UDim2.new(0, 0, 0, 0)
+        emojiLbl.BackgroundTransparency = 1; emojiLbl.Font = Enum.Font.Legacy
+        emojiLbl.TextSize = 12; emojiLbl.TextColor3 = C_CYAN
+        emojiLbl.Text = emojiText
+        emojiLbl.TextXAlignment = Enum.TextXAlignment.Center
+        emojiLbl.TextYAlignment = Enum.TextYAlignment.Center
         local lbl = Instance.new("TextLabel", row)
-        lbl.Size = UDim2.new(1, -(TOGGLE_W + 10), 1, 0); lbl.Position = UDim2.new(0, 0, 0, 0)
+        lbl.Size = UDim2.new(1, -(TOGGLE_W + 10 + 20), 1, 0); lbl.Position = UDim2.new(0, 20, 0, 0)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
         lbl.Text = labelText
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        
         local tgl = createToggle(row, 0, (ROW_H - 18) / 2, initialState, onChange)
         tgl.Position = UDim2.new(1, -(TOGGLE_W + 4), 0, (ROW_H - 18) / 2)
     end
 
-    makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
-    makeNoclipRow(NOCLIP_ROW_START + 1*NOCLIP_ROW_STEP, FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
+    makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, "⬆", FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
+    makeNoclipRow(NOCLIP_ROW_START + 1*NOCLIP_ROW_STEP, "⬇", FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
 
     
     local megaYPos = NOCLIP_ROW_START + 2*NOCLIP_ROW_STEP
