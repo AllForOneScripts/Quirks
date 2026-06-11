@@ -1,4 +1,4 @@
-print("version 2.06")
+print("version 2.07")
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -17,8 +17,8 @@ local FlyLang = {
         lock_label       = "LOCK",
         lock_hint_prefix = "Apuntar + ",
         noclip_title     = "NOCLIP",
-        noclip_space     = " ⬆  Espacio (arriba)",
-        noclip_ctrl      = " ⬇  Ctrl (bajar)",
+        noclip_space     = "Espacio (arriba)",
+        noclip_ctrl      = "Ctrl (bajar)",
         noclip_mega      = "Mega Turbo",
         height_below     = "studs abajo",
         height_above     = "studs arriba",
@@ -37,8 +37,8 @@ local FlyLang = {
         lock_label       = "LOCK",
         lock_hint_prefix = "Aim + ",
         noclip_title     = "NOCLIP",
-        noclip_space     = " ⬆  Space (Up)",
-        noclip_ctrl      = " ⬇  Ctrl (Down)",
+        noclip_space     = "Space (Up)",
+        noclip_ctrl      = "Ctrl (Down)",
         noclip_mega      = "Mega Turbo",
         height_below     = "studs below",
         height_above     = "studs above",
@@ -110,15 +110,10 @@ local ANIM = {
     bloqueo         = "rbxassetid://107456513",
 }
 
+local CAIDA_BASE_ID    = "rbxassetid://287325678"
+local CAIDA_OVERLAY_ID = "rbxassetid://70439247"
 local SFX_TURBO        = "rbxassetid://137455842313478"
 local SFX_MEGA_TURBO   = "rbxassetid://111391583223900"
-local SMOKE_RING_TEX   = "rbxassetid://137805272670926"
-local AIR_SHOCK_ID     = "rbxassetid://112096280571499"
-local SHOCKWAVE_ID     = "rbxassetid://117592591478260"
-local RING_ID          = "rbxassetid://12914395250"
-local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
-local PARTICLE_LENGTH  = 6
-local WHITE            = Color3.fromRGB(255, 255, 255)
 
 local function playLocalSound(id, volume)
     local snd = Instance.new("Sound")
@@ -196,6 +191,8 @@ local COMBO_MIN_GAP        = 0.08
 local COMBO_STEP_DURATION  = {0.47, 0.47, 0.53, 0.68}
 local COMBO_PENDING_WINDOW = 1.0
 local COMBO_HOLD_INTERVAL  = 0.10
+local ANOMALY_COOLDOWN     = 0.12
+local MOTOR_RESET_COOLDOWN = 0.5
 
 local Q_DEBOUNCE = 0.10
 
@@ -223,6 +220,11 @@ local flyanim = {
     idleTimer   = nil,
     isMoving    = false,
     wDown = false, sDown = false, aDown = false, dDown = false,
+    waitingLand = false,
+    landConn    = nil,
+    landingHeight = nil,
+    landingVelocity = 0,
+    landingVelocityCapture = 0,
     comboStep       = 0,
     comboLastClick  = 0,
     combo2LastUsed  = nil,
@@ -262,6 +264,7 @@ local flyanim = {
     particleRunning = false,
     particleConn    = nil,
     particleList    = {},
+    antiImpulseConn      = nil,
     noclipSpaceEnabled   = true,
     noclipSpaceActive    = false,
     noclipMegaEnabled    = true,
@@ -272,6 +275,9 @@ local flyanim = {
     originalGyroP        = nil,
     originalGyroMaxTorque = nil,
     backupGyro           = nil,
+    lastKnownPos         = nil,
+    anomalyConn          = nil,
+    ragdollDetected      = false,
     animBlockRenderConn  = nil,
     blockTrack      = nil,
     isBlocking      = false,
@@ -321,6 +327,10 @@ local flyanim = {
     dashAnimToken  = 0,
     c0ControlToken = 0,
     tpMoveConn = nil,
+    lastSafePos      = nil,
+    lastSafeTime     = 0,
+    teleportGuardConn = nil,
+    isTeleportGuardActive = false,
     sessionToken = 0,
     lockLabels = nil,
     _dragInputConn = nil,
@@ -329,6 +339,9 @@ local flyanim = {
 
 local c0DesiredCFrame = nil
 local heightTweenToken = 0
+
+local stopLandingWatcher
+local startLandingWatcher
 
 local function isnan(v)
     return v ~= v
@@ -354,6 +367,82 @@ local function restaurarC0Inmediato()
     end
     clearC0Desired()
 end
+
+local function startTeleportGuard()
+    if flyanim.teleportGuardConn then
+        flyanim.teleportGuardConn:Disconnect()
+        flyanim.teleportGuardConn = nil
+    end
+    flyanim.lastSafePos  = nil
+    flyanim.lastSafeTime = tick()
+    flyanim.isTeleportGuardActive = true
+    local mySession = flyanim.sessionToken
+    flyanim.teleportGuardConn = RunService.Stepped:Connect(function()
+        if not flyanim.enabled then
+            if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
+            flyanim.isTeleportGuardActive = false
+            return
+        end
+        if not flyanim.isTeleportGuardActive then return end
+        local char = lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then flyanim.lastSafePos = nil; return end
+        local pos = root.Position
+        if not safepos(pos) then return end
+        if pos.Y <= -500 then
+            local safePos = flyanim.lastSafePos
+            if safePos then
+                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
+                pcall(function()
+                    root.CFrame = targetCF
+                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local camCF = cam.CFrame
+                    task.defer(function()
+                        if cam and cam.Parent then cam.CFrame = camCF end
+                    end)
+                end
+                flyanim.dashTimer = 0
+                flyanim.dashVel   = Vector3.new(0, 0, 0)
+                if not root:FindFirstChildOfClass("BodyGyro") then
+                    pcall(function()
+                        local char2 = lplr.Character
+                        if char2 then
+                            local root2 = char2:FindFirstChild("HumanoidRootPart")
+                            if root2 then
+                                local hum2 = char2:FindFirstChildOfClass("Humanoid")
+                                if hum2 then
+                                    hum2.PlatformStand = true
+                                    hum2:ChangeState(Enum.HumanoidStateType.Physics)
+                                end
+                            end
+                        end
+                    end)
+                end
+            end
+            return
+        end
+        if math.abs(pos.X) < COORD_SANITY_LIMIT and math.abs(pos.Z) < COORD_SANITY_LIMIT then
+            flyanim.lastSafePos  = pos
+            flyanim.lastSafeTime = tick()
+        end
+    end)
+end
+
+local function stopTeleportGuard()
+    flyanim.isTeleportGuardActive = false
+    if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
+    flyanim.lastSafePos = nil
+end
+
 local function setNoclip(state)
     local char = lplr and lplr.Character
     if not char then return end
@@ -378,7 +467,9 @@ local function cleanupMotors(root, preserveVelY, skipStateChange)
             hum.PlatformStand = false
             hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-            hum:ChangeState(Enum.HumanoidStateType.Freefall)
+            if not preserveVelY then
+                hum:ChangeState(Enum.HumanoidStateType.Freefall)
+            end
         end)
     end
     if preserveVelY then
@@ -1022,7 +1113,6 @@ iniciarCicloNormal = function(thisPlay)
 end
 
 local stopParticleEmitter
-
 local function iniciarPoseTurbo()
     flyanim.turboPreImpulsoActivo = true
     flyanim.turboPreImpulsoToken  = (flyanim.turboPreImpulsoToken or 0) + 1
@@ -1148,8 +1238,8 @@ local function iniciarPoseTurbo()
         if nt.turbo_pose  then nt.turbo_pose.Looped  = true; pcall(function() nt.turbo_pose:Play(0.2) end) end
         if nt.turbo_volado then nt.turbo_volado.Looped = true; pcall(function() nt.turbo_volado:Play(0.2) end) end
         if nt.turbo_burst  then pcall(function() nt.turbo_burst:Stop(0.4) end) end
-        -- Fix #5: Saltar casi instantáneamente al C0 de vuelo (loop de 0.06s sin lerp)
-        -- Elimina el "mirando hacia abajo" visible que duraba TIEMPO_TRANSICION (0.4s)
+        
+        
         local cframeVuelo = originalC0
             * CFrame.new(0, ANIM_TURBO.COMPENSACION_ALTURA, 0)
             * CFrame.Angles(math.rad(ANIM_TURBO.INCLINACION_GRADOS), 0, 0)
@@ -1291,8 +1381,8 @@ end
 
 local function iniciarPoseMega()
     detenerNormalTracks(0.1)
-    -- Fix #4: Desconectar turboRenderConn directamente en lugar de llamar
-    -- detenerPoseTurbo(), que incrementa c0ControlToken y lo invalida.
+    
+    
     if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
     flyanim.turboPreImpulsoActivo = false
     local nt = flyanim.normalTracks
@@ -1308,10 +1398,10 @@ local function iniciarPoseMega()
     local originalC0 = flyanim.originalC0
     if not rootJoint or not originalC0 then return end
     if not nt or not nt.mega_pose then return end
-    -- Tomar control de c0ControlToken ANTES de arrancar el loop
+    
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
     local myC0Token = flyanim.c0ControlToken
-    -- Reset inmediato de C0 al valor base para limpiar inclinaciones residuales
+    
     pcall(function() rootJoint.C0 = originalC0 end)
     if nt.mega_pose   then nt.mega_pose.Looped   = true; pcall(function() nt.mega_pose:Play(0.2); nt.mega_pose:AdjustSpeed(0.1) end) end
     if nt.mega_base   then nt.mega_base.Looped    = true; pcall(function() nt.mega_base:Play(0.2); nt.mega_base:AdjustSpeed(0.1) end) end
@@ -1401,6 +1491,42 @@ local function updateAnimForMovement()
     end
 end
 
+local function startAntiImpulse()
+    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+    local mySession = flyanim.sessionToken
+    flyanim.antiImpulseConn = RunService.Stepped:Connect(function()
+        if not flyanim.enabled then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+            return
+        end
+        local char = lplr and lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local bv = flyanim.bv
+        if not bv or not bv.Parent then return end
+        local expectedVel = bv.velocity
+        local actualVel   = root.AssemblyLinearVelocity
+        if not safepos(actualVel) or not safepos(expectedVel) then return end
+        local diff = (actualVel - expectedVel).Magnitude
+        if diff > 3 then root.AssemblyLinearVelocity = expectedVel end
+        local bg = flyanim.bg
+        if bg then
+            local currentAngular = root.AssemblyAngularVelocity
+            if safepos(currentAngular) and currentAngular.Magnitude > 5 then
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end)
+end
+
+local function stopAntiImpulse()
+    if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
+end
+
 local function activateGyroProtection()
     if flyanim.gyroProtectionActive then return end
     if not flyanim.bg then return end
@@ -1430,6 +1556,8 @@ local function activateGyroProtection()
     end)
 end
 
+local lastAnomalyFix  = 0
+local lastMotorReset  = 0
 
 local function _flyMakeMotors()
     local char = lplr and lplr.Character; if not char then return end
@@ -1458,6 +1586,104 @@ local function _flyMakeMotors()
     hum.PlatformStand = true
     hum:ChangeState(Enum.HumanoidStateType.Physics)
 end
+
+local function silentMotorReset()
+    if not flyanim.enabled then return end
+    local now = tick()
+    if now - lastMotorReset < MOTOR_RESET_COOLDOWN then return end
+    lastMotorReset = now
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+    local currentCF = root.CFrame
+    pcall(function()
+        for _, v in ipairs(root:GetChildren()) do
+            if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+            or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation") or v:IsA("LinearVelocity") then
+                v:Destroy()
+            end
+        end
+        root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        local bg = Instance.new("BodyGyro", root)
+        bg.P = 9e4; bg.maxTorque = Vector3.new(9e9, 9e9, 9e9); bg.cframe = currentCF
+        local bv = Instance.new("BodyVelocity", root)
+        bv.velocity = Vector3.new(0, 0, 0); bv.maxForce = Vector3.new(9e9, 9e9, 9e9)
+        local bf = Instance.new("BodyForce", root)
+        local totalMass = 0
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and not part.Massless then
+                totalMass = totalMass + part.AssemblyMass
+            end
+        end
+        if totalMass <= 0 then totalMass = root.AssemblyMass end
+        if totalMass <= 0 then totalMass = 1 end
+        local grav = workspace.Gravity
+        bf.Force = Vector3.new(0, totalMass * (isnan(grav) and 196.2 or grav), 0)
+        flyanim.bg = bg
+        flyanim.bv = bv
+        flyanim.bf = bf
+        hum.PlatformStand = true
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+end
+
+local function startAnomalyProtection()
+    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+    flyanim.lastKnownPos = nil
+    local mySession = flyanim.sessionToken
+    flyanim.anomalyConn = RunService.Stepped:Connect(function()
+        if not flyanim.enabled then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
+        if flyanim.sessionToken ~= mySession then
+            if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+            flyanim.lastKnownPos = nil
+            return
+        end
+        local char = lplr and lplr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then flyanim.lastKnownPos = nil; return end
+        local now = tick()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local pos = root.Position
+        if safepos(pos) then flyanim.lastKnownPos = pos end
+        if not hum then return end
+        local state = hum:GetState()
+        local isHitboxDrop = (
+            state == Enum.HumanoidStateType.Freefall    or
+            state == Enum.HumanoidStateType.FallingDown or
+            state == Enum.HumanoidStateType.Ragdoll     or
+            state == Enum.HumanoidStateType.GettingUp
+        )
+        local motorsGone = (
+            not root:FindFirstChildOfClass("BodyGyro") or
+            not root:FindFirstChildOfClass("BodyVelocity")
+        )
+        if (isHitboxDrop or motorsGone) and now - lastAnomalyFix > ANOMALY_COOLDOWN then
+            lastAnomalyFix = now
+            flyanim.ragdollDetected = (state == Enum.HumanoidStateType.Ragdoll)
+            silentMotorReset()
+            local capturedSession = mySession
+            task.defer(function()
+                if flyanim.sessionToken ~= capturedSession then return end
+                if not flyanim.enabled then return end
+                flyanim.ragdollDetected = false
+            end)
+        end
+    end)
+end
+
+local function stopAnomalyProtection()
+    if flyanim.anomalyConn then flyanim.anomalyConn:Disconnect(); flyanim.anomalyConn = nil end
+    flyanim.lastKnownPos = nil
+end
+
 local function fixUndergroundOrientation()
     local char = lplr and lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1481,6 +1707,8 @@ local function startAnimBlockLoop()
     if not flyanim.animator then return end
     local ownAnimIds = {}
     for _, id in pairs(ANIM) do ownAnimIds[id] = true end
+    ownAnimIds[CAIDA_BASE_ID]    = true
+    ownAnimIds[CAIDA_OVERLAY_ID] = true
     local mySession = flyanim.sessionToken
     flyanim.animBlockRenderConn = RunService.RenderStepped:Connect(function()
         if not flyanim.enabled then
@@ -1645,151 +1873,12 @@ local function shakeCamera(intensity, duration)
     end)
 end
 
--- ================================================================
--- SISTEMA DE PARTÍCULAS REHECHO COMPLETAMENTE (sin residuos)
--- ================================================================
-local _particleFolder = nil
 
-local function _getParticleFolder()
-    if _particleFolder and _particleFolder.Parent == workspace then
-        return _particleFolder
-    end
-    -- Si existía pero fue destruido, limpiar referencia
-    _particleFolder = nil
-    local folder = Instance.new("Folder")
-    folder.Name   = "AFO_Particles"
-    folder.Parent = workspace
-    _particleFolder = folder
-    return folder
-end
+local function killActiveParticles() flyanim.particleList = {} end
 
-local function killActiveParticles()
-    -- Limpiar la lista de referencias
-    local list = flyanim.particleList
-    for i = #list, 1, -1 do
-        local ref = list[i]
-        if ref and ref.part then
-            pcall(function()
-                if ref.part.Parent then ref.part:Destroy() end
-            end)
-            ref.part = nil
-            ref.dead = true
-        end
-    end
-    flyanim.particleList = {}
 
-    -- Limpiar TODA la carpeta de partículas (limpieza garantizada)
-    if _particleFolder and _particleFolder.Parent then
-        for _, child in ipairs(_particleFolder:GetChildren()) do
-            pcall(function() child:Destroy() end)
-        end
-    end
-end
-
-local function createParticle(isMega)
-    if not flyanim.enabled then return end
-    if flyanim.megaTurboUpActive or flyanim.mode == "megaup" then return end
-    local char = lplr and lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local cam  = workspace.CurrentCamera
-    if not cam then return end
-    local camCF  = cam.CFrame
-    local lookH  = Vector3.new(camCF.LookVector.X,  0, camCF.LookVector.Z)
-    local rightH = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
-    if lookH.Magnitude  > 0.01 then lookH  = lookH.Unit  else lookH  = Vector3.new(0, 0, -1) end
-    if rightH.Magnitude > 0.01 then rightH = rightH.Unit else rightH = Vector3.new(1, 0,  0) end
-    local moveDir = Vector3.new(0, 0, 0)
-    if flyanim.wDown then moveDir = moveDir + lookH end
-    if flyanim.sDown then moveDir = moveDir - lookH end
-    if flyanim.aDown then moveDir = moveDir - rightH end
-    if flyanim.dDown then moveDir = moveDir + rightH end
-    if moveDir.Magnitude < 0.01 then moveDir = lookH else moveDir = moveDir.Unit end
-    -- Spawnear desde el cuerpo (1 stud atrás) y viajar 5-7 studs hacia atrás
-    -- para que el sonic boom se vea centrado en el personaje y no demasiado lejos
-    local awayDir  = -moveDir
-    local spawnPos = root.Position + (awayDir * 1)  -- 1 stud detrás del cuerpo
-    local part = Instance.new("Part")
-    part.Anchored = true; part.CanCollide = false; part.CastShadow = false
-    part.Transparency = 1; part.Size = Vector3.new(0.1, PARTICLE_LENGTH, 0.1)
-    part.Position = spawnPos; part.Parent = _getParticleFolder()
-    local camPos  = cam.CFrame.Position
-    local toCam   = (camPos - spawnPos)
-    if toCam.Magnitude > 0.01 then toCam = toCam.Unit else toCam = Vector3.new(0, 0, -1) end
-    local upDir    = awayDir.Unit
-    local rightDir = upDir:Cross(toCam)
-    if rightDir.Magnitude < 0.01 then rightDir = Vector3.new(1, 0, 0) else rightDir = rightDir.Unit end
-    local lookDir  = rightDir:Cross(upDir).Unit
-    part.CFrame = CFrame.fromMatrix(spawnPos, rightDir, upDir, lookDir)
-    local sg  = Instance.new("SurfaceGui", part)
-    sg.Adornee = part; sg.Face = Enum.NormalId.Front; sg.AlwaysOnTop = true
-    sg.LightInfluence = 0; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud = 50
-    local img = Instance.new("ImageLabel", sg)
-    img.Image = PARTICLE_TEXTURE; img.Size = UDim2.new(1, 0, 1, 0); img.BackgroundTransparency = 1
-    img.ImageColor3 = Color3.fromRGB(255, 255, 255)
-    img.ImageTransparency = isMega and 0.3 or 0.5; img.ScaleType = Enum.ScaleType.Fit
-
-    local FADE_TIME  = 0.42
-    local travelDist = isMega and 7 or 5  -- reducido para que el efecto sea visible cerca del cuerpo
-    local targetPos  = spawnPos + awayDir * travelDist
-    local alive = true
-
-    local particleRef = {part = part, dead = false}
-    table.insert(flyanim.particleList, particleRef)
-
-    local function destroyPart()
-        if not alive then return end
-        alive = false
-        particleRef.dead = true
-        particleRef.part = nil
-        pcall(function() if part and part.Parent then part:Destroy() end end)
-    end
-
-    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
-    fadeTween:Play()
-    TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
-    fadeTween.Completed:Connect(destroyPart)
-    task.delay(FADE_TIME + 0.05, destroyPart)
-
-    task.delay(FADE_TIME + 0.1, function()
-        local pl = flyanim.particleList
-        for i = #pl, 1, -1 do
-            if pl[i] and pl[i].dead then table.remove(pl, i) end
-        end
-    end)
-end
-
-local function startParticleEmitter()
-    if not flyanim.enabled then return end
-    if flyanim.particleRunning then return end
-    flyanim.particleRunning = true
-    local emitSession = flyanim.sessionToken
-    flyanim.particleConn = task.spawn(function()
-        while flyanim.enabled
-            and flyanim.sessionToken == emitSession
-            and (flyanim.mode == "fast" or flyanim.mode == "turbo")
-            and not flyanim.megaTurboUpActive
-            and flyanim.mode ~= "megaup"
-        do
-            local char = lplr and lplr.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                local isMega = (flyanim.mode == "turbo")
-                createParticle(isMega)
-                if isMega then task.wait(0.04); createParticle(true) end
-            end
-            task.wait(0.12)
-        end
-        flyanim.particleRunning = false
-        flyanim.particleConn    = nil
-        killActiveParticles()
-    end)
-end
-
-stopParticleEmitter = function()
-    if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
-    flyanim.particleRunning = false
-    killActiveParticles()
-end
+local function startParticleEmitter() end
+stopParticleEmitter = function() end
 
 local function getBrightnessFactor(speed)
     if speed <= 1 then return 0 end
@@ -1826,122 +1915,11 @@ local function speedWhiteFlash(mode)
     end)
 end
 
-local function airShockAura(intensity)
-    local char = lplr and lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local isMega = intensity == 2
-    task.spawn(function()
-        local bb = Instance.new("BillboardGui")
-        bb.Adornee=root; bb.AlwaysOnTop=false; bb.LightInfluence=0
-        bb.Size=UDim2.new(0,50,0,50); bb.ResetOnSpawn=false; bb.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb.Parent=root
-        local img = Instance.new("ImageLabel", bb)
-        img.Image=AIR_SHOCK_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
-        img.ImageColor3=Color3.fromRGB(210,240,255); img.ImageTransparency=0.25; img.ScaleType=Enum.ScaleType.Fit
-        local img2 = Instance.new("ImageLabel", bb)
-        img2.Image=AIR_SHOCK_ID; img2.Size=UDim2.new(1.3,0,1.3,0); img2.Position=UDim2.new(-0.15,0,-0.15,0)
-        img2.BackgroundTransparency=1; img2.ImageColor3=Color3.fromRGB(180,220,255); img2.ImageTransparency=0.45
-        img2.ScaleType=Enum.ScaleType.Fit; img2.Rotation=45
-        TweenService:Create(bb, TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,200,0,200)}):Play()
-        task.wait(0.05)
-        if not bb or not bb.Parent then return end
-        TweenService:Create(bb, TweenInfo.new(0.20, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,280,0,280)}):Play()
-        TweenService:Create(img,  TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        TweenService:Create(img2, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-        task.delay(0.32, function() pcall(function() bb:Destroy() end) end)
-    end)
-    if isMega then
-        task.spawn(function()
-            task.wait(0.05)
-            if not root or not root.Parent then return end
-            local bb2 = Instance.new("BillboardGui")
-            bb2.Adornee=root; bb2.AlwaysOnTop=false; bb2.LightInfluence=0
-            bb2.Size=UDim2.new(0,50,0,50); bb2.ResetOnSpawn=false; bb2.ZIndexBehavior=Enum.ZIndexBehavior.Global; bb2.Parent=root
-            local i1 = Instance.new("ImageLabel", bb2)
-            i1.Image=AIR_SHOCK_ID; i1.Size=UDim2.new(1,0,1,0); i1.BackgroundTransparency=1
-            i1.ImageColor3=Color3.fromRGB(220,245,255); i1.ImageTransparency=0.15; i1.ScaleType=Enum.ScaleType.Fit; i1.Rotation=22
-            local i2 = Instance.new("ImageLabel", bb2)
-            i2.Image=AIR_SHOCK_ID; i2.Size=UDim2.new(1.5,0,1.5,0); i2.Position=UDim2.new(-0.25,0,-0.25,0)
-            i2.BackgroundTransparency=1; i2.ImageColor3=Color3.fromRGB(190,225,255); i2.ImageTransparency=0.30
-            i2.ScaleType=Enum.ScaleType.Fit; i2.Rotation=60
-            TweenService:Create(bb2, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size=UDim2.new(0,480,0,480)}):Play()
-            task.wait(0.10)
-            if not bb2 or not bb2.Parent then return end
-            TweenService:Create(bb2, TweenInfo.new(0.26, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-                {Size=UDim2.new(0,680,0,680)}):Play()
-            TweenService:Create(i1, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-            TweenService:Create(i2, TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-            task.delay(0.40, function() pcall(function() bb2:Destroy() end) end)
-        end)
-    end
-end
+local function airShockAura(intensity) end
 
-local function sonicBoomEffect(intensity)
-    local char = lplr and lplr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local isMega = intensity == 2
-    local scale  = isMega and 0.95 or 0.55
-    local rings  = {
-        { start=(isMega and 5 or 3)*scale,   peak=(isMega and 140 or 80)*scale,  exp=isMega and 0.32 or 0.20, fadeDelay=isMega and 0.14 or 0.08, fadeDur=isMega and 0.26 or 0.16 },
-        { start=(isMega and 4 or 2)*scale,   peak=(isMega and 90 or 52)*scale,   exp=isMega and 0.20 or 0.12, fadeDelay=isMega and 0.06 or 0.04, fadeDur=isMega and 0.18 or 0.10 },
-        { start=(isMega and 3 or 1.5)*scale, peak=(isMega and 55 or 32)*scale,   exp=isMega and 0.12 or 0.07, fadeDelay=0,                        fadeDur=isMega and 0.10 or 0.06 },
-    }
-    for i, r in ipairs(rings) do
-        task.spawn(function()
-            task.wait(i == 1 and 0 or (i == 2 and 0.02 or 0.04))
-            if not root or not root.Parent then return end
-            local p = Instance.new("Part")
-            p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false; p.Transparency=1
-            p.Size=Vector3.new(r.start*2, r.start*2, 0.01); p.CFrame=root.CFrame
-            local cam = workspace.CurrentCamera
-            if cam then
-                local d = cam.CFrame.Position - root.Position
-                if d.Magnitude > 0.1 then p.CFrame = CFrame.lookAt(root.Position, root.Position + d.Unit) end
-            end
-            p.Parent = workspace
-            local sg = Instance.new("SurfaceGui", p)
-            sg.Adornee=p; sg.Face=Enum.NormalId.Front; sg.AlwaysOnTop=false; sg.LightInfluence=0
-            sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50; sg.ZIndexBehavior=Enum.ZIndexBehavior.Global
-            local outer = Instance.new("ImageLabel", sg)
-            outer.Image=RING_ID; outer.Size=UDim2.new(1,0,1,0); outer.BackgroundTransparency=1
-            outer.ImageColor3=WHITE; outer.ImageTransparency=0.06; outer.ZIndex=3
-            local innerScale = 0.72 - (i-1)*0.08
-            local inner = Instance.new("ImageLabel", sg)
-            inner.Image=RING_ID; inner.Size=UDim2.new(innerScale,0,innerScale,0)
-            inner.Position=UDim2.new((1-innerScale)/2,0,(1-innerScale)/2,0)
-            inner.BackgroundTransparency=1; inner.ImageColor3=WHITE; inner.ImageTransparency=0.20; inner.ZIndex=2
-            TweenService:Create(p, TweenInfo.new(r.exp, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size=Vector3.new(r.peak*2, r.peak*2, 0.01)}):Play()
-            task.delay(r.fadeDelay, function()
-                if not p or not p.Parent then return end
-                TweenService:Create(outer, TweenInfo.new(r.fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-                TweenService:Create(inner, TweenInfo.new(r.fadeDur*0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-            end)
-            task.delay(r.fadeDelay + r.fadeDur + 0.08, function() pcall(function() p:Destroy() end) end)
-        end)
-    end
-    task.spawn(function()
-        local startPx = isMega and 90 or 60
-        local peakPx  = isMega and 780 or 460
-        local bb = Instance.new("BillboardGui")
-        bb.Adornee=root; bb.AlwaysOnTop=true; bb.LightInfluence=0
-        bb.Size=UDim2.new(0,startPx,0,startPx); bb.ResetOnSpawn=false; bb.Parent=root
-        local img = Instance.new("ImageLabel", bb)
-        img.Image=SHOCKWAVE_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
-        img.ImageColor3=WHITE; img.ImageTransparency=0; img.ScaleType=Enum.ScaleType.Fit
-        TweenService:Create(bb, TweenInfo.new(0.10, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,peakPx,0,peakPx)}):Play()
-        task.delay(0.25, function() pcall(function() bb:Destroy() end) end)
-        task.wait(0.04)
-        if not img or not img.Parent then return end
-        TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {ImageTransparency=1}):Play()
-    end)
-end
+local function sonicBoomEffect(intensity) end
 
+local function spawnLandingEffects(position, velocity) end
 
 local function startIdleWatcher()
     if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer = nil end
@@ -2048,6 +2026,8 @@ local function setupAnimator(char, expectedSession)
 
     local ownAnimIds = {}
     for _, id in pairs(ANIM) do ownAnimIds[id] = true end
+    ownAnimIds[CAIDA_BASE_ID]    = true
+    ownAnimIds[CAIDA_OVERLAY_ID] = true
 
     flyanim.animConn = animator.AnimationPlayed:Connect(function(track)
         if not track or not track.Animation then return end
@@ -2061,8 +2041,180 @@ local function setupAnimator(char, expectedSession)
     setupDamageDetector()
 end
 
+local function restoreGameAnimations(char)
+    if not char then return end
+    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+    stopAnimBlockLoop()
+    local animScript = char:FindFirstChild("Animate") or flyanim.animScript
+    if animScript then animScript.Disabled = false; flyanim.animScript = nil end
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root then cleanupMotors(root) end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = false
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+        task.wait(0.05)
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
+    end
+end
 
+local _landAnimToken = 0
+local _landBaseRef    = nil
+local _landOverlayRef = nil
 
+local function doLanding(char, epicFall)
+    if not char or not char.Parent then return end
+    local hum_check = char:FindFirstChildOfClass("Humanoid")
+    if not hum_check or hum_check.Health <= 0 then return end
+    local humanoid = hum_check
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    local altura    = flyanim.landingHeight or 0
+    local impactVel = math.max(flyanim.landingVelocity or 0, flyanim.landingVelocityCapture or 0)
+    flyanim.landingHeight          = nil
+    flyanim.landingVelocity        = 0
+    flyanim.landingVelocityCapture = 0
+    if not epicFall and altura < 10 then restoreGameAnimations(char); return end
+    if epicFall and altura < 25 then epicFall = false end
+    if not animator then restoreGameAnimations(char); return end
+
+    
+    flyanim.idleTimerAnim  = 0
+    flyanim.isBrazosActive = false
+    flyanim.evalToken      = (flyanim.evalToken or 0) + 1
+    flyanim.isWDown = false; flyanim.isSDown = false
+    flyanim.isADown = false; flyanim.isDDown = false
+    flyanim.wDown   = false; flyanim.sDown   = false
+    flyanim.aDown   = false; flyanim.dDown   = false
+    flyanim.isBrazosActive = false
+    flyanim.idleTimerAnim  = 0
+
+    if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
+    if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
+    if flyanim.blockRenderConn then flyanim.blockRenderConn:Disconnect(); flyanim.blockRenderConn = nil end
+    if flyanim.idleAnimConn    then flyanim.idleAnimConn:Disconnect();    flyanim.idleAnimConn    = nil end
+    flyanim.idleWatchToken     = (flyanim.idleWatchToken or 0) + 1
+    flyanim.c0ControlToken     = (flyanim.c0ControlToken or 0) + 1
+    detenerWatchdogAltura()
+    restaurarC0Inmediato()
+    if flyanim.blockTrack and flyanim.blockTrack.IsPlaying then pcall(function() flyanim.blockTrack:Stop(0) end) end
+    flyanim.isBlocking         = false
+    flyanim.isSpaceAdv         = false
+    flyanim.turboTransitioning = false
+    flyanim.megaTransitioning  = false
+    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+    stopAnimBlockLoop()
+    local ok2, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
+    if ok2 and playing then for _, track in ipairs(playing) do pcall(function() track:Stop(0) end) end end
+    for _, t in pairs(flyanim.tracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0) end end) end
+    flyanim.tracks       = {}
+    flyanim.normalTracks = {}
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    local animScript = char:FindFirstChild("Animate") or flyanim.animScript
+    if animScript then animScript.Disabled = true end
+    local landAnimIds = {[CAIDA_BASE_ID]=true, [CAIDA_OVERLAY_ID]=true}
+    local landAnimConn = animator.AnimationPlayed:Connect(function(track)
+        if track.Animation then
+            local id = track.Animation.AnimationId
+            if not landAnimIds[id] then pcall(function() track:Stop(0) end) end
+        end
+    end)
+    if humanoid then
+        humanoid.PlatformStand = false
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+        task.wait(0.05)
+        local st = humanoid:GetState()
+        if st ~= Enum.HumanoidStateType.Landed and st ~= Enum.HumanoidStateType.Running then
+            pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Landed) end)
+        end
+    end
+    local root      = char:FindFirstChild("HumanoidRootPart")
+    local impactPos = (root and safepos(root.Position)) and root.Position or Vector3.new(0, 0, 0)
+    if root then
+        local _, ry, _ = root.CFrame:ToOrientation()
+        if isnan(ry) then ry = 0 end
+        local currentPos = root.Position
+        pcall(function()
+            root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, ry, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+    end
+    spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5))
+    if epicFall and altura >= 25 then
+        if not animator or not animator.Parent then restoreGameAnimations(char); return end
+        local animObjBase = Instance.new("Animation")
+        animObjBase.AnimationId = CAIDA_BASE_ID
+        local animObjOverlay = Instance.new("Animation")
+        animObjOverlay.AnimationId = CAIDA_OVERLAY_ID
+        local landBase    = animator:LoadAnimation(animObjBase)
+        local landOverlay = animator:LoadAnimation(animObjOverlay)
+        pcall(function() animObjBase:Destroy() end)
+        pcall(function() animObjOverlay:Destroy() end)
+        landBase.Priority    = Enum.AnimationPriority.Action3
+        landOverlay.Priority = Enum.AnimationPriority.Action4
+        landBase.Looped    = true
+        landOverlay.Looped = true
+        _landAnimToken = _landAnimToken + 1
+        local myToken  = _landAnimToken
+        _landBaseRef    = landBase
+        _landOverlayRef = landOverlay
+        pcall(function() landBase:Stop(0); landOverlay:Stop(0) end)
+        pcall(function() landBase:Play(0.0, 1, 1) end)
+        pcall(function() landOverlay:Play(0.0, 1, 1) end)
+        pcall(function() landBase:AdjustSpeed(8.0) end)
+        pcall(function() landOverlay:AdjustSpeed(8.0) end)
+        task.wait(0.06)
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
+        pcall(function() landBase:AdjustSpeed(0) end)
+        pcall(function() landOverlay:AdjustSpeed(0) end)
+        local alturaClamp     = math.clamp(altura, 25, 200)
+        local shakeIntensity  = 2.0 + (alturaClamp - 25) / 175 * 1.5
+        shakeCamera(shakeIntensity, 0.30)
+        task.wait(0.30)
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
+        pcall(function() landBase:AdjustSpeed(0.3); landOverlay:AdjustSpeed(0.3) end)
+        task.wait(0.45)
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
+        pcall(function() landBase:AdjustSpeed(1.0); landOverlay:AdjustSpeed(1.0) end)
+        task.wait(0.3)
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
+        pcall(function() landBase:Stop(0.5); landOverlay:Stop(0.5) end)
+        task.wait(0.5)
+        if _landAnimToken ~= myToken then landAnimConn:Disconnect(); return end
+        landAnimConn:Disconnect()
+        task.wait(0.4)
+        if _landAnimToken ~= myToken then return end
+        pcall(function() landBase:Destroy() end)
+        pcall(function() landOverlay:Destroy() end)
+        if _landBaseRef    == landBase    then _landBaseRef    = nil end
+        if _landOverlayRef == landOverlay then _landOverlayRef = nil end
+    else
+        local alturaClamp2   = math.clamp(altura, 10, 25)
+        local shakeIntensity2 = 0.8 + (alturaClamp2 - 10) / 15 * 1.2
+        shakeCamera(shakeIntensity2, 0.18)
+        landAnimConn:Disconnect()
+        task.wait(0.3)
+    end
+    if animScript then animScript.Disabled = false end
+    if flyanim.animConn then flyanim.animConn:Disconnect(); flyanim.animConn = nil end
+    if flyanim.rootJoint and flyanim.originalC0 then
+        pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
+    end
+    local root2 = char:FindFirstChild("HumanoidRootPart")
+    if root2 then cleanupMotors(root2) end
+    local hum2 = char:FindFirstChildOfClass("Humanoid")
+    if hum2 then
+        hum2.PlatformStand = false
+        pcall(function() hum2:ChangeState(Enum.HumanoidStateType.Landed) end)
+        task.wait(0.05)
+        pcall(function() hum2:ChangeState(Enum.HumanoidStateType.Running) end)
+    end
+end
 
 local comboPendingClick = false
 
@@ -2646,7 +2798,7 @@ local function updateLockInfoGui()
         local healthStr
         local intPart = math.floor(rawHealth)
         if intPart == 0 and rawHealth > 0 then
-            -- Redondear a 2 decimales con rounding correcto
+            
             local rounded = math.floor(rawHealth * 100 + 0.5) / 100
             healthStr = string.format("%.2f", rounded)
         else
@@ -2829,7 +2981,7 @@ local function _flyBuildGui()
     _reloadFT()
     _flyDestroyGui()
 
-    -- ── Palette ───────────────────────────────────────────────────
+    
     local C_PURPLE  = Color3.fromRGB(110,  30, 180)
     local C_BLACK   = Color3.fromRGB(6,     4,  12)
     local C_ACCENT  = Color3.fromRGB(160,  60, 255)
@@ -2840,23 +2992,23 @@ local function _flyBuildGui()
     local C_RED     = Color3.fromRGB(255,  80,  80)
     local C_CYAN    = Color3.fromRGB(80,  200, 255)
     local C_GOLD    = Color3.fromRGB(255, 220,  80)
-    -- Gradient suave y continuo: mismo tono base, pasos uniformes por canal (~14 R, ~5 G, ~22 B)
-    local C_SEC1    = Color3.fromRGB(52,  17,  90)   -- LOCK   (más claro)
-    local C_SEC2    = Color3.fromRGB(38,  12,  68)   -- NOCLIP (medio)
-    local C_SEC3    = Color3.fromRGB(24,   7,  46)   -- SPEED  (más oscuro)
+    
+    local C_SEC1    = Color3.fromRGB(52,  17,  90)   
+    local C_SEC2    = Color3.fromRGB(38,  12,  68)   
+    local C_SEC3    = Color3.fromRGB(24,   7,  46)   
 
-    -- ── Layout ───────────────────────────────────────────────────
+    
     local W        = 280
     local H_MINI   = 48
     local DOT_SIZE = 10
     local PAD      = 10
-    local ROW_H    = 22   -- altura uniforme de todas las filas
-    local TOGGLE_W = 36   -- ancho del toggle switch
+    local ROW_H    = 22   
+    local TOGGLE_W = 36   
 
-    -- Alturas de sección calculadas desde las filas que contienen
-    -- LOCK:  1 fila de datos                             = PAD(8) + ROW_H + PAD(8)  = 38
-    -- NOCLIP: título(20) + 3 filas de toggle             = 8+20+4 + 3*(ROW_H+4) + 8 = 118
-    -- SPEED:  3 filas input (sin limits externos) + reset btn = 8 + 3*(ROW_H+6) + 10 + 28 + 8
+    
+    
+    
+    
     local H_LOCK   = 38
     local H_NOCLIP = 8 + 20 + 4 + 3*(ROW_H + 4) + 8
     local H_SPEED  = 8 + 3*(ROW_H + 6) + 8 + 28 + 8
@@ -2865,7 +3017,7 @@ local function _flyBuildGui()
 
     local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
-    -- ── ScreenGui + root ─────────────────────────────────────────
+    
     local sg = Instance.new("ScreenGui")
     sg.Name = "AFO_FlyHUD"; sg.ResetOnSpawn = false
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -2885,7 +3037,7 @@ local function _flyBuildGui()
     local stroke = Instance.new("UIStroke", panel)
     stroke.Color = C_PURPLE; stroke.Thickness = 1.2; stroke.Transparency = 0.75
 
-    -- ── Header ───────────────────────────────────────────────────
+    
     local topBar = Instance.new("Frame", panel)
     topBar.Size = UDim2.new(1, 0, 0, H_MINI)
     topBar.Position = UDim2.new(0, 0, 0, 0)
@@ -2911,19 +3063,10 @@ local function _flyBuildGui()
     sep.Size = UDim2.new(0, 1, 0, 22); sep.Position = UDim2.new(0, PAD + 118, 0.5, -11)
     sep.BackgroundColor3 = C_PURPLE; sep.BackgroundTransparency = 0.4
 
-    -- Mode label only (no emoji in header mode area)
-    local modeIconLbl = Instance.new("TextLabel", topBar)
-    modeIconLbl.Size = UDim2.new(0, 18, 1, 0)
-    modeIconLbl.Position = UDim2.new(0, PAD + 122, 0, 0)
-    modeIconLbl.BackgroundTransparency = 1; modeIconLbl.Font = Enum.Font.Legacy
-    modeIconLbl.TextSize = 13; modeIconLbl.TextColor3 = C_GREEN
-    modeIconLbl.Text = "🚀"
-    modeIconLbl.TextXAlignment = Enum.TextXAlignment.Center
-    modeIconLbl.TextYAlignment = Enum.TextYAlignment.Center
-
+    
     local modeLbl = Instance.new("TextLabel", topBar)
-    modeLbl.Size = UDim2.new(1, -(PAD + 118 + 8 + DOT_SIZE + 18 + 18), 1, 0)
-    modeLbl.Position = UDim2.new(0, PAD + 144, 0, 0)
+    modeLbl.Size = UDim2.new(1, -(PAD + 130 + DOT_SIZE + 16), 1, 0)
+    modeLbl.Position = UDim2.new(0, PAD + 126, 0, 0)
     modeLbl.BackgroundTransparency = 1; modeLbl.Font = Enum.Font.GothamBold
     modeLbl.TextSize = 12; modeLbl.TextColor3 = C_GREEN
     modeLbl.Text = FT.mode_normal
@@ -2940,7 +3083,7 @@ local function _flyBuildGui()
     dot.BackgroundColor3 = C_ACCENT
     Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-    -- ── Expand zone (below header) ────────────────────────────────
+    
     local expandZone = Instance.new("Frame", panel)
     expandZone.Size = UDim2.new(1, -2*PAD + 4, 0, CONTENT_H)
     expandZone.Position = UDim2.new(0, PAD - 2, 0, H_MINI + 4)
@@ -2953,7 +3096,7 @@ local function _flyBuildGui()
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     layout.VerticalAlignment = Enum.VerticalAlignment.Top
 
-    -- Section factory with per-section gradient color
+    
     local function makeSection(h, bgColor, strokeColor)
         local f = Instance.new("Frame")
         f.Size = UDim2.new(1, 0, 0, h)
@@ -2965,7 +3108,7 @@ local function _flyBuildGui()
         return f
     end
 
-    -- Helper: row container inside a section, uniform height
+    
     local function makeRow(parent, yPos)
         local row = Instance.new("Frame", parent)
         row.Size = UDim2.new(1, -16, 0, ROW_H)
@@ -2974,7 +3117,7 @@ local function _flyBuildGui()
         return row
     end
 
-    -- Helper: left-aligned text label inside a row
+    
     local function rowLabel(row, text, font, size, color, xOffset)
         local lbl = Instance.new("TextLabel", row)
         lbl.Size = UDim2.new(1, -(TOGGLE_W + 14 + (xOffset or 0)), 1, 0)
@@ -2988,17 +3131,17 @@ local function _flyBuildGui()
         return lbl
     end
 
-    -- Helper: right-aligned toggle inside a row
+    
     local function rowToggle(row, initialState, onChange)
         local xPos = row.Size.X.Scale == 1
-            and (W - 2*PAD + 4 - 16 - TOGGLE_W)  -- absolute fallback
+            and (W - 2*PAD + 4 - 16 - TOGGLE_W)  
             or  (W - 2*PAD - 16 - TOGGLE_W - 8)
         createToggle(row, row.AbsoluteSize.X > 0
             and (row.AbsoluteSize.X - TOGGLE_W - 2)
             or  (W - 52), 2, initialState, onChange)
     end
 
-    -- ── LOCK section (gradient top = lightest) ────────────────────
+    
     local lockSec = makeSection(H_LOCK, C_SEC1, C_ACCENT)
     lockSec.Parent = expandZone
 
@@ -3027,11 +3170,11 @@ local function _flyBuildGui()
     lockHint.TextYAlignment = Enum.TextYAlignment.Center
     flyanim.lockLabels = { label = lockLabel, hint = lockHint }
 
-    -- ── NOCLIP section (gradient mid) ────────────────────────────
+    
     local noclipSec = makeSection(H_NOCLIP, C_SEC2, C_PURPLE)
     noclipSec.Parent = expandZone
 
-    -- Title row
+    
     local noclipTitleEmoji = Instance.new("TextLabel", noclipSec)
     noclipTitleEmoji.Size = UDim2.new(0, 18, 0, 20); noclipTitleEmoji.Position = UDim2.new(0, 8, 0, 8)
     noclipTitleEmoji.BackgroundTransparency = 1; noclipTitleEmoji.Font = Enum.Font.Legacy
@@ -3047,8 +3190,8 @@ local function _flyBuildGui()
     noclipTitle.TextXAlignment = Enum.TextXAlignment.Left
     noclipTitle.TextYAlignment = Enum.TextYAlignment.Center
 
-    -- 3 toggle rows, evenly spaced, toggle pinned to right edge
-    local NOCLIP_ROW_START = 8 + 20 + 4   -- after title
+    
+    local NOCLIP_ROW_START = 8 + 20 + 4   
     local NOCLIP_ROW_STEP  = ROW_H + 4
 
     local function makeNoclipRow(yPos, labelText, initialState, onChange)
@@ -3062,7 +3205,7 @@ local function _flyBuildGui()
         lbl.Text = labelText
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
-        -- Toggle alineado a la derecha de la fila (escala 1 - ancho toggle - 4px margen)
+        
         local tgl = createToggle(row, 0, (ROW_H - 18) / 2, initialState, onChange)
         tgl.Position = UDim2.new(1, -(TOGGLE_W + 4), 0, (ROW_H - 18) / 2)
     end
@@ -3070,7 +3213,7 @@ local function _flyBuildGui()
     makeNoclipRow(NOCLIP_ROW_START + 0*NOCLIP_ROW_STEP, FT.noclip_space, flyanim.noclipSpaceEnabled, function(s) flyanim.noclipSpaceEnabled = s end)
     makeNoclipRow(NOCLIP_ROW_START + 1*NOCLIP_ROW_STEP, FT.noclip_ctrl,  flyanim.noclipCtrlEnabled,  function(s) flyanim.noclipCtrlEnabled  = s end)
 
-    -- Mega row (has leading emoji + text, same toggle position)
+    
     local megaYPos = NOCLIP_ROW_START + 2*NOCLIP_ROW_STEP
     local megaRow = Instance.new("Frame", noclipSec)
     megaRow.Size = UDim2.new(1, -16, 0, ROW_H); megaRow.Position = UDim2.new(0, 8, 0, megaYPos)
@@ -3091,16 +3234,20 @@ local function _flyBuildGui()
     local megaTgl = createToggle(megaRow, 0, (ROW_H - 18) / 2, flyanim.noclipMegaEnabled, function(s) flyanim.noclipMegaEnabled = s end)
     megaTgl.Position = UDim2.new(1, -(TOGGLE_W + 4), 0, (ROW_H - 18) / 2)
 
-    -- ── SPEED section (gradient bottom = darkest) ─────────────────
+    
     local speedSec = makeSection(H_SPEED, C_SEC3, C_PURPLE)
     speedSec.Parent = expandZone
 
-    -- makeSpeedRow: emoji | label | [input box] with limits hint below
+    
     local SPEED_ROW_START = 8
     local SPEED_ROW_STEP  = ROW_H + 6
 
     local function makeSpeedRow(emojiText, labelText, rowIdx, defaultVal, minVal, maxVal)
         local yTop = SPEED_ROW_START + rowIdx * SPEED_ROW_STEP
+        local SECTION_W = W - 2*PAD + 4 - 16
+        local BOX_W = 80
+        local BOX_X = SECTION_W - BOX_W - 4
+        local LABEL_W = BOX_X - 24
 
         local emojiLbl = Instance.new("TextLabel", speedSec)
         emojiLbl.Size = UDim2.new(0, 18, 0, ROW_H); emojiLbl.Position = UDim2.new(0, 8, 0, yTop)
@@ -3110,22 +3257,18 @@ local function _flyBuildGui()
         emojiLbl.TextYAlignment = Enum.TextYAlignment.Center
 
         local lbl = Instance.new("TextLabel", speedSec)
-        lbl.Size = UDim2.new(0, 76, 0, ROW_H); lbl.Position = UDim2.new(0, 30, 0, yTop)
+        lbl.Size = UDim2.new(0, LABEL_W, 0, ROW_H); lbl.Position = UDim2.new(0, 30, 0, yTop)
         lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold
         lbl.TextSize = 10; lbl.TextColor3 = C_TEXT
         lbl.Text = labelText; lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.TextYAlignment = Enum.TextYAlignment.Center
 
-        -- Input box (right half)
-        local BOX_X    = 112
-        local BOX_W    = W - 2*PAD + 4 - 16 - BOX_X - 8  -- fills remaining width
         local box = Instance.new("TextBox", speedSec)
         box.Size = UDim2.new(0, BOX_W, 0, ROW_H); box.Position = UDim2.new(0, BOX_X, 0, yTop)
         box.BackgroundColor3 = Color3.fromRGB(15, 5, 28); box.BackgroundTransparency = 0.05
         box.BorderSizePixel = 0; box.Font = Enum.Font.GothamBold; box.TextSize = 11
         box.TextColor3 = C_TEXT; box.Text = tostring(defaultVal); box.ClearTextOnFocus = true
-        -- Placeholder muestra min/max solo cuando el campo está vacío (como fondo elegante)
-        box.PlaceholderText = tostring(minVal) .. "–" .. tostring(maxVal)
+        box.PlaceholderText = tostring(minVal) .. "-" .. tostring(maxVal)
         box.PlaceholderColor3 = Color3.fromRGB(130, 100, 180)
         Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
         local bs = Instance.new("UIStroke", box); bs.Color = C_ACCENT; bs.Thickness = 1; bs.Transparency = 0.5
@@ -3258,7 +3401,6 @@ local function _flyBuildGui()
         pcall(function()
             local multF = math.floor(FAST_MULT*10+0.5)/10
             local multT = math.floor(TURBO_MULT*10+0.5)/10
-            local modeEmojis = { normal="🚀", fast="🚄", turbo="🚅", megaup="🚅" }
             local modeTexts  = {
                 normal = FT.mode_normal,
                 fast   = FT.mode_fast  .. tostring(multF),
@@ -3267,25 +3409,32 @@ local function _flyBuildGui()
             }
             local colors    = { normal=C_GREEN, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
             local dotColors = { normal=C_ACCENT, fast=C_YELLOW, turbo=C_RED, megaup=C_CYAN }
-            modeIconLbl.Font       = Enum.Font.Legacy
-            modeIconLbl.Text       = modeEmojis[modeName] or "🚀"
             modeLbl.Font           = Enum.Font.GothamBold
             modeLbl.Text           = modeTexts[modeName]  or modeName
             modeLbl.TextColor3     = colors[modeName]     or C_GREEN
-            modeIconLbl.TextColor3 = colors[modeName]     or C_GREEN
             TweenService:Create(dot, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {BackgroundColor3=dotColors[modeName] or C_ACCENT}):Play()
         end)
     end
 
     createLockInfoGui(root)
 
-    -- Inicializar el modo mostrado en la GUI inmediatamente
+    
     if flyanim.updateMode then flyanim.updateMode(flyanim.mode) end
 end
 
 local function _flyOn()
     local char = lplr and lplr.Character; if not char then return end
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn = nil end
+    if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn = nil end
+    stopLandingWatcher()
+    flyanim.waitingLand            = false
+    flyanim.landingHeight          = nil
+    flyanim.landingVelocity        = 0
+    flyanim.landingVelocityCapture = 0
+    _landAnimToken = _landAnimToken + 1
+    if _landBaseRef    then pcall(function() _landBaseRef:Stop(0) end)    end
+    if _landOverlayRef then pcall(function() _landOverlayRef:Stop(0) end) end
+    _landBaseRef = nil; _landOverlayRef = nil
     heightTweenToken     = heightTweenToken + 1
     flyanim.sessionToken = (flyanim.sessionToken or 0) + 1
     flyanim.enabled      = true
@@ -3296,8 +3445,10 @@ local function _flyOn()
     flyanim.isMoving=false; flyanim.megaTurboUpActive=false; flyanim.spaceHoldStart=nil
     flyanim.gyroProtectionActive=false; flyanim.turboPreImpulsoActivo=false
     flyanim.turboPreImpulsoToken=0; flyanim.c0ControlToken=0; flyanim.c0HeightToken=0
-    flyanim.noclipSpaceActive=false
+    flyanim.noclipSpaceActive=false; flyanim.lastKnownPos=nil
+    flyanim.ragdollDetected=false
     flyanim.fKeyHeld=false; flyanim.blockCancelledByCombo=false
+    flyanim.lastSafePos=nil; flyanim.lastSafeTime=tick()
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
     if flyanim.backupGyro then pcall(function() flyanim.backupGyro:Destroy() end); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
@@ -3321,13 +3472,16 @@ local function _flyOn()
     iniciarCicloNormal(1)
     startLockSystem()
     startBrakeSystem()
+    startAntiImpulse()
     startMegaTurboUpListener()
+    startAnomalyProtection()
     startAnimBlockLoop()
+    startTeleportGuard()
  
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
     local _tpMoveSession = flyanim.sessionToken
     flyanim.tpMoveConn = RunService.Stepped:Connect(function(_, dt)
-        -- GUARD: Solo ejecutar si fly está activo
+        
         if not flyanim.enabled then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return end
         if flyanim.sessionToken ~= _tpMoveSession then
             flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil; return
@@ -3435,7 +3589,7 @@ local function _flyOn()
     if flyanim.rsConn then flyanim.rsConn:Disconnect() end
     local _rsSession = flyanim.sessionToken
     flyanim.rsConn = RunService.RenderStepped:Connect(function(dt)
-        -- GUARD: Solo ejecutar si fly está activo
+        
         if not flyanim.enabled then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         if flyanim.sessionToken ~= _rsSession then flyanim.rsConn:Disconnect(); flyanim.rsConn = nil; return end
         if not dt or isnan(dt) then return end
@@ -3528,24 +3682,174 @@ local function _flyOn()
                 end
             end
         end
+        local velY = root.AssemblyLinearVelocity.Y
+        if isnan(velY) then
+        elseif velY < -10 then
+            local totalMag = root.AssemblyLinearVelocity.Magnitude
+            if not isnan(totalMag) then
+                flyanim.landingVelocity = math.abs(velY)
+                local effectiveMag = math.max(math.abs(velY), totalMag)
+                if effectiveMag > (flyanim.landingVelocityCapture or 0) then
+                    flyanim.landingVelocityCapture = effectiveMag
+                end
+            end
+        end
         updateAnimForMovement()
     end)
 end
  
--- ============================================================
--- HELPERS DE CAIDA ÉPICA
--- ============================================================
+
+
  
--- ============================================================
--- _flyOff  —  con TP instantáneo al suelo + caída épica
--- ============================================================
+local _lastOmniActivation = 0
  
+local function omniAntiBounceLand(hrp, hum)
+    if not hrp or not hum then return end
+    pcall(function()
+        local v = hrp.AssemblyLinearVelocity
+        if safepos(v) then
+            hrp.AssemblyLinearVelocity  = Vector3.new(v.X, 0, v.Z)
+        end
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end)
+    pcall(function()
+        local _, ry, _ = hrp.CFrame:ToOrientation()
+        if isnan(ry) then ry = 0 end
+        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, ry, 0)
+    end)
+end
+ 
+local _landingWatchConn  = nil
+local _landingWatchToken = 0
+ 
+stopLandingWatcher = function()
+    _landingWatchToken = _landingWatchToken + 1
+    if _landingWatchConn then
+        _landingWatchConn:Disconnect()
+        _landingWatchConn = nil
+    end
+end
+ 
+startLandingWatcher = function(capturedChar)
+    stopLandingWatcher()
+    local myToken = _landingWatchToken
+    local mySession = flyanim.sessionToken
+ 
+    _landingWatchConn = RunService.Heartbeat:Connect(function()
+        if flyanim.enabled then
+            stopLandingWatcher()
+            return
+        end
+        if not flyanim.waitingLand then
+            stopLandingWatcher()
+            return
+        end
+        if _landingWatchToken ~= myToken then return end
+        if flyanim.sessionToken ~= mySession then stopLandingWatcher(); return end
+ 
+        local char = capturedChar
+        if not char or not char.Parent then stopLandingWatcher(); return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then
+            stopLandingWatcher()
+            return
+        end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+ 
+        local velY = hrp.AssemblyLinearVelocity.Y
+        if velY > -1 then return end
+        local now2 = tick()
+        if now2 - _lastOmniActivation < 0.15 then return end
+        _lastOmniActivation = now2
+ 
+        local probeDistance = math.clamp(math.abs(velY) * 0.10 + 1.5, 1.5, 4.5)
+ 
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = {char}
+        local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -probeDistance, 0), rp)
+ 
+        if hit then
+            stopLandingWatcher()
+ 
+            pcall(function()
+                for _, v in ipairs(hrp:GetChildren()) do
+                    if v:IsA("BodyGyro") or v:IsA("BodyVelocity") or v:IsA("BodyForce")
+                    or v:IsA("BodyAngularVelocity") or v:IsA("AlignOrientation")
+                    or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
+                        v:Destroy()
+                    end
+                end
+            end)
+ 
+            local animScriptPre = char:FindFirstChild("Animate")
+            if animScriptPre then
+                pcall(function() animScriptPre.Disabled = true end)
+                task.delay(0.25, function()
+                    if not flyanim.waitingLand and animScriptPre and animScriptPre.Parent
+                    and lplr.Character == char
+                    and (not flyanim.animScript or flyanim.animScript ~= animScriptPre) then
+                        pcall(function() animScriptPre.Disabled = false end)
+                    end
+                end)
+            end
+ 
+            setNoclip(false)
+            omniAntiBounceLand(hrp, hum)
+        end
+    end)
+end
+ 
+
+
+ 
+
+local function findSafeGroundBelow(root, charCurrent)
+    if not root then return nil end
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances = {charCurrent}
+ 
+    
+    local offsets = {
+        Vector3.new(0,   0,  0),
+        Vector3.new(1.5, 0,  0), Vector3.new(-1.5, 0, 0),
+        Vector3.new(0,   0,  1.5), Vector3.new(0,   0, -1.5),
+        Vector3.new(1.0, 0,  1.0), Vector3.new(-1.0,0,  1.0),
+        Vector3.new(1.0, 0, -1.0), Vector3.new(-1.0,0, -1.0),
+    }
+    local bestY       = nil
+    local bestNormal  = Vector3.new(0, 1, 0)
+    for _, off in ipairs(offsets) do
+        local origin = root.Position + off
+        local result = workspace:Raycast(origin, Vector3.new(0, -600, 0), rp)
+        if result then
+            local hitY = result.Position.Y
+            
+            if result.Normal.Y > 0.5 then
+                if bestY == nil or hitY > bestY then
+                    bestY      = hitY
+                    bestNormal = result.Normal
+                end
+            end
+        end
+    end
+    if bestY == nil then return nil end
+    
+    return Vector3.new(root.Position.X, bestY + 3, root.Position.Z), bestNormal
+end
  
 local function _flyOff()
-    -- GUARD: Solo ejecutar lógica de desactivación si fly está activo
+    
     if not flyanim.enabled then return end
  
     local charCurrent = lplr and lplr.Character
+    _lastOmniActivation = tick()
+ 
+    
+    local _preCaptureVelocity = math.max(flyanim.landingVelocity or 0, flyanim.landingVelocityCapture or 0)
+ 
     if flyanim.gyroProtectionTimer then
         task.cancel(flyanim.gyroProtectionTimer)
         flyanim.gyroProtectionTimer = nil
@@ -3566,8 +3870,12 @@ local function _flyOff()
     flyanim.c0HeightToken         = (flyanim.c0HeightToken         or 0) + 1
     heightTweenToken              = heightTweenToken + 1
  
+    flyanim.lastSafePos           = nil
+    flyanim.lastSafeTime          = 0
+    flyanim.lastKnownPos          = nil
+    flyanim.isTeleportGuardActive = false
  
-    -- Desconectar todos los loops
+    
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
     if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
     if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
@@ -3577,6 +3885,9 @@ local function _flyOff()
     if flyanim.idleAnimConn        then flyanim.idleAnimConn:Disconnect();        flyanim.idleAnimConn        = nil end
     if flyanim.megaTurboUpConn     then flyanim.megaTurboUpConn:Disconnect();     flyanim.megaTurboUpConn     = nil end
     if brakeConn                   then brakeConn:Disconnect();                   brakeConn                   = nil end
+    if flyanim.antiImpulseConn     then flyanim.antiImpulseConn:Disconnect();     flyanim.antiImpulseConn     = nil end
+    if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
+    if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
     if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
     if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
  
@@ -3604,7 +3915,44 @@ local function _flyOff()
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
  
-    -- ── Apagar estado ────────────────────────────────────────────
+    
+    local heightFromGround = 0
+    local rootCurrent      = charCurrent and charCurrent:FindFirstChild("HumanoidRootPart")
+ 
+    if rootCurrent then
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = {charCurrent}
+        local rayResult = workspace:Raycast(rootCurrent.Position, Vector3.new(0, -500, 0), rp)
+        if rayResult then
+            heightFromGround = rootCurrent.Position.Y - rayResult.Position.Y
+        else
+            heightFromGround = 999
+        end
+    end
+    flyanim.landingHeight = heightFromGround
+ 
+    
+    
+    local isEpicFallByFlyOff = false
+    if rootCurrent and heightFromGround > 45 then
+        local safeGroundPos = findSafeGroundBelow(rootCurrent, charCurrent)
+        if safeGroundPos then
+            
+            pcall(function()
+                local _, ry, _ = rootCurrent.CFrame:ToOrientation()
+                if isnan(ry) then ry = 0 end
+                rootCurrent.CFrame = CFrame.new(safeGroundPos) * CFrame.Angles(0, ry, 0)
+                rootCurrent.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+            
+            flyanim.landingHeight = heightFromGround
+            isEpicFallByFlyOff   = true
+        end
+    end
+ 
+    
     flyanim.enabled   = false
     flyanim.dashTimer = 0
     flyanim.dashVel   = Vector3.new(0, 0, 0)
@@ -3617,6 +3965,7 @@ local function _flyOff()
     flyanim.isBlocking            = false
     flyanim.isSpaceAdv            = false
     flyanim.isBrazosActive        = false
+    flyanim.ragdollDetected       = false
     flyanim.comboPlaying          = false
     flyanim.comboBusy             = false
     flyanim.combo4Frozen          = false
@@ -3633,10 +3982,13 @@ local function _flyOff()
     detenerEspacioAvanzado()
     stopBlocking()
     stopParticleEmitter()
+    stopAntiImpulse()
     stopBrakeSystem()
     stopMegaTurboUpListener()
+    stopAnomalyProtection()
     stopComboC0Lock()
     stopAnimBlockLoop()
+    stopTeleportGuard()
     stopComboListener()
     setNoclip(false)
  
@@ -3658,13 +4010,19 @@ local function _flyOff()
     if not charCurrent or not hum or hum.Health <= 0 then
         local animScript2 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
         if animScript2 then animScript2.Disabled = false; flyanim.animScript = nil end
-        flyanim.animScript = nil
+        flyanim.animScript          = nil
+        flyanim.landingHeight       = nil
+        flyanim.landingVelocity     = 0
+        flyanim.landingVelocityCapture = 0
         return
     end
  
+    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, false)
+    hum.PlatformStand = false
     hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-    hum.PlatformStand = false
  
     if rootCurrent then
         for _, part in ipairs(charCurrent:GetDescendants()) do
@@ -3674,27 +4032,177 @@ local function _flyOff()
         pcall(function()
             rootCurrent.CFrame = CFrame.new(rootCurrent.Position) * CFrame.Angles(0, ry, 0)
             rootCurrent.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            local velY = rootCurrent.AssemblyLinearVelocity.Y
-            rootCurrent.AssemblyLinearVelocity = Vector3.new(0, velY, 0)
+            if not isEpicFallByFlyOff then
+                
+                local velY = rootCurrent.AssemblyLinearVelocity.Y
+                rootCurrent.AssemblyLinearVelocity = Vector3.new(0, velY, 0)
+            end
         end)
     end
- 
+
+    
+    
     hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
     hum:SetStateEnabled(Enum.HumanoidStateType.StrafingNoPhysics, true)
-    hum:ChangeState(Enum.HumanoidStateType.Freefall)
  
-    local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
-    if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
-    if hum then
-        hum.PlatformStand = false
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+    
+    
+    if isEpicFallByFlyOff and rootCurrent then
+        
+        pcall(function()
+            local bf = Instance.new("BodyForce")
+            bf.Name  = "EpicLandGravCancel"
+            bf.Force = Vector3.new(0, workspace.Gravity * (rootCurrent.AssemblyMass or 1), 0)
+            bf.Parent = rootCurrent
+            task.delay(0.28, function()
+                if bf and bf.Parent then bf:Destroy() end
+            end)
+        end)
+        
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Landed) end)
+    else
+        hum:ChangeState(Enum.HumanoidStateType.Freefall)
     end
+ 
+    
+ 
+    
+    if rootCurrent and not isEpicFallByFlyOff then
+        task.delay(0.01, function()
+            if not rootCurrent or not rootCurrent.Parent then return end
+            if flyanim.enabled then return end
+            local velY = rootCurrent.AssemblyLinearVelocity.Y
+            if velY > 0.5 then
+                local rp2 = RaycastParams.new()
+                rp2.FilterType = Enum.RaycastFilterType.Exclude
+                rp2.FilterDescendantsInstances = {charCurrent}
+                local kickRay = workspace:Raycast(rootCurrent.Position, Vector3.new(0, -5, 0), rp2)
+                if not kickRay then
+                    pcall(function()
+                        rootCurrent.AssemblyLinearVelocity = Vector3.new(0, -4, 0)
+                    end)
+                end
+            end
+        end)
+    end
+ 
+    local capturedHeight   = flyanim.landingHeight
+    local capturedVelocity = _preCaptureVelocity
+ 
+    
+    if capturedHeight < 10 then
+        local animScript3 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+        if animScript3 then animScript3.Disabled = false; flyanim.animScript = nil end
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+            hum.PlatformStand = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        end
+        flyanim.landingHeight          = nil
+        flyanim.landingVelocity        = 0
+        flyanim.landingVelocityCapture = 0
+        return
+    end
+ 
+    do
+        local animScriptEarly = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+        if animScriptEarly then
+            animScriptEarly.Disabled = false
+            flyanim.animScript = animScriptEarly
+        end
+    end
+ 
+    
+    if isEpicFallByFlyOff then
+        
+        
+        flyanim.evalToken  = (flyanim.evalToken or 0) + 1
+        flyanim.isWDown    = false; flyanim.isSDown = false
+        flyanim.isADown    = false; flyanim.isDDown = false
+        flyanim.wDown      = false; flyanim.sDown   = false
+        flyanim.aDown      = false; flyanim.dDown   = false
+        flyanim.waitingLand = false
+ 
+        flyanim.landingHeight          = capturedHeight
+        flyanim.landingVelocity        = capturedVelocity
+        flyanim.landingVelocityCapture = capturedVelocity
+ 
+        
+        
+        task.delay(0.05, function()
+            if not charCurrent or not charCurrent.Parent then return end
+            doLanding(charCurrent, true)  
+        end)
+        return
+    end
+ 
+    
+    flyanim.waitingLand = true
+    if flyanim.landConn then flyanim.landConn:Disconnect() end
+    startLandingWatcher(charCurrent)
+ 
+    local function finalizarAterrizaje(newState)
+        if not flyanim.waitingLand then return end
+ 
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+ 
+        if lplr.Character ~= charCurrent then
+            flyanim.waitingLand = false
+            local animSc = charCurrent and charCurrent:FindFirstChild("Animate")
+            flyanim.animScript = nil
+            if animSc then pcall(function() animSc.Disabled = false end) end
+            flyanim.landingHeight = nil
+            return
+        end
+ 
+        flyanim.waitingLand = false
+        if newState ~= Enum.HumanoidStateType.Dead then
+            flyanim.landingHeight          = capturedHeight
+            flyanim.landingVelocity        = capturedVelocity
+            flyanim.landingVelocityCapture = capturedVelocity
+            
+            doLanding(charCurrent, false)
+        else
+            local animSc = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+            flyanim.animScript = nil
+            if animSc then pcall(function() animSc.Disabled = false end) end
+            flyanim.landingHeight = nil
+        end
+    end
+ 
+    flyanim.landConn = hum.StateChanged:Connect(function(_, newState)
+        if not flyanim.waitingLand then
+            if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+            return
+        end
+        if newState == Enum.HumanoidStateType.Landed
+        or newState == Enum.HumanoidStateType.Running
+        or newState == Enum.HumanoidStateType.RunningNoPhysics
+        or newState == Enum.HumanoidStateType.Dead then
+            finalizarAterrizaje(newState)
+        end
+    end)
+ 
+    task.delay(10, function()
+        if not flyanim.waitingLand then return end
+        _landAnimToken      = _landAnimToken + 1
+        flyanim.waitingLand = false
+        if flyanim.landConn then flyanim.landConn:Disconnect(); flyanim.landConn=nil end
+ 
+        flyanim.animScript = nil
+        local animSc = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
+        if animSc then pcall(function() animSc.Disabled = false end) end
+ 
+        if hum and hum.Parent then
+            hum.PlatformStand = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        end
+        flyanim.landingHeight = nil
+    end)
 end
  
--- ============================================================
--- DASH Y MEGA TURBO
--- ============================================================
+
 
 local function triggerDash(direction, speed, duration)
     local cam = workspace.CurrentCamera
@@ -3722,9 +4230,6 @@ local function activateMegaTurbo()
     startParticleEmitter(); detenerPoseTurbo(); iniciarPoseMega()
 end
 
--- ============================================================
--- EVENTOS GLOBALES
--- ============================================================
 
 local function handleQPress()
     if not flyanim.enabled then return end
@@ -3736,7 +4241,7 @@ local function handleQPress()
     local aDown = UserInputService:IsKeyDown(Enum.KeyCode.A)
     local dDown = UserInputService:IsKeyDown(Enum.KeyCode.D)
 
-    -- ── DASH DIRECCIONAL (sin W presionado) ────────────────────────────────────
+    
     if not wDown then
         if sDown and not aDown and not dDown then
             triggerDash("back", flyanim.BACK_DASH_SPEED, flyanim.DASH_DURATION * 1.2)
@@ -3823,15 +4328,15 @@ local function handleQPress()
         end
     end
 
-    -- ── TURBO → MEGA TURBO (Q mientras ya estás en turbo) ─────────────────────
-    -- Requiere 0.75s mínimo en turbo para evitar activación accidental por spam rápido
+    
+    
     if flyanim.mode == "fast" then
         local elapsed = tick() - flyanim.turboActivatedAt
         if elapsed >= 0.75 then activateMegaTurbo() end
         return
     end
 
-    -- ── NORMAL → TURBO ─────────────────────────────────────────────────────────
+    
     if flyanim.mode == "normal" then
         flyanim.isSpaceAdv = false
         if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
@@ -3883,7 +4388,7 @@ local function _connectGlobal()
             if not flyanim.blockCancelledByCombo then
                 if flyanim.mode == "normal" and not flyanim.turboPreImpulsoActivo and not flyanim.megaTurboUpActive then
                     if flyanim.comboPlaying then
-                        -- Cualquier acción cancela combo y resetea su cooldown
+                        
                         flyanim.comboToken = (flyanim.comboToken or 0) + 1
                         for _, track in pairs(flyanim.tracks) do
                             pcall(function() if track and track.IsPlaying then track:Stop(0.08) end end)
@@ -3945,11 +4450,15 @@ local function _connectGlobal()
         local cam = workspace.CurrentCamera
         if cam then cam.FieldOfView=70 end
  
+        stopLandingWatcher()
         flyanim.mode="normal"
         flyanim.speed=BASE_SPEED; flyanim.isMoving=false
         flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
         flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
  
+        flyanim.waitingLand=false
+        flyanim.landingHeight=nil; flyanim.landingVelocity=0
+        flyanim.landingVelocityCapture=0
         flyanim.megaTurboUpActive=false
         flyanim.spaceHoldStart=nil
  
@@ -3965,9 +4474,15 @@ local function _connectGlobal()
         flyanim.noclipSpaceActive  = false
         flyanim.noclipCtrlActive   = false
         flyanim.mouseHeld          = false
+        flyanim.lastKnownPos       = nil
+        flyanim.ragdollDetected    = false
         flyanim.fKeyHeld           = false
         flyanim.blockCancelledByCombo = false
         flyanim.comboAnimStartTime = 0
+        flyanim.lastSafePos        = nil
+        flyanim.lastSafeTime       = tick()
+        flyanim.isTeleportGuardActive = false
+ 
         if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
         flyanim.lateralKilled=true; flyanim.atrasKilled=true
         if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv=nil end
@@ -3976,21 +4491,27 @@ local function _connectGlobal()
         c0DesiredCFrame        = nil
         heightTweenToken       = heightTweenToken + 1
         flyanim.sessionToken   = (flyanim.sessionToken or 0) + 1
+        _landAnimToken         = _landAnimToken + 1
+        _landBaseRef = nil; _landOverlayRef = nil
  
-        stopParticleEmitter(); stopBrakeSystem()
+        stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
         stopMegaTurboUpListener(); stopLockSystem()
-        stopAnimBlockLoop(); stopComboC0Lock()
+        stopAnomalyProtection(); stopComboC0Lock()
+        stopAnimBlockLoop(); stopTeleportGuard()
         detenerWatchdogAltura()
  
         if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
         if flyanim.megaRenderConn      then flyanim.megaRenderConn:Disconnect();      flyanim.megaRenderConn      = nil end
         if flyanim.blockRenderConn     then flyanim.blockRenderConn:Disconnect();     flyanim.blockRenderConn     = nil end
+        if flyanim.landConn            then flyanim.landConn:Disconnect();            flyanim.landConn            = nil end
         if dashConnection              then dashConnection:Disconnect();              dashConnection              = nil end
         if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
         if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
         if flyanim.idleTimer           then task.cancel(flyanim.idleTimer);           flyanim.idleTimer           = nil end
         if flyanim.damageConn          then flyanim.damageConn:Disconnect();          flyanim.damageConn          = nil end
-                if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
+        if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
+        if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
+        if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
         if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
  
         stopComboListener()
@@ -4018,9 +4539,8 @@ local function _disconnectGlobal()
     if _charConn      then _charConn:Disconnect();      _charConn      = nil end
 end
  
--- ============================================================
--- EXPORTACIÓN DEL MÓDULO
--- ============================================================
+
+
 local M = {}
  
 function M.Start(lplrRef, flyKey)
