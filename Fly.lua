@@ -6,6 +6,7 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui          = game:GetService("CoreGui")
 local SoundService     = game:GetService("SoundService")
+local Debris           = game:GetService("Debris")
 
 local FlyLang = {
     ES = {
@@ -114,6 +115,12 @@ local CAIDA_BASE_ID    = "rbxassetid://287325678"
 local CAIDA_OVERLAY_ID = "rbxassetid://70439247"
 local SFX_TURBO        = "rbxassetid://137455842313478"
 local SFX_MEGA_TURBO   = "rbxassetid://111391583223900"
+
+-- Assets del efecto de impacto al caer (escala con la altura de la caída)
+local SFX_IMPACT_LANDING   = "rbxassetid://135226467234227"
+local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
+local DOUBLE_SHOCKWAVE_TEX = "rbxassetid://106822944701902"
+local SMOKE_ESPONJOSO_TEX  = "rbxassetid://112096280571499"
 
 local function playLocalSound(id, volume)
     local snd = Instance.new("Sound")
@@ -2164,7 +2171,303 @@ local function sonicBoomEffect(intensity)
     end)
 end
 
-local function spawnLandingEffects(position, velocity) end
+-- ==========================================
+-- EFECTO DE IMPACTO POR CAÍDA
+-- Escala suavemente desde los 45 studs (Nivel 1)
+-- hasta los 1500 studs (Nivel 4)
+-- ==========================================
+local FALL_EFFECT_MIN_STUDS = 45    -- a esta altura, intensidad = Nivel 1
+local FALL_EFFECT_MAX_STUDS = 1500  -- a esta altura, intensidad = Nivel 4
+
+local NIVEL1_CFG = {Scale = 0.4, Emit = 0.4, Volume = 1.0, Pitch = 1.1}
+local NIVEL4_CFG = {Scale = 1.6, Emit = 1.6, Volume = 7.0, Pitch = 0.5}
+
+local function ScaleNS(ns, scale)
+    local keypoints = {}
+    for _, kp in ipairs(ns.Keypoints) do
+        table.insert(keypoints, NumberSequenceKeypoint.new(kp.Time, kp.Value * scale, kp.Envelope * scale))
+    end
+    return NumberSequence.new(keypoints)
+end
+
+local function ScaleNR(nr, scale)
+    return NumberRange.new(nr.Min * scale, nr.Max * scale)
+end
+
+-- Calcula la configuración de impacto interpolando suavemente según la altura caída
+local function getImpactConfig(altura)
+    altura = altura or 0
+    if altura <= 0 then return nil end
+
+    if altura < FALL_EFFECT_MIN_STUDS then
+        -- Por debajo de 45 studs: escala lineal desde casi nada hasta el Nivel 1
+        local f = math.clamp(altura / FALL_EFFECT_MIN_STUDS, 0, 1)
+        return {
+            Scale  = NIVEL1_CFG.Scale  * f,
+            Emit   = NIVEL1_CFG.Emit   * f,
+            Volume = NIVEL1_CFG.Volume * f,
+            Pitch  = NIVEL1_CFG.Pitch + (1.35 - NIVEL1_CFG.Pitch) * (1 - f),
+            Nivel  = 1 * f,
+        }
+    end
+
+    local t = (altura - FALL_EFFECT_MIN_STUDS) / (FALL_EFFECT_MAX_STUDS - FALL_EFFECT_MIN_STUDS)
+    t = math.clamp(t, 0, 1)
+    local s = t * t * (3 - 2 * t) -- smoothstep, transición suave
+
+    return {
+        Scale  = NIVEL1_CFG.Scale  + (NIVEL4_CFG.Scale  - NIVEL1_CFG.Scale)  * s,
+        Emit   = NIVEL1_CFG.Emit   + (NIVEL4_CFG.Emit   - NIVEL1_CFG.Emit)   * s,
+        Volume = NIVEL1_CFG.Volume + (NIVEL4_CFG.Volume - NIVEL1_CFG.Volume) * s,
+        Pitch  = NIVEL1_CFG.Pitch  + (NIVEL4_CFG.Pitch  - NIVEL1_CFG.Pitch)  * s,
+        Nivel  = 1 + s * 3,
+    }
+end
+
+-- Cráter sincronizado: rocas que se levantan y luego vuelven a caer
+local function CrearCraterImpacto(centro, floorColor, floorMaterial, config)
+    local escalaSize     = math.max(config.Scale, 0.05)
+    local escalaCantidad = math.max(config.Emit, 0.05)
+    local nivel          = config.Nivel
+
+    local craterFolder = Instance.new("Folder")
+    craterFolder.Name = "ImpactCrater"
+    craterFolder.Parent = workspace
+    Debris:AddItem(craterFolder, 10 * escalaSize)
+
+    local rings = {
+        {pieces = math.max(4, math.floor(8 * escalaCantidad)),  radius = 5  * escalaSize, sizeMultiplier = 1.0 * escalaSize},
+        {pieces = math.max(6, math.floor(12 * escalaCantidad)), radius = 10 * escalaSize, sizeMultiplier = 1.3 * escalaSize},
+        {pieces = math.max(8, math.floor(18 * escalaCantidad)), radius = 16 * escalaSize, sizeMultiplier = 1.6 * escalaSize}
+    }
+
+    local waitTimeBeforeDrop = 3.5 + (nivel * 0.5)
+    local rocasGeneradas = {}
+
+    for _, ring in ipairs(rings) do
+        for i = 1, ring.pieces do
+            local angle = math.rad((360 / ring.pieces) * i + math.random(-8, 8))
+            local offset = Vector3.new(math.cos(angle) * ring.radius, 0, math.sin(angle) * ring.radius)
+
+            local chunk = Instance.new("Part")
+            chunk.Size = Vector3.new(
+                math.random(25, 45) / 10 * ring.sizeMultiplier,
+                math.random(15, 25) / 10 * (escalaSize ^ 0.5),
+                math.random(35, 65) / 10 * ring.sizeMultiplier
+            )
+            chunk.Position = centro + offset - Vector3.new(0, chunk.Size.Y, 0)
+            chunk.Anchored = true
+            chunk.CanCollide = false
+            chunk.Material = floorMaterial
+            chunk.Color = floorColor
+
+            local lookAt = CFrame.lookAt(chunk.Position, Vector3.new(centro.X, chunk.Position.Y, centro.Z))
+            local upwardTilt = math.rad(-math.random(30, 55) + (ring.radius * 1.5 / escalaSize))
+            local sideRoll = math.rad(math.random(-15, 15))
+
+            chunk.CFrame = lookAt * CFrame.Angles(upwardTilt, 0, sideRoll)
+            chunk.Parent = craterFolder
+            table.insert(rocasGeneradas, chunk)
+
+            local targetPos = chunk.CFrame + Vector3.new(0, chunk.Size.Y * 0.9, 0)
+            local tweenUp = TweenService:Create(chunk, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetPos})
+            tweenUp:Play()
+        end
+    end
+
+    task.delay(waitTimeBeforeDrop, function()
+        for _, roca in ipairs(rocasGeneradas) do
+            if roca and roca.Parent then
+                local tweenDown = TweenService:Create(roca, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), {CFrame = roca.CFrame - Vector3.new(0, roca.Size.Y * 2, 0)})
+                tweenDown:Play()
+            end
+        end
+    end)
+end
+
+local function EmitirAnilloImpacto(textura, att, sizeMultiplier, color, config)
+    local ring = Instance.new("ParticleEmitter")
+    ring.Texture = textura
+    ring.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+    ring.EmissionDirection = Enum.NormalId.Top
+    ring.Speed = NumberRange.new(0.01)
+    ring.Size = ScaleNS(NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(0.1, 20 * sizeMultiplier),
+        NumberSequenceKeypoint.new(1, 60 * sizeMultiplier)
+    }), config.Scale)
+    ring.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.4),
+        NumberSequenceKeypoint.new(0.2, 0.7),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    ring.Color = ColorSequence.new(color)
+    ring.Lifetime = NumberRange.new(0.35 + (config.Nivel * 0.05))
+    ring.LightEmission = 0.8
+    ring.Rate = 0
+    ring.Parent = att
+    ring:Emit(2)
+    Debris:AddItem(ring, 2)
+end
+
+local function spawnLandingEffects(position, velocity, altura, char)
+    local config = getImpactConfig(altura)
+    if not config or config.Scale <= 0 then return end
+
+    -- Buscar el suelo bajo el punto de impacto
+    local raycastParams = RaycastParams.new()
+    local excluded = {workspace.CurrentCamera}
+    if char then table.insert(excluded, char) end
+    for _, obj in pairs(workspace:GetChildren()) do
+        if obj.Name == "ImpactCrater" or obj.Name == "VFX_ImpactCenter" then
+            table.insert(excluded, obj)
+        end
+    end
+    raycastParams.FilterDescendantsInstances = excluded
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    local rayResult = workspace:Raycast(position + Vector3.new(0, 2, 0), Vector3.new(0, -50, 0), raycastParams)
+
+    local impactPos, fColor, fMat
+    if rayResult then
+        impactPos = rayResult.Position
+        fColor = rayResult.Instance.Color
+        fMat   = rayResult.Instance.Material
+    else
+        impactPos = position
+        fColor = Color3.fromRGB(150, 150, 150)
+        fMat   = Enum.Material.Concrete
+    end
+
+    local multScale = config.Scale
+    local multEmit  = config.Emit
+
+    task.spawn(CrearCraterImpacto, impactPos, fColor, fMat, config)
+
+    local vfxPart = Instance.new("Part")
+    vfxPart.Size = Vector3.new(1, 1, 1)
+    vfxPart.Position = impactPos + Vector3.new(0, 0.5, 0)
+    vfxPart.Anchored = true
+    vfxPart.CanCollide = false
+    vfxPart.Transparency = 1
+    vfxPart.Name = "VFX_ImpactCenter"
+    vfxPart.Parent = workspace
+
+    local attachment = Instance.new("Attachment", vfxPart)
+
+    local impactFlash = Instance.new("PointLight")
+    impactFlash.Color = Color3.fromRGB(255, 250, 240)
+    impactFlash.Range = 40 * multScale
+    impactFlash.Brightness = 15 * multScale
+    impactFlash.Shadows = true
+    impactFlash.Parent = vfxPart
+    TweenService:Create(impactFlash, TweenInfo.new(0.15 * multScale, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Brightness = 0, Range = 0}):Play()
+
+    -- Sonido de impacto, escalado por la altura de la caída
+    local sfx = Instance.new("Sound")
+    sfx.SoundId = SFX_IMPACT_LANDING
+    sfx.Volume = config.Volume
+    sfx.PlaybackSpeed = config.Pitch
+    sfx.RollOffMaxDistance = 300 * multScale
+    sfx.Parent = vfxPart
+    sfx:Play()
+
+    -- Aros de choque
+    local attFlat = Instance.new("Attachment", vfxPart)
+    attFlat.Orientation = Vector3.new(0, 0, 0)
+
+    local attTilt1 = Instance.new("Attachment", vfxPart)
+    attTilt1.Orientation = Vector3.new(35, 45, 0)
+
+    local attTilt2 = Instance.new("Attachment", vfxPart)
+    attTilt2.Orientation = Vector3.new(-25, -60, 15)
+
+    EmitirAnilloImpacto(SHOCKWAVE_CIRCLE_TEX, attFlat, 1.2, Color3.fromRGB(255, 255, 255), config)
+
+    -- Aros extra: aparecen y crecen progresivamente conforme la caída se acerca al Nivel 4
+    local extra = math.clamp((config.Nivel - 1) / 3, 0, 1)
+    if extra > 0.05 then
+        EmitirAnilloImpacto(DOUBLE_SHOCKWAVE_TEX, attFlat,  1.4 * extra, Color3.fromRGB(230, 230, 235), config)
+        EmitirAnilloImpacto(SHOCKWAVE_CIRCLE_TEX, attTilt1, 0.9 * extra, Color3.fromRGB(210, 210, 220), config)
+        EmitirAnilloImpacto(DOUBLE_SHOCKWAVE_TEX, attTilt2, 1.1 * extra, Color3.fromRGB(220, 220, 230), config)
+    end
+
+    -- Polvo del impacto
+    local rollingDust1 = Instance.new("ParticleEmitter")
+    rollingDust1.Texture = CAIDA_BASE_ID
+    rollingDust1.Size = ScaleNS(NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 5),
+        NumberSequenceKeypoint.new(0.2, 14),
+        NumberSequenceKeypoint.new(1, 22)
+    }), multScale)
+    rollingDust1.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(0.1, 0.1),
+        NumberSequenceKeypoint.new(0.8, 0.7),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    rollingDust1.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(235, 235, 240)),
+        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(200, 200, 205)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 160, 165))
+    })
+    rollingDust1.Lifetime = ScaleNR(NumberRange.new(1.2, 1.8), (1 + (config.Nivel * 0.1)))
+    rollingDust1.Speed = ScaleNR(NumberRange.new(55, 90), multScale)
+    rollingDust1.SpreadAngle = Vector2.new(180, 180)
+    rollingDust1.RotSpeed = NumberRange.new(-250, 250)
+    rollingDust1.Drag = 14
+    rollingDust1.Acceleration = Vector3.new(0, -40 * multScale, 0)
+    rollingDust1.ZOffset = 2
+    rollingDust1.Rate = 0
+    rollingDust1.Parent = attachment
+
+    local rollingDust2 = Instance.new("ParticleEmitter")
+    rollingDust2.Texture = SMOKE_ESPONJOSO_TEX
+    rollingDust2.Size = rollingDust1.Size
+    rollingDust2.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1)})
+    rollingDust2.Color = rollingDust1.Color
+    rollingDust2.Lifetime = rollingDust1.Lifetime
+    rollingDust2.Speed = rollingDust1.Speed
+    rollingDust2.SpreadAngle = rollingDust1.SpreadAngle
+    rollingDust2.RotSpeed = NumberRange.new(-50, 50)
+    rollingDust2.Drag = rollingDust1.Drag
+    rollingDust2.Acceleration = rollingDust1.Acceleration
+    rollingDust2.ZOffset = 1
+    rollingDust2.Rate = 0
+    rollingDust2.Parent = attachment
+
+    local verticalDust = Instance.new("ParticleEmitter")
+    verticalDust.Texture = CAIDA_OVERLAY_ID
+    verticalDust.EmissionDirection = Enum.NormalId.Top
+    verticalDust.Size = ScaleNS(NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 4),
+        NumberSequenceKeypoint.new(1, 18)
+    }), multScale)
+    verticalDust.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(0.7, 0.8),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    verticalDust.Color = ColorSequence.new(Color3.fromRGB(215, 215, 220))
+    verticalDust.Lifetime = ScaleNR(NumberRange.new(1.5, 2.5), (1 + (config.Nivel * 0.1)))
+    verticalDust.Speed = ScaleNR(NumberRange.new(25, 55), multScale)
+    verticalDust.SpreadAngle = Vector2.new(35, 35)
+    verticalDust.RotSpeed = NumberRange.new(-40, 40)
+    verticalDust.Drag = 7
+    verticalDust.Acceleration = Vector3.new(0, -10 * multScale, 0)
+    verticalDust.ZOffset = 0
+    verticalDust.Rate = 0
+    verticalDust.Parent = attachment
+
+    rollingDust1:Emit(math.max(1, math.floor(50 * multEmit)))
+    rollingDust2:Emit(math.max(1, math.floor(40 * multEmit)))
+
+    -- El humo vertical crece progresivamente: poco en caídas pequeñas, mucho cerca del Nivel 4
+    local verticalCount = 10 + (25 - 10) * extra
+    verticalDust:Emit(math.max(1, math.floor(verticalCount * multEmit)))
+
+    Debris:AddItem(vfxPart, 6)
+end
 
 local function startIdleWatcher()
     if flyanim.idleTimer then task.cancel(flyanim.idleTimer); flyanim.idleTimer = nil end
@@ -2389,7 +2692,7 @@ local function doLanding(char, epicFall)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end)
     end
-    spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5))
+    spawnLandingEffects(impactPos, math.max(impactVel, altura * 0.5), altura, char)
     if epicFall and altura >= 25 then
         if not animator or not animator.Parent then restoreGameAnimations(char); return end
         local animObjBase = Instance.new("Animation")
