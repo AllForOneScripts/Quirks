@@ -1,5 +1,47 @@
-print("version 2.05")
+print("version 2.07")
 
+--[[
+╔══════════════════════════════════════════════════════════════════╗
+║                    FLY SYSTEM  v2.07                            ║
+║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  ÍNDICE DE SECCIONES
+  ───────────────────
+  [1]  SERVICIOS
+  [2]  ASSET IDs  ← todos los rbxassetid centralizados aquí
+  [3]  IDIOMA / LOCALIZACIÓN
+  [4]  REFERENCIAS GLOBALES
+  [5]  CONSTANTES DE VELOCIDAD
+  [6]  CONSTANTES DE ANIMACIÓN (NORMAL / TURBO / MEGA / BLOQUEO)
+  [7]  ESTADO PRINCIPAL  (flyanim)
+  [8]  UTILIDADES  (math, CFrame, C0)
+  [9]  SISTEMA DE AUDIO
+  [10] ANIMACIONES NORMALES  (levitación, movimiento, brazos, espacio)
+  [11] ANIMACIONES TURBO / FAST
+  [12] ANIMACIONES MEGA TURBO
+  [13] SISTEMA DE BLOQUEO (F)
+  [14] SISTEMA DE COMBO (click)
+  [15] ── MEGA UP ──  (sistema independiente)
+  [16] PARTÍCULAS TURBO / FAST  (estelas horizontales)
+  [17] PARTÍCULAS MEGA UP       (estelas verticales, efectomegaup)
+  [18] WHITE FLASH  (escala por velocidad)
+  [19] EFECTOS VFX  (sonicBoom, airShock, landing, crater)
+  [20] SISTEMA DE LOCK / TARGET
+  [21] SISTEMA NOCLIP / ANTI-IMPULSO / ANOMALÍAS
+  [22] SISTEMA DE FRENO (brake)
+  [23] DASH / COLISIÓN
+  [24] GUI  (panel HUD)
+  [25] FÍSICA DEL VUELO  (motores, rsConn, tpMoveConn)
+  [26] ATERRIZAJE / LANDING
+  [27] _flyOn / _flyOff
+  [28] INPUT GLOBAL  (Q, F, Space, WASD)
+  [29] API PÚBLICA  (M.Start / M.Stop / M.Toggle …)
+--]]
+
+-- ──────────────────────────────────────────────────────────────────
+-- [1]  SERVICIOS
+-- ──────────────────────────────────────────────────────────────────
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
@@ -7,6 +49,49 @@ local UserInputService = game:GetService("UserInputService")
 local CoreGui          = game:GetService("CoreGui")
 local SoundService     = game:GetService("SoundService")
 
+-- ──────────────────────────────────────────────────────────────────
+-- [2]  ASSET IDs  (todos los rbxassetid centralizados aquí)
+-- ──────────────────────────────────────────────────────────────────
+
+-- ── Animaciones principales ──────────────────────────────────────
+-- (ver tabla ANIM más abajo; los IDs se declaran allí por claridad)
+
+-- ── Sonidos ──────────────────────────────────────────────────────
+local SFX_TURBO          = "rbxassetid://137455842313478"   -- turbo (fast)
+local SFX_MEGA_TURBO     = "rbxassetid://111391583223900"   -- mega turbo / mega up
+
+-- ── Animaciones de caída / aterrizaje ────────────────────────────
+local CAIDA_BASE_ID      = "rbxassetid://287325678"
+local CAIDA_OVERLAY_ID   = "rbxassetid://70439247"
+
+-- ── Texturas VFX compartidas ─────────────────────────────────────
+local AIR_SHOCK_ID       = "rbxassetid://112096280571499"   -- aura de shock de aire
+local SHOCKWAVE_ID       = "rbxassetid://117592591478260"   -- onda de choque (billboard)
+local RING_ID            = "rbxassetid://12914395250"       -- anillo sonic boom
+local PARTICLE_TEXTURE   = "rbxassetid://106822944701902"   -- textura estelas turbo/fast
+
+-- ── Texturas partículas Mega Up (exclusivas) ─────────────────────
+local MEGAUP_PARTICLE_TEXTURE = "rbxassetid://106822944701902"  -- estelas verticales
+local MEGAUP_PARTICLE_LENGTH  = 12                              -- largo de la estela
+local MEGAUP_VERTICAL_OFFSET  = Vector3.new(0, 3.5, 0)         -- spawn sobre la cabeza
+
+-- ── Textura estelas turbo/fast (horizontal) ──────────────────────
+local PARTICLE_LENGTH    = 6
+
+-- ── Constante de color blanco ────────────────────────────────────
+local WHITE              = Color3.fromRGB(255, 255, 255)
+
+-- ── Sound landing ────────────────────────────────────────────────
+local SFX_LANDING          = "rbxassetid://135226467234227"
+local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
+
+-- ── Lock icon ────────────────────────────────────────────────────
+-- (usado en applyLockIcon, ver sección [20])
+-- "rbxassetid://82817965256191"  ← declarado inline donde se usa
+
+-- ──────────────────────────────────────────────────────────────────
+-- [3]  IDIOMA / LOCALIZACIÓN
+-- ──────────────────────────────────────────────────────────────────
 local FlyLang = {
     ES = {
         fly_title        = "VUELO",
@@ -63,6 +148,9 @@ end
 
 _reloadFT()
 
+-- ──────────────────────────────────────────────────────────────────
+-- [4]  REFERENCIAS GLOBALES
+-- ──────────────────────────────────────────────────────────────────
 local lplr   = nil
 local camera = nil
 
@@ -70,6 +158,10 @@ local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [2b]  ASSET IDs — ANIMACIONES  (parte de la sección [2])
+--       Los IDs de audio, VFX y partículas están arriba del script.
+-- ──────────────────────────────────────────────────────────────────
 local ANIM = {
     idle            = "rbxassetid://107048806104233",
     forward         = "rbxassetid://101776150450756",
@@ -110,11 +202,11 @@ local ANIM = {
     bloqueo         = "rbxassetid://107456513",
 }
 
-local CAIDA_BASE_ID    = "rbxassetid://287325678"
-local CAIDA_OVERLAY_ID = "rbxassetid://70439247"
-local SFX_TURBO        = "rbxassetid://137455842313478"
-local SFX_MEGA_TURBO   = "rbxassetid://111391583223900"
+-- [IDs movidos a sección [2] al inicio del script]
 
+-- ──────────────────────────────────────────────────────────────────
+-- [9]  SISTEMA DE AUDIO
+-- ──────────────────────────────────────────────────────────────────
 local function playLocalSound(id, volume)
     local snd = Instance.new("Sound")
     snd.SoundId   = id
@@ -126,6 +218,9 @@ local function playLocalSound(id, volume)
     snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [5]  CONSTANTES DE VELOCIDAD
+-- ──────────────────────────────────────────────────────────────────
 local BASE_SPEED    = 60
 local FAST_MULT     = 3.0
 local TURBO_MULT    = 6.0
@@ -136,6 +231,9 @@ local DEFAULT_TURBO = 6.0
 local LOCK_ROTATION_SMOOTH = 0.8
 local COORD_SANITY_LIMIT   = 50000
 
+-- ──────────────────────────────────────────────────────────────────
+-- [6]  CONSTANTES DE ANIMACIÓN
+-- ──────────────────────────────────────────────────────────────────
 local ANIM_NORMAL = {
     COMPENSACION_ALTURA  = 1.5,
     PARADA_ESTATICA      = 0.01,
@@ -196,6 +294,9 @@ local MOTOR_RESET_COOLDOWN = 0.5
 
 local Q_DEBOUNCE = 0.10
 
+-- ──────────────────────────────────────────────────────────────────
+-- [7]  ESTADO PRINCIPAL  (tabla flyanim)
+-- ──────────────────────────────────────────────────────────────────
 local flyanim = {
     enabled     = false,
     speed       = BASE_SPEED,
@@ -337,12 +438,16 @@ local flyanim = {
     _comboEndConn  = nil,
 }
 
+-- ──────────────────────────────────────────────────────────────────
+-- [8]  UTILIDADES  (math / CFrame / C0)
+-- ──────────────────────────────────────────────────────────────────
 local c0DesiredCFrame = nil
 local heightTweenToken = 0
 
 local stopLandingWatcher
 local startLandingWatcher
 
+-- Helpers matemáticos básicos
 local function isnan(v)
     return v ~= v
 end
@@ -639,6 +744,9 @@ local function cancelarBrazos()
     flyanim.idleTimerAnim = 0
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [13]  SISTEMA DE BLOQUEO  (tecla F)
+-- ──────────────────────────────────────────────────────────────────
 local function setupBlockTrack()
     if not flyanim.animator then return end
     local animObj = Instance.new("Animation")
@@ -713,6 +821,9 @@ local function setupDamageDetector()
     end)
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [10]  ANIMACIONES NORMALES  (levitación / movimiento / brazos / espacio)
+-- ──────────────────────────────────────────────────────────────────
 local function obtenerPiernaS()
     local C = ANIM_NORMAL
     if flyanim.isADown then
@@ -1112,13 +1223,11 @@ iniciarCicloNormal = function(thisPlay)
     end)
 end
 
-local AIR_SHOCK_ID     = "rbxassetid://112096280571499"
-local SHOCKWAVE_ID     = "rbxassetid://117592591478260"
-local RING_ID          = "rbxassetid://12914395250"
-local PARTICLE_TEXTURE = "rbxassetid://106822944701902"
-local PARTICLE_LENGTH  = 6
-local WHITE            = Color3.fromRGB(255, 255, 255)
+-- [VFX IDs movidos a sección [2] al inicio del script]
 
+-- ──────────────────────────────────────────────────────────────────
+-- [11]  ANIMACIONES TURBO / FAST
+-- ──────────────────────────────────────────────────────────────────
 local stopParticleEmitter
 local function iniciarPoseTurbo()
     flyanim.turboPreImpulsoActivo = true
@@ -1386,6 +1495,9 @@ local function detenerPoseTurbo()
     restaurarC0Inmediato()
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [12]  ANIMACIONES MEGA TURBO  (pose orbital)
+-- ──────────────────────────────────────────────────────────────────
 local function iniciarPoseMega()
     detenerNormalTracks(0.1)
     
@@ -1498,6 +1610,9 @@ local function updateAnimForMovement()
     end
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [21]  NOCLIP / ANTI-IMPULSO / ANOMALÍAS / TELEPORT GUARD
+-- ──────────────────────────────────────────────────────────────────
 local function startAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
     local mySession = flyanim.sessionToken
@@ -1765,6 +1880,9 @@ local function showHitboxMarkers(targetChar)
     task.delay(0.6, clearHitboxMarkers)
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [22]  SISTEMA DE FRENO  (brake al acercarse a target)
+-- ──────────────────────────────────────────────────────────────────
 local brakeConn = nil
 
 local function startBrakeSystem()
@@ -1808,6 +1926,9 @@ local function stopBrakeSystem()
     flyanim.brakingActive = false
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [23]  DASH / COLISIÓN
+-- ──────────────────────────────────────────────────────────────────
 local dashConnection = nil
 local HIT_COOLDOWN   = 0.5
 
@@ -1882,6 +2003,9 @@ local function shakeCamera(intensity, duration)
 end
 
 
+-- ──────────────────────────────────────────────────────────────────
+-- [16]  PARTÍCULAS TURBO / FAST  (estelas horizontales)
+-- ──────────────────────────────────────────────────────────────────
 local _particleFolder = nil
 
 local function _getParticleFolder()
@@ -2008,6 +2132,7 @@ local function startParticleEmitter()
     end)
 end
 
+-- ── stopParticleEmitter (turbo/fast) ─────────────────────────────
 stopParticleEmitter = function()
     if flyanim.particleConn then task.cancel(flyanim.particleConn); flyanim.particleConn = nil end
     flyanim.particleRunning = false
@@ -2020,6 +2145,100 @@ local function getBrightnessFactor(speed)
     return 1
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [17]  PARTÍCULAS MEGA UP  (estelas verticales — efectomegaup)
+--
+--  Diseñadas para subir desde la cabeza del personaje.
+--  · MEGAUP_PARTICLE_TEXTURE  → textura de la estela
+--  · MEGAUP_PARTICLE_LENGTH   → longitud de la pieza visual
+--  · MEGAUP_VERTICAL_OFFSET   → desplazamiento de spawn (sobre cabeza)
+--  Escala isMega: opacidad 0.3 (mega) / 0.5 (normal), distancia ×1.4
+-- ──────────────────────────────────────────────────────────────────
+
+-- Declarada aquí para que MegaUpLogic.Activate() (sección [15]) la llame.
+-- Los helpers de folder/kill ya están declarados en sección [15].
+function createMegaUpParticle(isMega)
+    if not flyanim.enabled then return end
+    if not flyanim.megaTurboUpActive then return end
+
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    -- Posición de spawn: sobre la cabeza del personaje
+    local spawnPos = root.Position + MEGAUP_VERTICAL_OFFSET
+    local awayDir  = Vector3.new(0, 1, 0)   -- siempre hacia arriba
+
+    local part = Instance.new("Part")
+    part.Anchored     = true
+    part.CanCollide   = false
+    part.CastShadow   = false
+    part.Transparency = 1
+    part.Size         = Vector3.new(0.2, MEGAUP_PARTICLE_LENGTH, 0.2)
+    part.Position     = spawnPos
+    part.Parent       = _megaUp_getFolder()
+
+    -- Orientar la cara de la SurfaceGui hacia la cámara (horizontal)
+    local toCam = cam.CFrame.Position - spawnPos
+    local lookFlat = Vector3.new(toCam.X, 0, toCam.Z)
+    if lookFlat.Magnitude > 0.01 then
+        part.CFrame = CFrame.lookAt(spawnPos, spawnPos + lookFlat)
+    else
+        part.CFrame = CFrame.new(spawnPos)
+    end
+
+    local sg = Instance.new("SurfaceGui", part)
+    sg.Adornee      = part
+    sg.Face         = Enum.NormalId.Front
+    sg.AlwaysOnTop  = true
+    sg.LightInfluence = 0
+    sg.SizingMode   = Enum.SurfaceGuiSizingMode.PixelsPerStud
+    sg.PixelsPerStud = 50
+
+    local img = Instance.new("ImageLabel", sg)
+    img.Image               = MEGAUP_PARTICLE_TEXTURE
+    img.Size                = UDim2.new(1, 0, 1, 0)
+    img.BackgroundTransparency = 1
+    img.ImageColor3         = WHITE
+    img.ImageTransparency   = isMega and 0.3 or 0.5   -- mismo comportamiento que turbo
+    img.ScaleType           = Enum.ScaleType.Fit
+
+    local FADE_TIME  = 0.42
+    local travelDist = isMega and 14 or 10             -- escala isMega como en efectomegaup
+    local targetPos  = spawnPos + awayDir * travelDist
+
+    local alive = true
+    local particleRef = {part = part, dead = false}
+    table.insert(_megaUpParticleList, particleRef)
+
+    local function destroyPart()
+        if not alive then return end
+        alive             = false
+        particleRef.dead  = true
+        particleRef.part  = nil
+        pcall(function() if part and part.Parent then part:Destroy() end end)
+    end
+
+    local fadeTween = TweenService:Create(img, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {ImageTransparency = 1})
+    fadeTween:Play()
+    TweenService:Create(part, TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear), {Position = targetPos}):Play()
+    fadeTween.Completed:Connect(destroyPart)
+    task.delay(FADE_TIME + 0.05, destroyPart)
+    task.delay(FADE_TIME + 0.1, function()
+        for i = #_megaUpParticleList, 1, -1 do
+            if _megaUpParticleList[i] and _megaUpParticleList[i].dead then
+                table.remove(_megaUpParticleList, i)
+            end
+        end
+    end)
+end
+
+-- ──────────────────────────────────────────────────────────────────
+-- [18]  WHITE FLASH  (destello por velocidad)
+-- ──────────────────────────────────────────────────────────────────
 local whiteFlashGui = nil
 local function destroyWhiteFlash()
     if whiteFlashGui then pcall(function() whiteFlashGui:Destroy() end); whiteFlashGui = nil end
@@ -2030,7 +2249,8 @@ local function speedWhiteFlash(mode)
     local t = getBrightnessFactor(BASE_SPEED)
     if t <= 0 then return end
     local baseOpacity = 0.38
-    local maxOpacity  = (mode == "turbo") and (baseOpacity * 1.4) or baseOpacity
+    -- "megaup" tiene flash brillante igual que turbo (son de la misma escala)
+    local maxOpacity  = (mode == "turbo" or mode == "megaup") and (baseOpacity * 1.4) or baseOpacity
     local opacity     = maxOpacity * t
     local sg = Instance.new("ScreenGui")
     sg.Name="AFO_WhiteFlash"; sg.ResetOnSpawn=false
@@ -2049,6 +2269,9 @@ local function speedWhiteFlash(mode)
     end)
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [19]  EFECTOS VFX  (airShock / sonicBoom / landing / crater)
+-- ──────────────────────────────────────────────────────────────────
 local function airShockAura(intensity)
     local char = lplr and lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -2165,11 +2388,7 @@ local function sonicBoomEffect(intensity)
     end)
 end
 
--- ── IDs adicionales para el efecto de aterrizaje real ───────────────────
-local SFX_LANDING          = "rbxassetid://135226467234227"
-local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
--- PARTICLE_TEXTURE ya existe como DOUBLE_SHOCKWAVE_TEX equivalente
--- CAIDA_BASE_ID, CAIDA_OVERLAY_ID y AIR_SHOCK_ID ya están definidos arriba
+-- [IDs de landing movidos a sección [2] al inicio del script]
 
 local function spawnLandingEffects(position, velocity)
     if not position then return end
@@ -2376,6 +2595,41 @@ local function spawnLandingEffects(position, velocity)
                 floorMaterial = floorHit.Instance.Material
             end
 
+            -- Esperar un momento muy breve para que el personaje ya esté posado en el suelo
+            -- antes de hacer el raycast de posición (evita lecturas de Y en el aire)
+            task.wait(0.08)
+
+            -- Helper: detectar la Y real del suelo en un punto XZ dado
+            local function getFloorY(worldPos, fallbackY)
+                local rpLocal = RaycastParams.new()
+                rpLocal.FilterType = Enum.RaycastFilterType.Exclude
+                if lplr and lplr.Character then
+                    rpLocal.FilterDescendantsInstances = {lplr.Character}
+                end
+                -- Lanzar desde un poco arriba hacia abajo para encontrar la superficie
+                local hitLocal = workspace:Raycast(
+                    worldPos + Vector3.new(0, 4, 0),
+                    Vector3.new(0, -12, 0),
+                    rpLocal
+                )
+                if hitLocal then return hitLocal.Position.Y end
+                -- Segundo intento más largo por si el suelo está más abajo
+                local hitLocal2 = workspace:Raycast(
+                    worldPos + Vector3.new(0, 4, 0),
+                    Vector3.new(0, -30, 0),
+                    rpLocal
+                )
+                if hitLocal2 then return hitLocal2.Position.Y end
+                return fallbackY
+            end
+
+            -- Refrescar floorColor/floorMaterial con el suelo real post-aterrizaje
+            local floorHit2 = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), rpFloor)
+            if floorHit2 then
+                floorColor    = floorHit2.Instance.Color
+                floorMaterial = floorHit2.Instance.Material
+            end
+
             local rings = {
                 {pieces = math.max(4, math.floor(8  * escalaCantidad)), radius = 5  * escalaSize, sizeMult = 1.0 * escalaSize},
                 {pieces = math.max(6, math.floor(12 * escalaCantidad)), radius = 10 * escalaSize, sizeMult = 1.3 * escalaSize},
@@ -2392,7 +2646,14 @@ local function spawnLandingEffects(position, velocity)
                         math.random(15, 25) / 10 * (escalaSize ^ 0.5),
                         math.random(35, 65) / 10 * ring.sizeMult
                     )
-                    chunk.Position = position + offset - Vector3.new(0, chunk.Size.Y, 0)
+                    -- Usar la Y real del suelo en el punto lateral del fragmento
+                    local lateralPos = Vector3.new(position.X + offset.X, position.Y, position.Z + offset.Z)
+                    local realFloorY = getFloorY(lateralPos, position.Y)
+                    chunk.Position = Vector3.new(
+                        position.X + offset.X,
+                        realFloorY - chunk.Size.Y * 0.5,
+                        position.Z + offset.Z
+                    )
                     chunk.Anchored    = true
                     chunk.CanCollide  = false
                     chunk.Material    = floorMaterial
@@ -2997,6 +3258,9 @@ local function handleComboClick()
     task.spawn(function() runComboSequencer(myToken) end)
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [14]  SISTEMA DE COMBO  (click izquierdo)
+-- ──────────────────────────────────────────────────────────────────
 local function startComboListener()
     if flyanim.comboConn     then flyanim.comboConn:Disconnect()     end
     if flyanim.comboHoldConn then flyanim.comboHoldConn:Disconnect() end
@@ -3054,6 +3318,99 @@ local function stopComboListener()
     comboPendingClick    = false
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [15]  MEGA UP  —  sistema independiente del Mega Turbo
+--
+--  · Comparte con Mega Turbo: sonido (SFX_MEGA_TURBO), lógica de
+--    aceleración (escala con TURBO_MULT), efectos sonicBoom/airShock
+--    y expulsión de datos hacia la GUI.
+--  · Es INDEPENDIENTE en: nombre de modo ("megaup"), partículas
+--    (verticales, ver sección [17]) y white flash propio.
+--  · No llama "turbo" en ninguna parte; no genera partículas turbo.
+-- ──────────────────────────────────────────────────────────────────
+
+-- ── Helpers de limpieza compartidos ─────────────────────────────
+local function _megaUp_limpiarAnimaciones(fade)
+    fade = fade or 0.05
+    flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
+    if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
+    detenerWatchdogAltura()
+    detenerNormalTracks(fade)
+    for _, t in pairs(flyanim.tracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(fade) end end)
+    end
+    if flyanim.espacioTrackActivo then
+        pcall(function() flyanim.espacioTrackActivo:Stop(fade) end)
+        flyanim.espacioTrackActivo = nil
+    end
+    if flyanim.spaceHoldTimerAdv then task.cancel(flyanim.spaceHoldTimerAdv); flyanim.spaceHoldTimerAdv = nil end
+    flyanim.isSpaceAdv = false
+end
+
+local function _megaUp_restaurarNormal()
+    flyanim.megaTurboUpActive = false
+    flyanim.speed             = BASE_SPEED
+    flyanim.mode              = "normal"
+    if flyanim.updateMode then flyanim.updateMode("normal") end
+    for _, t in pairs(flyanim.tracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
+    end
+    task.delay(0.05, function()
+        if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+            iniciarCicloNormal(flyanim._normalPlayId)
+            task.delay(0.05, function()
+                if flyanim.enabled and flyanim.mode == "normal" then
+                    evaluarMovimientoNormal()
+                end
+            end)
+        end
+    end)
+end
+
+-- ── White flash exclusivo de Mega Up ────────────────────────────
+--  Escala de opacidad igual que turbo pero usando la velocidad
+--  resultante de BASE_SPEED * TURBO_MULT para ser coherente.
+local function speedWhiteFlashMegaUp()
+    -- reutiliza la misma función con flag "megaup"
+    speedWhiteFlash("megaup")
+end
+
+-- ── Partícula vertical Mega Up ──────────────────────────────────
+--  La lógica concreta está en sección [17]; aquí solo declaramos
+--  los controles de ciclo para que MegaUpLogic pueda arrancar/parar.
+local _megaUpParticleConn    = nil
+local _megaUpParticleRunning = false
+local _megaUpParticleFolder  = nil
+local _megaUpParticleList    = {}
+
+local function _megaUp_getFolder()
+    if _megaUpParticleFolder and _megaUpParticleFolder.Parent == workspace then
+        return _megaUpParticleFolder
+    end
+    _megaUpParticleFolder = Instance.new("Folder")
+    _megaUpParticleFolder.Name   = "AFO_MegaUp_Particles"
+    _megaUpParticleFolder.Parent = workspace
+    return _megaUpParticleFolder
+end
+
+local function _megaUp_killParticles()
+    for _, ref in ipairs(_megaUpParticleList) do
+        if ref and not ref.dead then
+            ref.dead = true
+            if ref.part then pcall(function() ref.part:Destroy() end) end
+            ref.part = nil
+        end
+    end
+    _megaUpParticleList = {}
+    if _megaUpParticleFolder and _megaUpParticleFolder.Parent then
+        for _, child in ipairs(_megaUpParticleFolder:GetChildren()) do
+            pcall(function() child:Destroy() end)
+        end
+    end
+end
+
+-- ── Estado del sistema Mega Up ──────────────────────────────────
 local MegaUpLogic = {
     Active   = false,
     LoopConn = nil,
@@ -3063,52 +3420,104 @@ local MegaUpLogic = {
 function MegaUpLogic.Deactivate()
     MegaUpLogic.Active = false
     MegaUpLogic.Token  = MegaUpLogic.Token + 1
-    if MegaUpLogic.LoopConn then MegaUpLogic.LoopConn:Disconnect(); MegaUpLogic.LoopConn = nil end
+    if MegaUpLogic.LoopConn then
+        MegaUpLogic.LoopConn:Disconnect()
+        MegaUpLogic.LoopConn = nil
+    end
+    -- Detener partículas verticales exclusivas
+    if _megaUpParticleConn then
+        task.cancel(_megaUpParticleConn)
+        _megaUpParticleConn = nil
+    end
+    _megaUpParticleRunning = false
+    _megaUp_killParticles()
 end
 
 function MegaUpLogic.Activate()
-    if MegaUpLogic.Active then return end
-    if flyanim.mode == "turbo" then return end
+    if MegaUpLogic.Active                               then return end
+    if flyanim.mode == "turbo"                          then return end
+    if flyanim.turboTransitioning or flyanim.megaTransitioning then return end
+
     MegaUpLogic.Deactivate()
     MegaUpLogic.Active = true
     MegaUpLogic.Token  = MegaUpLogic.Token + 1
     local myToken = MegaUpLogic.Token
-    stopParticleEmitter()
+
+    -- ── 1. Limpiar estado previo ────────────────────────────────
+    stopParticleEmitter()      -- detiene estelas turbo/fast
     killActiveParticles()
     cancelarBrazos()
-    playLocalSound(SFX_MEGA_TURBO, 0.90)
-    sonicBoomEffect(2)
-    airShockAura(2)
-    speedWhiteFlash("turbo")
+    _megaUp_limpiarAnimaciones(0.05)
+
+    -- ── 2. Efectos visuales y sonoros (compartidos con Mega Turbo)
+    playLocalSound(SFX_MEGA_TURBO, 0.90)   -- mismo sonido
+    sonicBoomEffect(2)                      -- mismo efecto boom
+    airShockAura(2)                         -- mismo efecto aura
+
+    -- ── 3. White flash exclusivo de Mega Up ────────────────────
+    speedWhiteFlashMegaUp()
+
+    -- ── 4. Impulso vertical inicial ────────────────────────────
     local char = lplr and lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if root and flyanim.enabled and flyanim.bv and flyanim.bv.Parent then
-        local velY = BASE_SPEED * TURBO_MULT * 0.8
+        local velY = BASE_SPEED * TURBO_MULT * 0.8   -- escala con TURBO_MULT
         if not isnan(velY) then
             root.AssemblyLinearVelocity = Vector3.new(0, velY, 0)
         end
     end
+
+    -- ── 5. Notificar GUI con modo "megaup" (no "turbo") ────────
     flyanim.megaTurboUpActive = true
     if flyanim.updateMode then flyanim.updateMode("megaup") end
+
+    -- ── 6. Arrancar partículas verticales exclusivas ────────────
+    --    (ver sección [17] para createMegaUpParticle)
+    if not _megaUpParticleRunning then
+        _megaUpParticleRunning = true
+        local emitSession = flyanim.sessionToken
+        _megaUpParticleConn = task.spawn(function()
+            while flyanim.enabled
+                and flyanim.sessionToken == emitSession
+                and flyanim.megaTurboUpActive
+                and MegaUpLogic.Active
+            do
+                local c2 = lplr and lplr.Character
+                if c2 and c2:FindFirstChild("HumanoidRootPart") then
+                    createMegaUpParticle(true)   -- isMega=true → más opacidad / distancia
+                    task.wait(0.04)
+                    if flyanim.megaTurboUpActive and MegaUpLogic.Active then
+                        createMegaUpParticle(true)
+                    end
+                end
+                task.wait(0.08)
+            end
+            _megaUpParticleRunning = false
+            _megaUpParticleConn    = nil
+            _megaUp_killParticles()
+        end)
+    end
+
+    -- ── 7. Loop principal: mantener velocidad y detectar fin ────
     local startT = os.clock()
     MegaUpLogic.LoopConn = RunService.Heartbeat:Connect(function()
         if MegaUpLogic.Token ~= myToken then return end
+
+        -- Fin por desactivación externa o fly apagado
         if not flyanim.enabled or not MegaUpLogic.Active then
             MegaUpLogic.Deactivate()
-            flyanim.megaTurboUpActive = false
-            flyanim.speed = BASE_SPEED
-            flyanim.mode  = "normal"
-            if flyanim.updateMode then flyanim.updateMode("normal") end
+            _megaUp_restaurarNormal()
             return
         end
+
+        -- Fin por timeout (4 segundos)
         if os.clock() - startT > 4.0 then
             MegaUpLogic.Deactivate()
-            flyanim.megaTurboUpActive = false
-            flyanim.speed = BASE_SPEED
-            flyanim.mode  = "normal"
-            if flyanim.updateMode then flyanim.updateMode("normal") end
+            _megaUp_restaurarNormal()
             return
         end
+
+        -- Mantener velocidad escalada con TURBO_MULT
         if flyanim.bv and flyanim.bv.Parent then
             local newSpeed = BASE_SPEED * TURBO_MULT
             if not isnan(newSpeed) then flyanim.speed = newSpeed end
@@ -3126,6 +3535,15 @@ local function startMegaTurboUpListener()
         if not flyanim.enabled then return end
         if isTyping() then return end
         if flyanim.turboPreImpulsoActivo then return end
+        -- Bloquear mega up durante turbo (Mega Turbo) y durante cualquier transición
+        if flyanim.mode == "turbo" then
+            flyanim.spaceHoldStart = nil
+            return
+        end
+        if flyanim.turboTransitioning or flyanim.megaTransitioning then
+            flyanim.spaceHoldStart = nil
+            return
+        end
         local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space)
         local modeOk    = (flyanim.mode == "normal" or flyanim.mode == "fast") and not flyanim.megaTurboUpActive
         if spaceDown and modeOk then
@@ -3138,6 +3556,22 @@ local function startMegaTurboUpListener()
             flyanim.spaceHoldStart = nil
             if flyanim.megaTurboUpActive and not spaceDown then
                 flyanim.megaTurboUpActive = false
+                MegaUpLogic.Deactivate()
+                -- Limpiar animaciones para evitar estados inyectados
+                for _, t in pairs(flyanim.tracks) do
+                    pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
+                end
+                if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                    task.defer(function()
+                        if flyanim.enabled and flyanim.mode == "normal" then
+                            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+                            iniciarCicloNormal(flyanim._normalPlayId)
+                            task.delay(0.05, function()
+                                if flyanim.enabled and flyanim.mode == "normal" then evaluarMovimientoNormal() end
+                            end)
+                        end
+                    end)
+                end
             end
         end
     end)
@@ -3147,8 +3581,13 @@ local function stopMegaTurboUpListener()
     if flyanim.megaTurboUpConn then flyanim.megaTurboUpConn:Disconnect(); flyanim.megaTurboUpConn = nil end
     flyanim.spaceHoldStart    = nil
     flyanim.megaTurboUpActive = false
+    -- También detener partículas verticales de Mega Up
+    MegaUpLogic.Deactivate()
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [20]  SISTEMA DE LOCK / TARGET
+-- ──────────────────────────────────────────────────────────────────
 local function isTargetValidForLock(target)
     if not target then return false end
     local char = target.Character
@@ -3470,6 +3909,9 @@ local function stopLockSystem()
     if flyanim.lockHighlight then pcall(function() flyanim.lockHighlight:Destroy() end); flyanim.lockHighlight = nil end
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [24]  GUI  (panel HUD)
+-- ──────────────────────────────────────────────────────────────────
 local function _flyDestroyGui()
     if flyanim.pulse then pcall(function() task.cancel(flyanim.pulse) end); flyanim.pulse = nil end
     flyanim.expanded = false; flyanim.updateLbl = nil; flyanim.updateMode = nil
@@ -3959,6 +4401,9 @@ local function _flyBuildGui()
     if flyanim.updateMode then flyanim.updateMode(flyanim.mode) end
 end
 
+-- ──────────────────────────────────────────────────────────────────
+-- [25] / [27]  FÍSICA DEL VUELO + _flyOn / _flyOff
+-- ──────────────────────────────────────────────────────────────────
 local function _flyOn()
     local char = lplr and lplr.Character; if not char then return end
     if shakeConn then pcall(function() shakeConn:Disconnect() end); shakeConn = nil end
@@ -4240,6 +4685,9 @@ end
  
 local _lastOmniActivation = 0
  
+-- ──────────────────────────────────────────────────────────────────
+-- [26]  ATERRIZAJE / LANDING WATCHER
+-- ──────────────────────────────────────────────────────────────────
 local function omniAntiBounceLand(hrp, hum)
     if not hrp or not hum then return end
     pcall(function()
@@ -4569,6 +5017,7 @@ local function _flyOff()
     stopAntiImpulse()
     stopBrakeSystem()
     stopMegaTurboUpListener()
+    _megaUp_killParticles()    -- limpieza partículas mega up
     stopAnomalyProtection()
     stopComboC0Lock()
     stopAnimBlockLoop()
@@ -4781,6 +5230,9 @@ end
  
 
 
+-- ──────────────────────────────────────────────────────────────────
+-- [28]  INPUT / DASH / MODO TRANSICIONES  (Q, F, Space, WASD)
+-- ──────────────────────────────────────────────────────────────────
 local function triggerDash(direction, speed, duration)
     local cam = workspace.CurrentCamera
     local dashDir
@@ -5118,6 +5570,9 @@ end
  
 
 
+-- ──────────────────────────────────────────────────────────────────
+-- [29]  API PÚBLICA
+-- ──────────────────────────────────────────────────────────────────
 local M = {}
  
 function M.Start(lplrRef, flyKey)
