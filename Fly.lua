@@ -1,8 +1,8 @@
-print("version 2.07")
+print("version 2.08")
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    FLY SYSTEM  v2.07                            ║
+║                    FLY SYSTEM  v2.08                            ║
 ║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
@@ -37,6 +37,26 @@ print("version 2.07")
   [27] _flyOn / _flyOff
   [28] INPUT GLOBAL  (Q, F, Space, WASD)
   [29] API PÚBLICA  (M.Start / M.Stop / M.Toggle …)
+
+  CHANGELOG v2.08
+  ───────────────
+  · BUG: Animaciones "up" y "mega up" dañadas al desactivar
+        → iniciarCicloNormal + evaluarMovimiento llamado correctamente
+          desde el listener de mega up al soltar space.
+  · BUG: Quieto no quitaba Mega Up
+        → startIdleWatcher ahora detecta también mode=="megaup"
+          y llama a MegaUpLogic.Deactivate() antes de restaurar normal.
+  · BUG: A veces no leía animación "up" al reactivar fly
+        → _normalPlayId bumpeado con task.defer para evitar race
+          condition al reinicializar el animator.
+  · BUG: Rocas de la caída épica salían blancas
+        → El raycast de color/material del suelo ahora se hace
+          DESPUÉS del task.wait(0.08) para leer la textura real.
+  · MEJORA: Mega Up usa sonicBoomEffect y airShockAura propios del
+        efectomegaup.lua (cono vertical hacia abajo) en vez del
+        boom horizontal de Turbo.
+  · MEJORA: speedWhiteFlash para Mega Up escala correctamente con
+        BASE_SPEED * TURBO_MULT igual que el flash de Mega Turbo.
 --]]
 
 -- ──────────────────────────────────────────────────────────────────
@@ -2246,10 +2266,14 @@ end
 
 local function speedWhiteFlash(mode)
     destroyWhiteFlash()
-    local t = getBrightnessFactor(BASE_SPEED)
+    -- Para mega up y turbo la velocidad efectiva es BASE_SPEED * TURBO_MULT
+    local effectiveSpeed = (mode == "turbo" or mode == "megaup")
+        and (BASE_SPEED * TURBO_MULT)
+        or  BASE_SPEED
+    local t = getBrightnessFactor(effectiveSpeed)
     if t <= 0 then return end
     local baseOpacity = 0.38
-    -- "megaup" tiene flash brillante igual que turbo (son de la misma escala)
+    -- "megaup" tiene flash brillante igual que turbo (misma escala de velocidad)
     local maxOpacity  = (mode == "turbo" or mode == "megaup") and (baseOpacity * 1.4) or baseOpacity
     local opacity     = maxOpacity * t
     local sg = Instance.new("ScreenGui")
@@ -2581,22 +2605,14 @@ local function spawnLandingEffects(position, velocity)
             craterFolder.Name   = "LandingCrater"
             craterFolder.Parent = workspace
 
-            -- Detectar color/material del suelo en el punto de impacto
-            local floorColor    = Color3.fromRGB(106, 127, 63)  -- default
+            -- Detectar color/material del suelo en el punto de impacto.
+            -- Valores por defecto en caso de que el raycast falle.
+            local floorColor    = Color3.fromRGB(106, 127, 63)
             local floorMaterial = Enum.Material.Grass
-            local rpFloor = RaycastParams.new()
-            rpFloor.FilterType = Enum.RaycastFilterType.Exclude
-            if lplr and lplr.Character then
-                rpFloor.FilterDescendantsInstances = {lplr.Character}
-            end
-            local floorHit = workspace:Raycast(position + Vector3.new(0, 0.5, 0), Vector3.new(0, -5, 0), rpFloor)
-            if floorHit then
-                floorColor    = floorHit.Instance.Color
-                floorMaterial = floorHit.Instance.Material
-            end
 
             -- Esperar un momento muy breve para que el personaje ya esté posado en el suelo
-            -- antes de hacer el raycast de posición (evita lecturas de Y en el aire)
+            -- antes de hacer el raycast de posición (evita lecturas de Y en el aire).
+            -- El raycast de color/material se hace AQUÍ, post-wait, para leer la textura real.
             task.wait(0.08)
 
             -- Helper: detectar la Y real del suelo en un punto XZ dado
@@ -2623,11 +2639,16 @@ local function spawnLandingEffects(position, velocity)
                 return fallbackY
             end
 
-            -- Refrescar floorColor/floorMaterial con el suelo real post-aterrizaje
-            local floorHit2 = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), rpFloor)
-            if floorHit2 then
-                floorColor    = floorHit2.Instance.Color
-                floorMaterial = floorHit2.Instance.Material
+            -- Raycast de color/material post-aterrizaje (ahora sí lee el suelo real)
+            local rpFloor = RaycastParams.new()
+            rpFloor.FilterType = Enum.RaycastFilterType.Exclude
+            if lplr and lplr.Character then
+                rpFloor.FilterDescendantsInstances = {lplr.Character}
+            end
+            local floorHit = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), rpFloor)
+            if floorHit then
+                floorColor    = floorHit.Instance.Color
+                floorMaterial = floorHit.Instance.Material
             end
 
             local rings = {
@@ -2700,14 +2721,28 @@ local function startIdleWatcher()
         while flyanim.enabled do
             task.wait(0.1)
             if not flyanim.enabled then break end
+            -- Mega Up es modo independiente: no necesita teclas para mantenerse activo,
+            -- pero sí debe cancelarse si el personaje se queda quieto.
+            -- Los modos "normal" y transiciones se ignoran aquí.
             if flyanim.mode == "normal" then continue end
             if flyanim.turboTransitioning or flyanim.megaTransitioning then continue end
             if flyanim.turboPreImpulsoActivo then continue end
+
             local anyKey = UserInputService:IsKeyDown(Enum.KeyCode.W)
                         or UserInputService:IsKeyDown(Enum.KeyCode.S)
                         or UserInputService:IsKeyDown(Enum.KeyCode.A)
                         or UserInputService:IsKeyDown(Enum.KeyCode.D)
-            if not anyKey then
+
+            -- ── Mega Up: cancela cuando el personaje está quieto ────────────
+            -- (Space suelto ya lo cancela en el listener, esto es la capa idle)
+            if flyanim.mode == "megaup" and not anyKey and not flyanim.megaTurboUpActive then
+                MegaUpLogic.Deactivate()
+                _megaUp_restaurarNormal()
+                continue
+            end
+
+            -- ── Turbo / Fast: sin teclas → volver a normal ─────────────────
+            if (flyanim.mode == "fast" or flyanim.mode == "turbo") and not anyKey then
                 local prevMode = flyanim.mode
                 flyanim.mode   = "normal"
                 flyanim.speed  = BASE_SPEED
@@ -3322,12 +3357,125 @@ end
 -- [15]  MEGA UP  —  sistema independiente del Mega Turbo
 --
 --  · Comparte con Mega Turbo: sonido (SFX_MEGA_TURBO), lógica de
---    aceleración (escala con TURBO_MULT), efectos sonicBoom/airShock
---    y expulsión de datos hacia la GUI.
+--    aceleración (escala con TURBO_MULT) y expulsión de datos hacia
+--    la GUI.
 --  · Es INDEPENDIENTE en: nombre de modo ("megaup"), partículas
---    (verticales, ver sección [17]) y white flash propio.
+--    (verticales, ver sección [17]), efectos VFX propios (cono hacia
+--    abajo en vez de anillos horizontales) y white flash propio.
 --  · No llama "turbo" en ninguna parte; no genera partículas turbo.
 -- ──────────────────────────────────────────────────────────────────
+
+-- ── VFX verticales exclusivos de Mega Up (efectomegaup.lua) ─────
+--  Diferencia clave con Mega Turbo:
+--    · sonicBoomEffect usa anillos horizontales hacia la cámara.
+--    · megaUp_sonicBoomEffect usa capas que se expanden hacia abajo
+--      en cono, reproduciendo el efecto de "lanzamiento vertical".
+--    · megaUp_airShockAura usa SurfaceGui plano sobre la cabeza en
+--      vez de BillboardGui lateral.
+
+local function megaUp_airShockAura()
+    local char = lplr and lplr.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local function spawnFlatAura(isMegaAura)
+        local spawnPos = root.Position + MEGAUP_VERTICAL_OFFSET
+        local p = Instance.new("Part")
+        p.Anchored=true; p.CanCollide=false; p.CastShadow=false; p.Transparency=1
+        p.Size = Vector3.new(1, 1, 0.01)
+        p.CFrame = CFrame.lookAt(spawnPos, spawnPos + Vector3.new(0, 1, 0))
+        p.Parent = workspace
+        local function attachImages(face)
+            local sg = Instance.new("SurfaceGui", p)
+            sg.Face=face; sg.AlwaysOnTop=false; sg.LightInfluence=0
+            sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50
+            local i1 = Instance.new("ImageLabel", sg)
+            i1.Image=AIR_SHOCK_ID; i1.Size=UDim2.new(1,0,1,0); i1.BackgroundTransparency=1
+            i1.ImageColor3 = isMegaAura and Color3.fromRGB(220,245,255) or Color3.fromRGB(210,240,255)
+            i1.ImageTransparency = isMegaAura and 0.15 or 0.25
+            i1.ScaleType=Enum.ScaleType.Fit; i1.Rotation = isMegaAura and 22 or 0
+            local i2 = Instance.new("ImageLabel", sg)
+            i2.Image=AIR_SHOCK_ID
+            i2.Size = isMegaAura and UDim2.new(1.5,0,1.5,0) or UDim2.new(1.3,0,1.3,0)
+            i2.Position = isMegaAura and UDim2.new(-0.25,0,-0.25,0) or UDim2.new(-0.15,0,-0.15,0)
+            i2.BackgroundTransparency=1
+            i2.ImageColor3 = isMegaAura and Color3.fromRGB(190,225,255) or Color3.fromRGB(180,220,255)
+            i2.ImageTransparency = isMegaAura and 0.30 or 0.45
+            i2.ScaleType=Enum.ScaleType.Fit; i2.Rotation = isMegaAura and 60 or 45
+            return i1, i2
+        end
+        local f1, f2 = attachImages(Enum.NormalId.Front)
+        local b1, b2 = attachImages(Enum.NormalId.Back)
+        local endSize = isMegaAura and 480 or 200
+        local dur1    = isMegaAura and 0.22 or 0.14
+        TweenService:Create(p, TweenInfo.new(dur1, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size=Vector3.new(endSize,endSize,0.01)}):Play()
+        local t1 = TweenInfo.new(dur1+0.10, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+        local t2 = TweenInfo.new(dur1+0.06, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+        TweenService:Create(f1,t1,{ImageTransparency=1}):Play(); TweenService:Create(b1,t1,{ImageTransparency=1}):Play()
+        TweenService:Create(f2,t2,{ImageTransparency=1}):Play(); TweenService:Create(b2,t2,{ImageTransparency=1}):Play()
+        task.delay(0.40, function() pcall(function() p:Destroy() end) end)
+    end
+
+    task.spawn(function() spawnFlatAura(false) end)
+    task.spawn(function()
+        task.wait(0.05)
+        if root and root.Parent then spawnFlatAura(true) end
+    end)
+end
+
+local function megaUp_sonicBoomEffect()
+    local char = lplr and lplr.Character
+    if not char then return end
+    local currentRoot = char:FindFirstChild("HumanoidRootPart")
+    if not currentRoot then return end
+
+    -- Capas cónicas que se expanden hacia abajo (efecto de lanzamiento vertical)
+    local scale = 1.2
+    local layers = {
+        { yStart = 0,  yDrop = -2,   sStart = 2,  sEnd = 25  * scale, dur = 0.15 },
+        { yStart = -1, yDrop = -6,   sStart = 4,  sEnd = 45  * scale, dur = 0.20 },
+        { yStart = -2, yDrop = -12,  sStart = 8,  sEnd = 70  * scale, dur = 0.25 },
+        { yStart = -3, yDrop = -20,  sStart = 12, sEnd = 100 * scale, dur = 0.30 },
+        { yStart = -4, yDrop = -30,  sStart = 16, sEnd = 140 * scale, dur = 0.35 },
+    }
+    local travelDir = Vector3.new(0, 1, 0)
+    for i, r in ipairs(layers) do
+        task.spawn(function()
+            task.wait((i-1) * 0.03)
+            local cr = char:FindFirstChild("HumanoidRootPart")
+            if not cr then return end
+            local basePos = cr.Position + MEGAUP_VERTICAL_OFFSET
+            local startPos = basePos + Vector3.new(0, r.yStart, 0)
+            local endPos   = basePos + Vector3.new(0, r.yDrop,  0)
+            local p = Instance.new("Part")
+            p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CastShadow=false; p.Transparency=1
+            p.Size = Vector3.new(r.sStart, r.sStart, 0.01)
+            p.CFrame = CFrame.lookAt(startPos, startPos + travelDir)
+            p.Parent = workspace
+            local function makeSG(face)
+                local sg = Instance.new("SurfaceGui", p)
+                sg.Adornee=p; sg.Face=face; sg.AlwaysOnTop=false; sg.LightInfluence=0
+                sg.SizingMode=Enum.SurfaceGuiSizingMode.PixelsPerStud; sg.PixelsPerStud=50
+                local img = Instance.new("ImageLabel", sg)
+                img.Image=RING_ID; img.Size=UDim2.new(1,0,1,0); img.BackgroundTransparency=1
+                img.ImageColor3=WHITE; img.ImageTransparency=0.05
+                return img
+            end
+            local imgF = makeSG(Enum.NormalId.Front)
+            local imgB = makeSG(Enum.NormalId.Back)
+            TweenService:Create(p, TweenInfo.new(r.dur, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size = Vector3.new(r.sEnd, r.sEnd, 0.01),
+                CFrame = CFrame.lookAt(endPos, endPos + travelDir),
+            }):Play()
+            local fadeDur = r.dur + 0.05
+            local fadeInfo = TweenInfo.new(fadeDur, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+            TweenService:Create(imgF, fadeInfo, {ImageTransparency=1}):Play()
+            TweenService:Create(imgB, fadeInfo, {ImageTransparency=1}):Play()
+            task.delay(fadeDur + 0.1, function() pcall(function() p:Destroy() end) end)
+        end)
+    end
+end
 
 -- ── Helpers de limpieza compartidos ─────────────────────────────
 local function _megaUp_limpiarAnimaciones(fade)
@@ -3352,15 +3500,22 @@ local function _megaUp_restaurarNormal()
     flyanim.speed             = BASE_SPEED
     flyanim.mode              = "normal"
     if flyanim.updateMode then flyanim.updateMode("normal") end
+    -- Detener todas las pistas que puedan haber quedado activas
     for _, t in pairs(flyanim.tracks) do
         pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
     end
-    task.delay(0.05, function()
+    for _, t in pairs(flyanim.normalTracks) do
+        pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
+    end
+    -- Restaurar animaciones normales en el siguiente frame para evitar
+    -- race conditions con el cleanup de partículas y conexiones.
+    task.defer(function()
         if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
             flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-            iniciarCicloNormal(flyanim._normalPlayId)
+            local pid = flyanim._normalPlayId
+            iniciarCicloNormal(pid)
             task.delay(0.05, function()
-                if flyanim.enabled and flyanim.mode == "normal" then
+                if flyanim.enabled and flyanim.mode == "normal" and flyanim._normalPlayId == pid then
                     evaluarMovimientoNormal()
                 end
             end)
@@ -3449,10 +3604,11 @@ function MegaUpLogic.Activate()
     cancelarBrazos()
     _megaUp_limpiarAnimaciones(0.05)
 
-    -- ── 2. Efectos visuales y sonoros (compartidos con Mega Turbo)
-    playLocalSound(SFX_MEGA_TURBO, 0.90)   -- mismo sonido
-    sonicBoomEffect(2)                      -- mismo efecto boom
-    airShockAura(2)                         -- mismo efecto aura
+    -- ── 2. Efectos visuales y sonoros (comparte sonido con Mega Turbo;
+    --       VFX propios: cono vertical en vez de anillos horizontales)
+    playLocalSound(SFX_MEGA_TURBO, 0.90)   -- mismo sonido que Mega Turbo
+    megaUp_sonicBoomEffect()               -- cono hacia abajo (exclusivo Mega Up)
+    megaUp_airShockAura()                  -- aura plana sobre la cabeza (exclusivo)
 
     -- ── 3. White flash exclusivo de Mega Up ────────────────────
     speedWhiteFlashMegaUp()
@@ -3557,6 +3713,13 @@ local function startMegaTurboUpListener()
             if flyanim.megaTurboUpActive and not spaceDown then
                 flyanim.megaTurboUpActive = false
                 MegaUpLogic.Deactivate()
+                -- El modo puede haberse quedado en "megaup"; forzar a normal aquí
+                -- antes de restaurar animaciones para que iniciarCicloNormal funcione.
+                if flyanim.mode == "megaup" then
+                    flyanim.mode  = "normal"
+                    flyanim.speed = BASE_SPEED
+                    if flyanim.updateMode then flyanim.updateMode("normal") end
+                end
                 -- Limpiar animaciones para evitar estados inyectados
                 for _, t in pairs(flyanim.tracks) do
                     pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
@@ -4450,8 +4613,20 @@ local function _flyOn()
     _flyBuildGui()
     startIdleWatcher()
     startComboListener()
+    -- Diferir iniciarCicloNormal un frame para asegurar que el animator
+    -- ya terminó de cargar todas las pistas (evita que "up" no lea la
+    -- animación la primera vez que se activa el fly en una sesión).
     flyanim._normalPlayId = 1
-    iniciarCicloNormal(1)
+    task.defer(function()
+        if flyanim.enabled and flyanim.mode == "normal" then
+            iniciarCicloNormal(flyanim._normalPlayId)
+            task.delay(0.05, function()
+                if flyanim.enabled and flyanim.mode == "normal" then
+                    evaluarMovimientoNormal()
+                end
+            end)
+        end
+    end)
     startLockSystem()
     startBrakeSystem()
     startAntiImpulse()
