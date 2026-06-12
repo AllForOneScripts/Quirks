@@ -37,44 +37,6 @@ print("version 2.10")
   [27] _flyOn / _flyOff
   [28] INPUT GLOBAL  (Q, F, Space, WASD)
   [29] API PÚBLICA  (M.Start / M.Stop / M.Toggle …)
-
-  CHANGELOG v2.10
-  ───────────────
-  · BUG: Mega Up no volvía a idle al quedarse quieto
-        → MegaUpLogic.LoopConn ahora detecta que Espacio fue soltado
-          y no hay teclas de movimiento; tras 0.35s fuerza
-          Deactivate() + _megaUp_restaurarNormal().
-  · BUG: Animación de Mega Up usaba pistas del Mega Turbo
-        → Reemplazado con espacio_sec (misma pista del script aislado):
-          Play(0.1) → AdjustSpeed(0) → TimePosition = Length * 0.5.
-          Sin inclinación de C0 (pose plana vertical ascendente).
-  · BUG: Sistema de grados buguea / inclinación en Mega Up
-        → rsConn maneja "megaup" como caso propio: extrae solo el yaw
-          de la cámara y hace lerp suave (dt*6) para orientación
-          completamente vertical sin pitch ni roll residual.
-  · BUG: TP por lock no activaba caída épica al apagar vuelo
-        → updateLockInfoGui registra la altura pre-TP en
-          flyanim.landingHeight cuando supera 45 studs.
-          _flyOff toma el MAX entre altura medida y la altura
-          pre-almacenada para garantizar que doLanding se ejecute.
-
-  CHANGELOG v2.09
-  ───────────────
-  · BUG: Mega Up no volvía a modo normal al quedarse quieto
-        → startIdleWatcher ahora llama iniciarCicloNormal +
-          evaluarMovimientoNormal via task.defer después de
-          MegaUpLogic.Deactivate() + _megaUp_restaurarNormal().
-  · MEJORA: Partículas de Mega Up generadas ~40% más arriba
-        → MEGAUP_VERTICAL_OFFSET subido de Y=5.0 a Y=7.0.
-  · BUG: Animación de Mega Up no reproducía
-        → megaUpC0Conn guardado en flyanim.megaRenderConn para
-          limpieza correcta; MegaUpLogic.Deactivate() desconecta
-          megaRenderConn explícitamente; pistas forzadas Stop(0)
-          antes de Play para evitar conflicto con estado previo.
-  · BUG: Rocas de caída épica no copiaban color del suelo
-        → task.wait(0.05) adicional justo antes del spawn de
-          chunks para garantizar que el raycast post-aterrizaje
-          lee la textura/color real de la superficie.
 --]]
 
 -- ──────────────────────────────────────────────────────────────────
@@ -121,6 +83,7 @@ local WHITE              = Color3.fromRGB(255, 255, 255)
 
 -- ── Sound landing ────────────────────────────────────────────────
 local SFX_LANDING          = "rbxassetid://135226467234227"
+local SFX_LANDING_GLASS    = "rbxassetid://132535085898211"  -- impacto sobre cristal
 local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
 
 -- ── Lock icon ────────────────────────────────────────────────────
@@ -364,6 +327,8 @@ local flyanim = {
     landingHeight = nil,
     landingVelocity = 0,
     landingVelocityCapture = 0,
+    maxHeightAboveGround = 0,
+    heightWatchAccum = 0,
     comboStep       = 0,
     comboLastClick  = 0,
     combo2LastUsed  = nil,
@@ -2462,11 +2427,33 @@ local function spawnLandingEffects(position, velocity)
             TweenInfo.new(0.15 * multScale, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
             {Brightness = 0, Range = 0}):Play()
 
+        -- ── Detección temprana de material del suelo (impacto) ────────────
+        -- Se hace ANTES del sonido para poder elegir el SFX correcto
+        -- (cristal usa un sonido de rotura distinto al de aterrizaje normal).
+        local impactFloorMaterial = Enum.Material.Grass
+        do
+            local rpEarly = RaycastParams.new()
+            rpEarly.FilterType = Enum.RaycastFilterType.Exclude
+            if lplr and lplr.Character then
+                rpEarly.FilterDescendantsInstances = {lplr.Character}
+            end
+            local earlyHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpEarly)
+            if not earlyHit then
+                earlyHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpEarly)
+            end
+            if earlyHit then
+                impactFloorMaterial = earlyHit.Instance.Material
+            end
+        end
+        local isGlassFloor = (impactFloorMaterial == Enum.Material.Glass
+            or impactFloorMaterial == Enum.Material.ForceField
+            or impactFloorMaterial == Enum.Material.Ice)
+
         -- ── Sonido de impacto dinámico ───────────────────────────────────
         local volumeMap = {1.0, 2.5, 4.5, 7.0}
         local pitchMap  = {1.1, 0.85, 0.65, 0.5}
         local sfx = Instance.new("Sound")
-        sfx.SoundId              = SFX_LANDING
+        sfx.SoundId              = isGlassFloor and SFX_LANDING_GLASS or SFX_LANDING
         sfx.Volume               = volumeMap[nivel]
         sfx.PlaybackSpeed        = pitchMap[nivel]
         sfx.RollOffMaxDistance   = 300 * multScale
@@ -2712,9 +2699,26 @@ local function spawnLandingEffects(position, velocity)
                     chunk.CFrame  = lookAt * CFrame.Angles(upTilt, 0, sideRoll)
                     chunk.Parent  = craterFolder
                     table.insert(rocas, chunk)
-                    -- Pequeño tween hacia arriba al aparecer
-                    local targetUp = chunk.CFrame + Vector3.new(0, chunk.Size.Y * 0.9, 0)
-                    TweenService:Create(chunk, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetUp}):Play()
+                    if isGlassFloor then
+                        -- ── Efecto de cristal roto: los trozos salen volando ──────
+                        local burstDir = (offset.Magnitude > 0.01 and offset.Unit or Vector3.new(math.random(-10,10)/10, 0, math.random(-10,10)/10))
+                        local burstDist  = (8 + math.random() * 14) * escalaSize
+                        local burstUp    = (6 + math.random() * 10) * escalaSize
+                        local burstSpin  = math.rad(math.random(180, 720)) * (math.random() < 0.5 and -1 or 1)
+                        local burstTarget = chunk.CFrame
+                            + (burstDir * burstDist)
+                            + Vector3.new(0, burstUp, 0)
+                        burstTarget = burstTarget * CFrame.Angles(burstSpin, burstSpin * 0.6, burstSpin * 0.3)
+                        local burstTime = 0.5 + math.random() * 0.4
+                        TweenService:Create(chunk,
+                            TweenInfo.new(burstTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                            {CFrame = burstTarget, Transparency = 1}):Play()
+                        task.delay(burstTime + 0.05, function() pcall(function() chunk:Destroy() end) end)
+                    else
+                        -- Pequeño tween hacia arriba al aparecer
+                        local targetUp = chunk.CFrame + Vector3.new(0, chunk.Size.Y * 0.9, 0)
+                        TweenService:Create(chunk, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetUp}):Play()
+                    end
                 end
             end
             -- Hundo todas las rocas de vuelta al mismo tiempo
@@ -3175,9 +3179,11 @@ local function finalizarCombo()
             pcall(function() nt.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION) end)
         end
         iniciarCicloNormal(pid)
-        task.delay(0.05, function()
-            if flyanim.enabled and flyanim.mode == "normal" then evaluarMovimientoNormal() end
-        end)
+        -- Evaluar el movimiento de inmediato (sin delay adicional) para que,
+        -- si el jugador ya está moviéndose (W/A/S/D mantenidas durante el
+        -- combo), la animación de movimiento correspondiente se reproduzca
+        -- al instante en vez de quedar "congelada" en idle unos instantes.
+        if flyanim.enabled and flyanim.mode == "normal" then evaluarMovimientoNormal() end
     else
         updateAnimForMovement()
     end
@@ -4098,9 +4104,10 @@ local function updateLockInfoGui()
                 local behindDir = toTargetH.Magnitude > 0.1 and -toTargetH.Unit or Vector3.new(0, 0, 1)
                 local tpPos = root.Position + behindDir * 3
                 if safepos(tpPos) then
-                    -- [FIX-4] Si el TP es desde una altura significativa y fly está activo,
-                    -- almacenar la altura previa para que al apagarse el vuelo dispare
-                    -- siempre la caída épica con su animación y efectos.
+                    -- Si el TP es desde una altura significativa, registrarla en el
+                    -- watchdog de altura (igual que el resto del sistema) para que
+                    -- _flyOff dispare siempre la caída épica al apagar el vuelo,
+                    -- aunque el TP nos deje justo al lado del objetivo en el suelo.
                     local preTPHeight = 0
                     do
                         local rp4 = RaycastParams.new()
@@ -4114,9 +4121,8 @@ local function updateLockInfoGui()
                         myRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                         myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end)
-                    -- Actualizar altura de aterrizaje si el TP fue desde arriba
-                    if preTPHeight > 45 then
-                        flyanim.landingHeight = preTPHeight
+                    if preTPHeight > (flyanim.maxHeightAboveGround or 0) then
+                        flyanim.maxHeightAboveGround = preTPHeight
                     end
                 end
             end
@@ -4707,6 +4713,8 @@ local function _flyOn()
     flyanim.landingHeight          = nil
     flyanim.landingVelocity        = 0
     flyanim.landingVelocityCapture = 0
+    flyanim.maxHeightAboveGround    = 0
+    flyanim.heightWatchAccum        = 0
     _landAnimToken = _landAnimToken + 1
     if _landBaseRef    then pcall(function() _landBaseRef:Stop(0) end)    end
     if _landOverlayRef then pcall(function() _landOverlayRef:Stop(0) end) end
@@ -4888,6 +4896,29 @@ local function _flyOn()
         local pos = root.Position
         if not safepos(pos) then return end
         if math.abs(pos.Y) > COORD_SANITY_LIMIT or math.abs(pos.X) > COORD_SANITY_LIMIT or math.abs(pos.Z) > COORD_SANITY_LIMIT then return end
+
+        -- ── WATCHDOG DE ALTURA (caída épica) ──────────────────────────────
+        -- Se ejecuta de forma continua mientras el vuelo está activo, sin
+        -- importar la causa del cambio de altura (vuelo normal, dash, o
+        -- un TP como el del sistema de lock). Si en cualquier momento la
+        -- altura sobre el suelo supera 45 studs, queda registrada para que
+        -- _flyOff dispare siempre la animación de caída épica al apagar
+        -- el vuelo, igual que ocurre con el resto de efectos asociados.
+        flyanim.heightWatchAccum = (flyanim.heightWatchAccum or 0) + dt
+        if flyanim.heightWatchAccum >= 0.08 then
+            flyanim.heightWatchAccum = 0
+            local rpH = RaycastParams.new()
+            rpH.FilterType = Enum.RaycastFilterType.Exclude
+            rpH.FilterDescendantsInstances = {cc}
+            local rayH = workspace:Raycast(pos, Vector3.new(0, -3000, 0), rpH)
+            if rayH then
+                local hAG = pos.Y - rayH.Position.Y
+                if not isnan(hAG) and hAG > (flyanim.maxHeightAboveGround or 0) then
+                    flyanim.maxHeightAboveGround = hAG
+                end
+            end
+        end
+
         if not root:FindFirstChild("BodyGyro") or not root:FindFirstChild("BodyVelocity")
         or ch:GetState() == Enum.HumanoidStateType.Ragdoll then
             if flyanim.enabled then _flyMakeMotors() end; return
@@ -5258,13 +5289,17 @@ local function _flyOff()
             heightFromGround = 999
         end
     end
-    -- [FIX-4] Si hubo un TP por lock desde gran altura, conservar esa altura
-    -- para que _flyOff siempre use la caída épica aunque ahora estemos cerca del suelo.
-    local prevStoredHeight = flyanim.landingHeight or 0
-    if prevStoredHeight > heightFromGround then
-        heightFromGround = prevStoredHeight
+    -- Si en algún momento durante el vuelo (incluyendo TPs como el del
+    -- sistema de lock) la altura sobre el suelo superó los 45 studs,
+    -- el watchdog de altura lo registró en maxHeightAboveGround.
+    -- Usamos el MAX entre la altura medida ahora y la máxima registrada
+    -- para garantizar que la caída épica se dispare siempre que corresponda.
+    local maxRecordedHeight = flyanim.maxHeightAboveGround or 0
+    if maxRecordedHeight > heightFromGround then
+        heightFromGround = maxRecordedHeight
     end
     flyanim.landingHeight = heightFromGround
+    flyanim.maxHeightAboveGround = 0
  
     
     
@@ -5812,6 +5847,7 @@ local function _connectGlobal()
         flyanim.waitingLand=false
         flyanim.landingHeight=nil; flyanim.landingVelocity=0
         flyanim.landingVelocityCapture=0
+        flyanim.maxHeightAboveGround=0; flyanim.heightWatchAccum=0
         flyanim.megaTurboUpActive=false
         flyanim.spaceHoldStart=nil
  
