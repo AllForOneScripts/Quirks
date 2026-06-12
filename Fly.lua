@@ -93,7 +93,7 @@ local PARTICLE_TEXTURE   = "rbxassetid://106822944701902"   -- textura estelas t
 -- ── Texturas partículas Mega Up (exclusivas) ─────────────────────
 local MEGAUP_PARTICLE_TEXTURE = "rbxassetid://106822944701902"  -- estelas verticales
 local MEGAUP_PARTICLE_LENGTH  = 12                              -- largo de la estela
-local MEGAUP_VERTICAL_OFFSET  = Vector3.new(0, 3.5, 0)         -- spawn sobre la cabeza
+local MEGAUP_VERTICAL_OFFSET  = Vector3.new(0, 5.0, 0)         -- spawn sobre la cabeza (+40%)
 
 -- ── Textura estelas turbo/fast (horizontal) ──────────────────────
 local PARTICLE_LENGTH    = 6
@@ -2645,7 +2645,12 @@ local function spawnLandingEffects(position, velocity)
             if lplr and lplr.Character then
                 rpFloor.FilterDescendantsInstances = {lplr.Character}
             end
-            local floorHit = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), rpFloor)
+            -- Primer intento: rango generoso desde arriba del punto de impacto
+            local floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
+            -- Segundo intento si el primero falla: rango aún más largo
+            if not floorHit then
+                floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
+            end
             if floorHit then
                 floorColor    = floorHit.Instance.Color
                 floorMaterial = floorHit.Instance.Material
@@ -2735,7 +2740,9 @@ local function startIdleWatcher()
 
             -- ── Mega Up: cancela cuando el personaje está quieto ────────────
             -- (Space suelto ya lo cancela en el listener, esto es la capa idle)
-            if flyanim.mode == "megaup" and not anyKey and not flyanim.megaTurboUpActive then
+            -- Nota: en modo "megaup" megaTurboUpActive puede seguir en true mientras
+            -- el loop corre; la condición correcta es solo chequear el modo y las teclas.
+            if flyanim.mode == "megaup" and not anyKey then
                 MegaUpLogic.Deactivate()
                 _megaUp_restaurarNormal()
                 continue
@@ -3500,6 +3507,10 @@ local function _megaUp_restaurarNormal()
     flyanim.speed             = BASE_SPEED
     flyanim.mode              = "normal"
     if flyanim.updateMode then flyanim.updateMode("normal") end
+    -- Invalidar el token de C0 para detener el RenderStepped de Mega Up
+    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+    detenerWatchdogAltura()
+    restaurarC0Inmediato()
     -- Detener todas las pistas que puedan haber quedado activas
     for _, t in pairs(flyanim.tracks) do
         pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
@@ -3625,7 +3636,45 @@ function MegaUpLogic.Activate()
 
     -- ── 5. Notificar GUI con modo "megaup" (no "turbo") ────────
     flyanim.megaTurboUpActive = true
+    flyanim.mode  = "megaup"
+    flyanim.speed = BASE_SPEED * TURBO_MULT
     if flyanim.updateMode then flyanim.updateMode("megaup") end
+
+    -- ── 5b. Animación exclusiva de Mega Up (pose vertical ascendente) ──
+    -- Usa las pistas mega_pose / mega_base / mega_volado pero con C0 neutro
+    -- (sin inclinación hacia adelante como el Mega Turbo).
+    do
+        local nt = flyanim.normalTracks
+        if nt then
+            flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+            local myC0Token = flyanim.c0ControlToken
+            local rootJoint  = flyanim.rootJoint
+            local originalC0 = flyanim.originalC0
+            if nt.mega_pose   then nt.mega_pose.Looped   = true; pcall(function() nt.mega_pose:Play(0.15);  nt.mega_pose:AdjustSpeed(0.8)  end) end
+            if nt.mega_base   then nt.mega_base.Looped   = true; pcall(function() nt.mega_base:Play(0.15);  nt.mega_base:AdjustSpeed(0.8)  end) end
+            if nt.mega_volado then nt.mega_volado.Looped = true; pcall(function() nt.mega_volado:Play(0.15) end) end
+            -- RenderStepped: mantener C0 vertical (sin inclinación) durante Mega Up
+            if rootJoint and originalC0 then
+                local megaUpC0Conn
+                megaUpC0Conn = RunService.RenderStepped:Connect(function()
+                    if not MegaUpLogic.Active or not flyanim.enabled or flyanim.mode ~= "megaup" then
+                        if megaUpC0Conn then megaUpC0Conn:Disconnect(); megaUpC0Conn = nil end
+                        return
+                    end
+                    if myC0Token ~= flyanim.c0ControlToken then
+                        if megaUpC0Conn then megaUpC0Conn:Disconnect(); megaUpC0Conn = nil end
+                        return
+                    end
+                    -- Pose vertical: compensación de altura sin inclinación (modo up)
+                    local tNow = tick()
+                    local movY = math.sin(tNow * ANIM_MEGA.FRECUENCIA_LEVITACION) * (ANIM_MEGA.AMPLITUD_LEVITACION * 0.5)
+                    pcall(function()
+                        rootJoint.C0 = originalC0 * CFrame.new(0, ANIM_MEGA.COMPENSACION_ALTURA + movY, 0)
+                    end)
+                end)
+            end
+        end
+    end
 
     -- ── 6. Arrancar partículas verticales exclusivas ────────────
     --    (ver sección [17] para createMegaUpParticle)
@@ -3711,30 +3760,8 @@ local function startMegaTurboUpListener()
         else
             flyanim.spaceHoldStart = nil
             if flyanim.megaTurboUpActive and not spaceDown then
-                flyanim.megaTurboUpActive = false
                 MegaUpLogic.Deactivate()
-                -- El modo puede haberse quedado en "megaup"; forzar a normal aquí
-                -- antes de restaurar animaciones para que iniciarCicloNormal funcione.
-                if flyanim.mode == "megaup" then
-                    flyanim.mode  = "normal"
-                    flyanim.speed = BASE_SPEED
-                    if flyanim.updateMode then flyanim.updateMode("normal") end
-                end
-                -- Limpiar animaciones para evitar estados inyectados
-                for _, t in pairs(flyanim.tracks) do
-                    pcall(function() if t and t.IsPlaying then t:Stop(0.1) end end)
-                end
-                if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
-                    task.defer(function()
-                        if flyanim.enabled and flyanim.mode == "normal" then
-                            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-                            iniciarCicloNormal(flyanim._normalPlayId)
-                            task.delay(0.05, function()
-                                if flyanim.enabled and flyanim.mode == "normal" then evaluarMovimientoNormal() end
-                            end)
-                        end
-                    end)
-                end
+                _megaUp_restaurarNormal()
             end
         end
     end)
