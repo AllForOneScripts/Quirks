@@ -1,8 +1,8 @@
-print("version 2.08")
+print("version 2.09")
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    FLY SYSTEM  v2.08                            ║
+║                    FLY SYSTEM  v2.09                            ║
 ║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
@@ -38,25 +38,23 @@ print("version 2.08")
   [28] INPUT GLOBAL  (Q, F, Space, WASD)
   [29] API PÚBLICA  (M.Start / M.Stop / M.Toggle …)
 
-  CHANGELOG v2.08
+  CHANGELOG v2.09
   ───────────────
-  · BUG: Animaciones "up" y "mega up" dañadas al desactivar
-        → iniciarCicloNormal + evaluarMovimiento llamado correctamente
-          desde el listener de mega up al soltar space.
-  · BUG: Quieto no quitaba Mega Up
-        → startIdleWatcher ahora detecta también mode=="megaup"
-          y llama a MegaUpLogic.Deactivate() antes de restaurar normal.
-  · BUG: A veces no leía animación "up" al reactivar fly
-        → _normalPlayId bumpeado con task.defer para evitar race
-          condition al reinicializar el animator.
-  · BUG: Rocas de la caída épica salían blancas
-        → El raycast de color/material del suelo ahora se hace
-          DESPUÉS del task.wait(0.08) para leer la textura real.
-  · MEJORA: Mega Up usa sonicBoomEffect y airShockAura propios del
-        efectomegaup.lua (cono vertical hacia abajo) en vez del
-        boom horizontal de Turbo.
-  · MEJORA: speedWhiteFlash para Mega Up escala correctamente con
-        BASE_SPEED * TURBO_MULT igual que el flash de Mega Turbo.
+  · BUG: Mega Up no volvía a modo normal al quedarse quieto
+        → startIdleWatcher ahora llama iniciarCicloNormal +
+          evaluarMovimientoNormal via task.defer después de
+          MegaUpLogic.Deactivate() + _megaUp_restaurarNormal().
+  · MEJORA: Partículas de Mega Up generadas ~40% más arriba
+        → MEGAUP_VERTICAL_OFFSET subido de Y=5.0 a Y=7.0.
+  · BUG: Animación de Mega Up no reproducía
+        → megaUpC0Conn guardado en flyanim.megaRenderConn para
+          limpieza correcta; MegaUpLogic.Deactivate() desconecta
+          megaRenderConn explícitamente; pistas forzadas Stop(0)
+          antes de Play para evitar conflicto con estado previo.
+  · BUG: Rocas de caída épica no copiaban color del suelo
+        → task.wait(0.05) adicional justo antes del spawn de
+          chunks para garantizar que el raycast post-aterrizaje
+          lee la textura/color real de la superficie.
 --]]
 
 -- ──────────────────────────────────────────────────────────────────
@@ -93,7 +91,7 @@ local PARTICLE_TEXTURE   = "rbxassetid://106822944701902"   -- textura estelas t
 -- ── Texturas partículas Mega Up (exclusivas) ─────────────────────
 local MEGAUP_PARTICLE_TEXTURE = "rbxassetid://106822944701902"  -- estelas verticales
 local MEGAUP_PARTICLE_LENGTH  = 12                              -- largo de la estela
-local MEGAUP_VERTICAL_OFFSET  = Vector3.new(0, 5.0, 0)         -- spawn sobre la cabeza (+40%)
+local MEGAUP_VERTICAL_OFFSET  = Vector3.new(0, 7.0, 0)         -- spawn sobre la cabeza (+40%)
 
 -- ── Textura estelas turbo/fast (horizontal) ──────────────────────
 local PARTICLE_LENGTH    = 6
@@ -2656,6 +2654,10 @@ local function spawnLandingEffects(position, velocity)
                 floorMaterial = floorHit.Instance.Material
             end
 
+            -- Wait adicional antes de spawnear las rocas para garantizar que
+            -- el personaje está asentado y el raycast de color/material ya es fiable.
+            task.wait(0.05)
+
             local rings = {
                 {pieces = math.max(4, math.floor(8  * escalaCantidad)), radius = 5  * escalaSize, sizeMult = 1.0 * escalaSize},
                 {pieces = math.max(6, math.floor(12 * escalaCantidad)), radius = 10 * escalaSize, sizeMult = 1.3 * escalaSize},
@@ -2745,6 +2747,19 @@ local function startIdleWatcher()
             if flyanim.mode == "megaup" and not anyKey then
                 MegaUpLogic.Deactivate()
                 _megaUp_restaurarNormal()
+                -- Restaurar animaciones normales inmediatamente tras cancelar Mega Up por idle
+                task.defer(function()
+                    if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                        flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+                        local pid = flyanim._normalPlayId
+                        iniciarCicloNormal(pid)
+                        task.delay(0.05, function()
+                            if flyanim.enabled and flyanim.mode == "normal" and flyanim._normalPlayId == pid then
+                                evaluarMovimientoNormal()
+                            end
+                        end)
+                    end
+                end)
                 continue
             end
 
@@ -3590,6 +3605,11 @@ function MegaUpLogic.Deactivate()
         MegaUpLogic.LoopConn:Disconnect()
         MegaUpLogic.LoopConn = nil
     end
+    -- Detener el RenderStepped de animación/C0 de Mega Up
+    if flyanim.megaRenderConn then
+        flyanim.megaRenderConn:Disconnect()
+        flyanim.megaRenderConn = nil
+    end
     -- Detener partículas verticales exclusivas
     if _megaUpParticleConn then
         task.cancel(_megaUpParticleConn)
@@ -3646,23 +3666,25 @@ function MegaUpLogic.Activate()
     do
         local nt = flyanim.normalTracks
         if nt then
+            -- Detener cualquier megaRenderConn previa (Mega Turbo u otro Mega Up)
+            if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
             flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
             local myC0Token = flyanim.c0ControlToken
             local rootJoint  = flyanim.rootJoint
             local originalC0 = flyanim.originalC0
-            if nt.mega_pose   then nt.mega_pose.Looped   = true; pcall(function() nt.mega_pose:Play(0.15);  nt.mega_pose:AdjustSpeed(0.8)  end) end
-            if nt.mega_base   then nt.mega_base.Looped   = true; pcall(function() nt.mega_base:Play(0.15);  nt.mega_base:AdjustSpeed(0.8)  end) end
-            if nt.mega_volado then nt.mega_volado.Looped = true; pcall(function() nt.mega_volado:Play(0.15) end) end
+            if nt.mega_pose   then nt.mega_pose.Looped   = true; pcall(function() nt.mega_pose:Stop(0); nt.mega_pose:Play(0.15);  nt.mega_pose:AdjustSpeed(0.8)  end) end
+            if nt.mega_base   then nt.mega_base.Looped   = true; pcall(function() nt.mega_base:Stop(0); nt.mega_base:Play(0.15);  nt.mega_base:AdjustSpeed(0.8)  end) end
+            if nt.mega_volado then nt.mega_volado.Looped = true; pcall(function() nt.mega_volado:Stop(0); nt.mega_volado:Play(0.15) end) end
             -- RenderStepped: mantener C0 vertical (sin inclinación) durante Mega Up
+            -- Guardado en megaRenderConn para limpieza correcta
             if rootJoint and originalC0 then
-                local megaUpC0Conn
-                megaUpC0Conn = RunService.RenderStepped:Connect(function()
+                flyanim.megaRenderConn = RunService.RenderStepped:Connect(function()
                     if not MegaUpLogic.Active or not flyanim.enabled or flyanim.mode ~= "megaup" then
-                        if megaUpC0Conn then megaUpC0Conn:Disconnect(); megaUpC0Conn = nil end
+                        if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
                         return
                     end
                     if myC0Token ~= flyanim.c0ControlToken then
-                        if megaUpC0Conn then megaUpC0Conn:Disconnect(); megaUpC0Conn = nil end
+                        if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
                         return
                     end
                     -- Pose vertical: compensación de altura sin inclinación (modo up)
