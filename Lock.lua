@@ -1,14 +1,65 @@
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    LOCK SYSTEM  (módulo independiente)           ║
+║                    LOCK SYSTEM  (módulo aislado)                  ║
 ║  Sistema de lock/target: cámara, GUI info, highlight, icono,      ║
 ║  tecla de lock, y "hooks" que el módulo de Fly puede consultar    ║
-║  para aplicar TP‑debajo / anti‑orbiting / rotación‑Y SOLO         ║
+║  para aplicar TP-debajo / anti-orbiting / rotación-Y SOLO         ║
 ║  cuando el vuelo está activo.                                     ║
-║                                                                    ║
-║  VERSIÓN MODULAR: sin ejecución de código al cargar, todo         ║
-║  se inicializa explícitamente mediante M.Start().                 ║
 ╚══════════════════════════════════════════════════════════════════╝
+
+  ÍNDICE
+  ──────
+  [1]  SERVICIOS Y UTILIDADES GENÉRICAS
+  [2]  IDIOMA / LOCALIZACIÓN (subset de lock)
+  [3]  ESTADO INTERNO (L)
+  [4]  TARGETING (validez, target más cercano)
+  [5]  ICONO DE LOCK + HIGHLIGHT
+  [6]  GUI INFO PANEL (avatar, nombre, distancia, vida, altura)
+  [7]  CÁMARA DE LOCK
+  [8]  TOGGLE / START / STOP DEL SISTEMA DE LOCK
+  [9]  GUI EMBEBIBLE (sección "LOCK" del HUD de Fly)
+  [10] HOOKS PARA FLY (rotación Y, anti-orbiting, TP-debajo)
+  [11] API PÚBLICA (M)
+
+  ──────────────────────────────────────────────────────────────────
+  NOTA IMPORTANTE SOBRE LA CONDICIÓN "FLY ACTIVO"
+  ──────────────────────────────────────────────────────────────────
+  El sistema de lock (apuntar, resaltar, panel info, cámara siguiendo
+  al objetivo) FUNCIONA SIEMPRE, esté o no el vuelo activo — así el
+  jugador puede usar [X] para fijar objetivo aunque esté caminando.
+
+  Sin embargo, los TRES sub-sistemas que el usuario pidió condicionar
+  SOLO se ejecutan si `isFlyEnabled()` devuelve true:
+
+    1) TP "estar abajo de" el objetivo  → dentro de updateLockInfoGui
+    2) Anti-orbiting (redirección de movimiento hacia el objetivo)
+       → M.ApplyAntiOrbit (lo llama el loop de movimiento del Fly)
+    3) Rotación Y del personaje (mirar arriba/abajo hacia el target)
+       → M.GetAimCFrame (lo llama el BodyGyro del Fly)
+
+  Por defecto `isFlyEnabled` devuelve `false`. Hay dos formas de
+  conectarlo con el estado real del Fly:
+
+    a) M.Start(lplrRef, lockKeyCode, flyModuleRef) — si flyModuleRef
+       expone .OnStateChanged(callback), lock.lua se suscribe
+       directamente y mantiene el estado sincronizado en vivo.
+       También usa flyModuleRef.IsEnabled() como valor inicial.
+
+    b) M.SetFlyEnabledProvider(function() return ... end) — alternativa
+       manual si no se pasa flyModuleRef a M.Start.
+
+  ──────────────────────────────────────────────────────────────────
+  NOTA SOBRE LA GUI (lockInfoGui)
+  ──────────────────────────────────────────────────────────────────
+  El panel de información (avatar, nombre, distancia, vida, altura)
+  NO existe mientras no haya un target con lock activo. Se crea al
+  presionar la tecla de lock sobre un objetivo válido, y se destruye
+  automáticamente al soltar el lock, al perder de vista al objetivo,
+  o al llamar M.Stop(). Se monta en un ScreenGui propio ("AFO_LockGui"),
+  anclado en la esquina superior derecha, debajo de la barra de vida.
+
+  Ver sección [12] al final del archivo para instrucciones de
+  integración completas.
 --]]
 
 -- ──────────────────────────────────────────────────────────────────
@@ -32,7 +83,7 @@ local function isTyping()
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [2]  IDIOMA / LOCALIZACIÓN (subset usado por el sistema de lock)
+-- [2]  IDIOMA / LOCALIZACIÓN  (subset usado por el sistema de lock)
 -- ──────────────────────────────────────────────────────────────────
 local LockLang = {
     ES = {
@@ -51,8 +102,18 @@ local LockLang = {
     },
 }
 
--- Variable de idioma actual (se asigna en M.Start)
 local FT = LockLang["ES"]
+
+local function _reloadFT()
+    local lang = "ES"
+    pcall(function()
+        local data = readfile("AllForOne/lang.txt")
+        if data == "EN" or data == "ES" then lang = data end
+    end)
+    FT = LockLang[lang]
+end
+
+_reloadFT()
 
 -- ──────────────────────────────────────────────────────────────────
 -- [3]  ESTADO INTERNO (L)
@@ -67,6 +128,8 @@ local L = {
 
     lockIconGui    = nil,
     lockInfoGui    = nil,
+    ownScreenGui   = nil,
+    infoGuiParent  = nil,  -- opcional: Frame externo donde montar lockInfoGui
     lockHighlight  = nil,
     lockLabels     = nil,
 
@@ -75,17 +138,20 @@ local L = {
 
     lockCameraLerp = 0.18,
 
-    straightLineActive = false,      -- usado por anti‑orbiting
+    -- usado por el hook de anti-orbiting (M.ApplyAntiOrbit)
+    straightLineActive = false,
+
+    -- desuscriptor de flyModule.OnStateChanged (si se conectó)
+    _flyStateUnsub = nil,
 }
 
 local lplr   = nil
 local camera = nil
 
--- Proveedor del estado del Fly (se asigna con M.SetFlyEnabledProvider)
+-- Provee si el Fly está actualmente activo. Por defecto false:
+-- los 3 sub-sistemas condicionados NO se aplican hasta que el
+-- módulo de Fly llame a M.SetFlyEnabledProvider(...)
 local isFlyEnabledFn = function() return false end
-
--- Callback opcional para registrar altura previa a TP (caída épica)
-local onPreTeleportHeight = nil
 
 -- ──────────────────────────────────────────────────────────────────
 -- [4]  TARGETING
@@ -196,16 +262,38 @@ local function loadAvatarImage()
     end
 end
 
+-- createLockInfoGui(parentFrame)
+--   parentFrame: opcional. Si no se pasa, se crea un ScreenGui propio
+--   ("AFO_LockGui") anclado a la esquina superior derecha, justo
+--   debajo de donde Roblox dibuja la barra de vida/estado del jugador.
 local function createLockInfoGui(parentFrame)
     if L.lockInfoGui then pcall(function() L.lockInfoGui:Destroy() end); L.lockInfoGui = nil end
+
+    local parent = parentFrame
+    if not parent then
+        if L.ownScreenGui then pcall(function() L.ownScreenGui:Destroy() end); L.ownScreenGui = nil end
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "AFO_LockGui"
+        screenGui.ResetOnSpawn = false
+        screenGui.IgnoreGuiInset = true
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        local ok, playerGui = pcall(function() return lplr.PlayerGui end)
+        screenGui.Parent = (ok and playerGui) or game:GetService("CoreGui")
+        L.ownScreenGui = screenGui
+        parent = screenGui
+    end
+
     local C_PURPLE = Color3.fromRGB(110, 30, 180)
     local C_BLACK  = Color3.fromRGB(6, 4, 12)
     local C_TEXT   = Color3.fromRGB(220, 190, 255)
     local infoFrame = Instance.new("Frame")
     infoFrame.Name = "LockInfoPanel"; infoFrame.Size = UDim2.new(0, 220, 0, 95)
-    infoFrame.Position = UDim2.new(1, 12, 0, 8); infoFrame.BackgroundColor3 = C_BLACK
+    -- Esquina superior derecha, debajo de la barra de vida/estado (≈ y=80)
+    infoFrame.Position = UDim2.new(1, -232, 0, 80)
+    infoFrame.AnchorPoint = Vector2.new(0, 0)
+    infoFrame.BackgroundColor3 = C_BLACK
     infoFrame.BackgroundTransparency = 0.15; infoFrame.BorderSizePixel = 0
-    infoFrame.ZIndex = 10; infoFrame.Visible = false; infoFrame.Parent = parentFrame
+    infoFrame.ZIndex = 10; infoFrame.Visible = true; infoFrame.Parent = parent
     Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 8)
     local stroke = Instance.new("UIStroke", infoFrame)
     stroke.Color = C_PURPLE; stroke.Thickness = 1; stroke.Transparency = 0.5
@@ -243,26 +331,34 @@ end
 
 local function destroyLockInfoGui()
     if L.lockInfoGui then pcall(function() L.lockInfoGui:Destroy() end); L.lockInfoGui = nil end
+    if L.ownScreenGui then pcall(function() L.ownScreenGui:Destroy() end); L.ownScreenGui = nil end
+end
+
+-- Limpia completamente el lock actual: desactiva, suelta target,
+-- quita icono/highlight y DESTRUYE la GUI de info (punto 7: la GUI
+-- solo existe mientras haya un target válido).
+local function clearLock()
+    L.lockActive   = false
+    L.lockedTarget = nil
+    removeLockIcon()
+    updateLockHighlight()
+    destroyLockInfoGui()
 end
 
 -- updateLockInfoGui actualiza el panel de información del objetivo.
+--
 -- IMPORTANTE: el bloque "TP estar abajo de" (cuando el objetivo está
 -- muy por encima nuestro) SOLO se ejecuta si isFlyEnabledFn() es true.
+-- Si el vuelo está apagado, el panel sigue mostrando la info de altura
+-- pero NO teletransporta al jugador.
 local function updateLockInfoGui()
     if not L.lockInfoGui then return end
     if not L.lockActive or not L.lockedTarget
     or not L.lockedTarget.Character
     or not isTargetValidForLock(L.lockedTarget) then
-        L.lockInfoGui.Visible = false
-        if L.lockActive and L.lockedTarget and not isTargetValidForLock(L.lockedTarget) then
-            L.lockActive   = false
-            L.lockedTarget = nil
-            removeLockIcon()
-            updateLockHighlight()
-        end
+        clearLock()
         return
     end
-    L.lockInfoGui.Visible = true
     local root     = L.lockedTarget.Character:FindFirstChild("HumanoidRootPart")
     local humanoid = L.lockedTarget.Character:FindFirstChildOfClass("Humanoid")
     local myChar   = lplr and lplr.Character
@@ -338,6 +434,10 @@ local function updateLockInfoGui()
                 local behindDir = toTargetH.Magnitude > 0.1 and -toTargetH.Unit or Vector3.new(0, 0, 1)
                 local tpPos = root.Position + behindDir * 3
                 if safepos(tpPos) then
+                    -- Si el TP es desde una altura significativa, lo
+                    -- reportamos al Fly mediante M.onPreTeleportHeight
+                    -- para que su watchdog de altura dispare la caída
+                    -- épica al apagar el vuelo (igual que antes).
                     local preTPHeight = 0
                     do
                         local rp4 = RaycastParams.new()
@@ -351,8 +451,8 @@ local function updateLockInfoGui()
                         myRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                         myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end)
-                    if preTPHeight > 0 and type(onPreTeleportHeight) == "function" then
-                        pcall(onPreTeleportHeight, preTPHeight)
+                    if preTPHeight > 0 and type(L.onPreTeleportHeight) == "function" then
+                        pcall(L.onPreTeleportHeight, preTPHeight)
                     end
                 end
             end
@@ -370,9 +470,9 @@ end
 local function updateLockCamera()
     if not L.lockActive or not L.lockedTarget then return end
     local targetChar = L.lockedTarget.Character
-    if not targetChar then L.lockActive=false; L.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return end
+    if not targetChar then clearLock(); return end
     if not isTargetValidForLock(L.lockedTarget) then
-        L.lockActive=false; L.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return
+        clearLock(); return
     end
     local myChar     = lplr and lplr.Character
     local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -380,7 +480,7 @@ local function updateLockCamera()
     if myRoot and targetRoot then
         local d = (myRoot.Position - targetRoot.Position).Magnitude
         if not isnan(d) and d > 750 then
-            L.lockActive=false; L.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return
+            clearLock(); return
         end
     end
     local targetPart = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("HumanoidRootPart")
@@ -408,13 +508,11 @@ local function toggleLock()
             L.lockActive   = true
             applyLockIcon(found)
             updateLockHighlight()
+            createLockInfoGui(L.infoGuiParent)
             loadAvatarImage()
         end
     else
-        L.lockActive   = false
-        L.lockedTarget = nil
-        removeLockIcon()
-        updateLockHighlight()
+        clearLock()
     end
 end
 
@@ -437,19 +535,23 @@ end
 local function stopLockSystem()
     if L.lockConn       then L.lockConn:Disconnect();       L.lockConn       = nil end
     if L.lockRenderConn then L.lockRenderConn:Disconnect(); L.lockRenderConn = nil end
-    L.lockActive   = false
-    L.lockedTarget = nil
-    removeLockIcon()
-    updateLockHighlight()
-    destroyLockInfoGui()
+    clearLock()
     if L.lockHighlight then pcall(function() L.lockHighlight:Destroy() end); L.lockHighlight = nil end
+    if L._flyStateUnsub then pcall(L._flyStateUnsub); L._flyStateUnsub = nil end
 end
 
 -- ──────────────────────────────────────────────────────────────────
 -- [9]  GUI EMBEBIBLE — sección "LOCK" del HUD de Fly
 -- ──────────────────────────────────────────────────────────────────
+-- Altura recomendada de la sección (igual que la original H_LOCK = 38)
 local HUD_SECTION_HEIGHT = 38
 
+-- BuildHUDLockSection(expandZone, makeSection, makeRow, colors)
+--   expandZone : Frame contenedor donde va la sección (del HUD de Fly)
+--   makeSection: función(h, bgColor, strokeColor) -> Frame  (del HUD de Fly)
+--   makeRow    : función(parent, yPos) -> Frame              (del HUD de Fly)
+--   colors     : tabla { SEC1=, ACCENT=, GOLD=, TEXT=, SUBTEXT= }
+-- Devuelve el Frame de la sección creada.
 local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
         colors.SEC1, colors.ACCENT, colors.GOLD, colors.TEXT, colors.SUBTEXT
@@ -488,17 +590,28 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [10] HOOKS PARA FLY (sub-sistemas condicionados)
+-- [10] HOOKS PARA FLY
 -- ──────────────────────────────────────────────────────────────────
 
 -- [SUB-SISTEMA 3] Rotación Y (mirar arriba/abajo hacia el target)
--- Devuelve nil si el Fly está apagado o no hay lock activo/válido.
+--
+-- Llamar cada frame desde el loop del BodyGyro del Fly:
+--
+--   local desiredCF, smooth = LockModule.GetAimCFrame(root.Position, flyanim.dashVel.Magnitude)
+--   if desiredCF then
+--       flyanim.bg.cframe = flyanim.bg.cframe:Lerp(desiredCF, smooth)
+--   else
+--       -- ... lógica normal de rotación basada en cámara/movimiento ...
+--   end
+--
+-- Devuelve nil si: el Fly está apagado, no hay lock activo, o el
+-- objetivo dejó de ser válido (en ese caso también limpia el lock).
 local function getAimCFrame(rootPosition, dashMagnitude)
     if not isFlyEnabledFn() then return nil end
     if not L.lockActive or not L.lockedTarget then return nil end
     local tChar = L.lockedTarget.Character
     if not tChar or not isTargetValidForLock(L.lockedTarget) then
-        L.lockActive=false; L.lockedTarget=nil; removeLockIcon(); updateLockHighlight()
+        clearLock()
         return nil
     end
     local aimPart = tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("HumanoidRootPart")
@@ -510,8 +623,19 @@ local function getAimCFrame(rootPosition, dashMagnitude)
 end
 
 -- [SUB-SISTEMA 2] Anti-orbiting
--- Redirige el vector de movimiento para evitar orbitar al objetivo.
--- Solo se aplica si el Fly está activo, el modo es fast/turbo, hay lock y W presionada.
+--
+-- Llamar cada frame desde el loop de movimiento (Stepped) del Fly,
+-- ANTES de aplicar `move` con cc:TranslateBy(...):
+--
+--   move = LockModule.ApplyAntiOrbit(root2, move, flyanim.mode, wD)
+--
+-- root2 : HumanoidRootPart del jugador
+-- move  : Vector3 de movimiento ya calculado (cámara + WASD)
+-- mode  : flyanim.mode ("normal" | "fast" | "turbo" | "megaup")
+-- wD    : true si la tecla W está presionada
+--
+-- Si el Fly está apagado, o no aplica (no es fast/turbo, no hay lock,
+-- o W no está presionado), devuelve `move` sin modificar.
 local function applyAntiOrbit(root2, move, mode, wD)
     if not isFlyEnabledFn() then
         L.straightLineActive = false
@@ -528,7 +652,9 @@ local function applyAntiOrbit(root2, move, mode, wD)
     local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
     if not targetRoot2 or not safepos(targetRoot2.Position) then return move end
 
-    -- Si no hay suelo y objetivo muy arriba, TP lateral (parte del anti-orbiting)
+    -- Si no hay suelo bajo nosotros y el objetivo está muy por encima,
+    -- nos colocamos justo detrás/al lado del objetivo para evitar
+    -- quedar "flotando lejos" (parte del anti-orbiting).
     local noFloor = false
     do
         local rpCheck = RaycastParams.new()
@@ -548,7 +674,8 @@ local function applyAntiOrbit(root2, move, mode, wD)
         end
     end
 
-    -- Redirección del vector de movimiento
+    -- Redirección del vector de movimiento para evitar "orbitar" al
+    -- objetivo cuando estamos cerca pero a una altura muy distinta.
     local toTarget3D = targetRoot2.Position - root2.Position
     local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
     local vertDiff   = math.abs(toTarget3D.Y)
@@ -574,55 +701,56 @@ local function applyAntiOrbit(root2, move, mode, wD)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [11] API PÚBLICA (M)
+-- [11] API PÚBLICA
 -- ──────────────────────────────────────────────────────────────────
 local M = {}
 
--- Inicializa el sistema de lock.
--- @param lplrRef - Players.LocalPlayer
--- @param lockKeyCode - Enum.KeyCode opcional (default X)
--- @param parentFrameForInfoGui - Frame opcional donde montar el panel info
--- @param lang - string "ES" o "EN" (opcional, por defecto lee de readfile si existe, sino "ES")
-function M.Start(lplrRef, lockKeyCode, parentFrameForInfoGui, lang)
+-- M.Start(lplrRef, lockKeyCode, flyModuleRef)
+--   lplrRef      : Players.LocalPlayer (o referencia)
+--   lockKeyCode  : Enum.KeyCode opcional (default X)
+--   flyModuleRef : (opcional) referencia al módulo Fly (M de fly_con_lock).
+--                  Si tiene .OnStateChanged, lock.lua se suscribe
+--                  directamente para mantener isFlyEnabledFn al día,
+--                  sin necesidad de llamar SetFlyEnabledProvider aparte.
+--                  Si tiene .IsEnabled, se usa también como valor
+--                  inicial inmediato (antes del primer cambio de estado).
+--
+-- NOTA GUI: el panel de información (lockInfoGui) NO se crea aquí.
+-- Solo se crea cuando el jugador fija un objetivo (toggleLock -> ON),
+-- y se destruye cuando se suelta el lock (toggleLock -> OFF) o al
+-- llamar M.Stop(). Así "no carga gui" == "no hay target", por diseño.
+function M.Start(lplrRef, lockKeyCode, flyModuleRef)
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
+    if lockKeyCode then L.lockKey = lockKeyCode end
+    _reloadFT()
 
-    if lockKeyCode then
-        L.lockKey = lockKeyCode
-    end
-
-    -- Cargar idioma
-    local desiredLang = lang
-    if not desiredLang then
-        pcall(function()
-            local data = readfile("AllForOne/lang.txt")
-            if data == "EN" or data == "ES" then desiredLang = data end
-        end)
-    end
-    if desiredLang == "EN" then
-        FT = LockLang["EN"]
-    else
-        FT = LockLang["ES"]
-    end
-
-    if parentFrameForInfoGui then
-        createLockInfoGui(parentFrameForInfoGui)
+    if flyModuleRef then
+        if type(flyModuleRef.IsEnabled) == "function" then
+            local ok, val = pcall(flyModuleRef.IsEnabled)
+            if ok then isFlyEnabledFn = function() return val end end
+        end
+        if type(flyModuleRef.OnStateChanged) == "function" then
+            if L._flyStateUnsub then pcall(L._flyStateUnsub) end
+            L._flyStateUnsub = flyModuleRef.OnStateChanged(function(isFlying)
+                isFlyEnabledFn = function() return isFlying end
+            end)
+        end
     end
 
     startLockSystem()
 end
 
--- Detiene completamente el sistema de lock (libera conexiones y GUI).
 function M.Stop()
     stopLockSystem()
 end
 
--- Activa/desactiva manualmente el lock sobre el objetivo más cercano al cursor.
+-- Activa/desactiva manualmente el lock sobre el objetivo más cercano
+-- al cursor (equivalente a presionar la tecla de lock).
 function M.Toggle()
     toggleLock()
 end
 
--- Cambia la tecla de lock (por defecto X).
 function M.SetLockKey(keyCode)
     L.lockKey = keyCode
     if L.lockLabels then
@@ -630,66 +758,229 @@ function M.SetLockKey(keyCode)
         L.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
     end
     -- Reconectar el InputBegan con la nueva tecla
-    if L.lockConn then
-        L.lockConn:Disconnect()
-        L.lockConn = nil
-    end
+    if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
     L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() then return end
         if input.KeyCode == L.lockKey then toggleLock() end
     end)
 end
 
-function M.GetLockKey()
-    return L.lockKey
-end
+function M.GetLockKey()  return L.lockKey end
+function M.IsActive()    return L.lockActive end
+function M.GetTarget()   return L.lockedTarget end
 
-function M.IsActive()
-    return L.lockActive
-end
-
-function M.GetTarget()
-    return L.lockedTarget
-end
-
--- Provee una función que devuelve true si el vuelo está activo.
--- Debe ser llamada por el módulo de Fly una vez al inicio.
+-- El módulo de Fly debe llamar esto una vez al iniciar, pasando una
+-- función que devuelva `flyanim.enabled` (o flyModule.IsEnabled()).
+-- Mientras no se llame, los 3 sub-sistemas condicionados permanecen
+-- desactivados.
 function M.SetFlyEnabledProvider(fn)
     if type(fn) == "function" then
         isFlyEnabledFn = fn
     end
 end
 
--- Callback opcional: se invoca con la altura previa a un TP "estar abajo de".
+-- Callback opcional: se invoca con la altura (en studs) que tenía el
+-- jugador justo antes de un TP "estar abajo de" disparado por el
+-- sub-sistema 1, para que el Fly pueda registrarlo en su watchdog de
+-- altura (maxHeightAboveGround) y así disparar la caída épica al
+-- desactivar el vuelo.
 function M.SetPreTeleportHeightCallback(fn)
-    onPreTeleportHeight = fn
+    L.onPreTeleportHeight = fn
 end
 
--- Crea el panel de información (lo llama el Fly cuando construye su HUD)
-function M.CreateInfoGui(parentFrame)
-    createLockInfoGui(parentFrame)
-end
+-- LEGACY: expuestos por compatibilidad con integraciones antiguas que
+-- llamaban CreateInfoGui/DestroyInfoGui desde el HUD del Fly. lock.lua
+-- YA NO los usa internamente: la GUI se crea/destruye automáticamente
+-- en toggleLock()/clearLock() según haya o no un target activo (punto 7).
+-- Llamar M.CreateInfoGui manualmente forzaría la GUI sin target; evitar.
+M.CreateInfoGui  = createLockInfoGui
+M.DestroyInfoGui = destroyLockInfoGui
 
--- Destruye el panel de información
-function M.DestroyInfoGui()
-    destroyLockInfoGui()
-end
-
--- Construye la sección "LOCK" dentro del HUD del Fly
-function M.BuildHUDLockSection(expandZone, makeSection, makeRow, colors)
-    return buildHUDLockSection(expandZone, makeSection, makeRow, colors)
-end
-
--- Altura de la sección (para que el Fly pueda calcular el layout)
-M.HUD_SECTION_HEIGHT = HUD_SECTION_HEIGHT
+-- GUI embebible para el HUD del Fly
+M.BuildHUDLockSection = buildHUDLockSection
+M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
 
 -- Hooks de Fly (sub-sistemas 2 y 3)
-M.GetAimCFrame   = getAimCFrame
+M.GetAimCFrame  = getAimCFrame
 M.ApplyAntiOrbit = applyAntiOrbit
 
--- Indica si el movimiento está siendo forzado en línea recta hacia el target
-function M.IsStraightLineActive()
-    return L.straightLineActive
-end
+-- Útil para que el Fly sepa si está en "línea recta forzada hacia el target"
+function M.IsStraightLineActive() return L.straightLineActive end
 
 return M
+
+--[[
+╔══════════════════════════════════════════════════════════════════╗
+║  [12]  INSTRUCCIONES DE INTEGRACIÓN                               ║
+╚══════════════════════════════════════════════════════════════════╝
+
+A) CÓMO CARGAR lock.lua DESDE fly_con_lock.lua (uso inline, sin M global de AFO)
+─────────────────────────────────────────────────────────────────────
+Mientras el script de Fly siga siendo INLINE (no modular), basta con
+ejecutar lock.lua y guardar la tabla devuelta:
+
+    local LockModule = loadstring(game:HttpGet(
+        "https://.../lock.lua"
+    ))()  -- o loadModule("Lock") si ya tienes ese loader
+
+    -- Conectar el estado de Fly con los 3 sub-sistemas condicionados
+    LockModule.SetFlyEnabledProvider(function() return flyanim.enabled end)
+
+    -- (Opcional) registrar altura previa a TPs "estar abajo de" en el
+    -- watchdog de altura del Fly, para conservar la caída épica:
+    LockModule.SetPreTeleportHeightCallback(function(preTPHeight)
+        if preTPHeight > (flyanim.maxHeightAboveGround or 0) then
+            flyanim.maxHeightAboveGround = preTPHeight
+        end
+    end)
+
+    -- Iniciar el sistema de lock (independiente del estado del Fly)
+    LockModule.Start(lplr, flyanim.lockKey)
+
+B) DÓNDE ENCAJAN LOS 3 SUB-SISTEMAS DENTRO DEL FLY INLINE
+─────────────────────────────────────────────────────────────────────
+1) Rotación Y (BodyGyro, dentro del rsConn de _flyMakeMotors):
+
+    if flyanim.bg and flyanim.bg.Parent then
+        local desiredCF, smooth = LockModule.GetAimCFrame(root.Position, flyanim.dashVel.Magnitude)
+        if desiredCF then
+            flyanim.bg.cframe = flyanim.bg.cframe:Lerp(desiredCF, smooth)
+        else
+            -- ... bloque original "else" de movimiento normal/fast/megaup ...
+        end
+    end
+
+2) Anti-orbiting (dentro del tpMoveConn, justo antes de calcular `move`
+   final con cam.CFrame.LookVector/RightVector):
+
+    local move = Vector3.new()
+    if wD then move = move + cam.CFrame.LookVector end
+    if sD then move = move - cam.CFrame.LookVector end
+    if aD then move = move - cam.CFrame.RightVector end
+    if dD then move = move + cam.CFrame.RightVector end
+    move = LockModule.ApplyAntiOrbit(root2, move, flyanim.mode, wD)
+    -- (flyanim.straightLineActive ya no se usa directamente; si algo
+    --  más del script lo lee, usar LockModule.IsStraightLineActive())
+
+3) TP "estar abajo de" (sub-sistema 1): no requiere ningún cambio en
+   el Fly, ya está resuelto dentro de lock.lua (updateLockInfoGui),
+   gateado por LockModule.SetFlyEnabledProvider(...).
+
+C) GUI — PANEL INFO Y SECCIÓN "LOCK" DEL HUD
+─────────────────────────────────────────────────────────────────────
+- En _flyBuildGui, donde antes se llamaba `createLockInfoGui(root)`,
+  ahora llamar: `LockModule.CreateInfoGui(root)`.
+
+- En la construcción del panel expandible, donde antes se armaba
+  `lockSec`/`lockRow` manualmente, ahora:
+
+    local lockSec = LockModule.BuildHUDLockSection(expandZone, makeSection, makeRow, {
+        SEC1=C_SEC1, ACCENT=C_ACCENT, GOLD=C_GOLD, TEXT=C_TEXT, SUBTEXT=C_SUBTEXT,
+    })
+    -- usar LockModule.HUD_SECTION_HEIGHT en lugar de H_LOCK al calcular CONTENT_H
+
+- En _flyDestroyGui, donde antes se hacía `flyanim.lockInfoGui = nil`,
+  ahora llamar: `LockModule.DestroyInfoGui()`.
+
+D) KEYBIND DE LOCK (tecla X)
+─────────────────────────────────────────────────────────────────────
+Reemplazar M.SetLockKey(flyanim, keyCode)/flyanim.lockKey por:
+
+    LockModule.SetLockKey(keyCode)
+
+y la API pública del Fly (M.SetLockKey / M.GetLockKey) puede delegar
+directamente en LockModule.SetLockKey / LockModule.GetLockKey.
+
+E) _flyOn / _flyOff
+─────────────────────────────────────────────────────────────────────
+- En _flyOn: ya NO es necesario llamar startLockSystem() — lock.lua
+  ya está corriendo desde que se llamó LockModule.Start(). Solo asegúrate
+  de llamar LockModule.CreateInfoGui(root) al reconstruir el HUD.
+
+- En _flyOff: ya NO es necesario llamar stopLockSystem() (lock sigue
+  activo aunque el Fly se apague — así el jugador conserva su target).
+  Si se desea apagar el lock junto con el Fly, llamar LockModule.Stop()
+  explícitamente y LockModule.Start(...) de nuevo al reactivar el Fly.
+
+╔══════════════════════════════════════════════════════════════════╗
+║  [13]  CÓMO CONVERTIR fly_con_lock.lua A UN MÓDULO "Fly" (M)      ║
+║  (siguiendo el patrón de "Fly 25 fixed" que ya usa loadModule)    ║
+╚══════════════════════════════════════════════════════════════════╝
+
+El bloque final del script (sección [29] API PÚBLICA) ya define una
+tabla `M` con Start/Stop/Toggle/SetKey/SetLockKey/GetFlyKey/GetLockKey
+/IsEnabled y hace `return M`. Para que fly_con_lock.lua se comporte
+EXACTAMENTE como el "Fly 25 fixed" del snippet de referencia (cargado
+vía `flyModule = loadModule("Fly")`), los pasos son:
+
+  1. Quitar cualquier `print(...)`/ejecución inmediata de nivel de
+     módulo que dependa de `lplr`/`camera` antes de que M.Start() los
+     asigne (actualmente `lplr` y `camera` ya se asignan dentro de
+     M.Start, así que esto ya está bien).
+
+  2. Asegurarse de que TODO el código que antes corría "al cargar el
+     script" (conexiones globales, _connectGlobal, etc.) se dispare
+     SOLO desde M.Start(lplrRef, flyKey), nunca fuera de `M`.
+
+  3. Empaquetar este archivo (fly_con_lock.lua) como el contenido que
+     devuelve `loadModule("Fly")`, es decir, que el loader haga:
+
+         local flyModule = loadstring(<contenido de fly_con_lock.lua>)()
+
+     y reciba la tabla `M` (return M al final, que ya existe).
+
+  4. En el script principal (AllForOne), sustituir el código inline
+     de Fly por el snippet ya provisto por el usuario:
+
+         local flyModule = nil
+         local function flyInitialize()
+             flyModule = loadModule("Fly")
+             if flyModule then
+                 flyModule.Start(lplr, Keys.Fly)
+                 if flyModule.SetLockKey then
+                     flyModule.SetLockKey(Keys.FlyLock)
+                 end
+                 flyModule.Toggle(false)
+                 ...
+             end
+         end
+
+  5. Conectar lock.lua DENTRO de fly_con_lock.lua justo en M.Start:
+
+         function M.Start(lplrRef, flyKey)
+             lplr   = lplrRef or Players.LocalPlayer
+             camera = workspace.CurrentCamera
+             if flyKey then flyanim.flyKey = flyKey end
+             _reloadFT()
+
+             LockModule = LockModule or loadModule("Lock")
+             if LockModule then
+                 LockModule.SetFlyEnabledProvider(function() return flyanim.enabled end)
+                 LockModule.SetPreTeleportHeightCallback(function(h)
+                     if h > (flyanim.maxHeightAboveGround or 0) then
+                         flyanim.maxHeightAboveGround = h
+                     end
+                 end)
+                 LockModule.Start(lplr, flyanim.lockKey)
+             end
+
+             _connectGlobal()
+         end
+
+         function M.SetLockKey(keyCode)
+             flyanim.lockKey = keyCode
+             if LockModule then LockModule.SetLockKey(keyCode) end
+         end
+
+         function M.GetLockKey()
+             return LockModule and LockModule.GetLockKey() or flyanim.lockKey
+         end
+
+  6. Aplicar los cambios de la sección [12] B) y C) para conectar los
+     3 sub-sistemas condicionados y la GUI.
+
+Con esto, fly_con_lock.lua queda 100% compatible con el patrón modular
+de "Fly 25 fixed" (Start/Toggle/SetKey/SetLockKey/IsEnabled vía M),
+y lock.lua queda como un módulo hermano ("Lock") cargable de la misma
+forma con `loadModule("Lock")`.
+--]]
