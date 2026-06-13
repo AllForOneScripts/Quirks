@@ -120,6 +120,9 @@ _reloadFT()
 -- [3]  ESTADO INTERNO (L)
 -- ──────────────────────────────────────────────────────────────────
 local LOCK_ROTATION_SMOOTH = 0.8
+-- Intensidad del giro suave del HRP importado de soft.lua.
+-- 0 = sin giro, 1 = snap instantáneo. 0.8 iguala el comportamiento de soft.
+local SOFTAIM_BODY_SMOOTH  = 0.8
 local LOCK_ICON_ID = "rbxassetid://82817965256191"
 
 local L = {
@@ -138,6 +141,10 @@ local L = {
     lockRenderConn = nil,
 
     lockCameraLerp = 0.18,
+
+    -- Giro suave del HRP (importado de soft.lua):
+    -- true = rotar el cuerpo hacia el target mientras el lock esté activo.
+    softBodyRotation = true,
 
     -- usado por el hook de anti-orbiting (M.ApplyAntiOrbit)
     straightLineActive = false,
@@ -501,7 +508,45 @@ local function updateLockCamera()
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [8]  TOGGLE / START / STOP
+-- [7b] GIRO SUAVE DEL HRP  (lógica de soft.lua integrada en lock)
+-- ──────────────────────────────────────────────────────────────────
+-- Mientras el lock está activo, rota el cuerpo del jugador
+-- suavemente hacia el target (igual que soft.lua durante sus 0.75s).
+-- Solo aplica el eje Y (horizontal): no inclina el torso.
+-- Preserva la velocidad lineal para no interrumpir el movimiento.
+--
+-- Diferencia clave con la cámara de lock:
+--   updateLockCamera → mueve la CÁMARA para mirar al target
+--   updateSoftBodyRotation → gira el HRP (el CUERPO) hacia el target
+--
+local function updateSoftBodyRotation()
+    if not L.softBodyRotation then return end
+    if not L.lockActive or not L.lockedTarget then return end
+    local tChar = L.lockedTarget.Character
+    if not tChar or not isTargetValidForLock(L.lockedTarget) then return end
+    local myChar = lplr and lplr.Character
+    local hrp    = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    -- Apuntamos al UpperTorso si existe, si no al HRP del target.
+    local aimPart = tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("HumanoidRootPart")
+    if not aimPart then return end
+    -- Solo rotación horizontal: mantenemos la Y del propio jugador.
+    local lookTarget = Vector3.new(aimPart.Position.X, hrp.Position.Y, aimPart.Position.Z)
+    if (lookTarget - hrp.Position).Magnitude <= 0.1 then return end
+    local _, curYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
+    local _, tarYaw, _ = CFrame.lookAt(hrp.Position, lookTarget):ToEulerAnglesYXZ()
+    -- Diferencia angular más corta (wrapping a [-π, π])
+    local diff = tarYaw - curYaw
+    if diff >  math.pi then diff = diff - 2 * math.pi end
+    if diff < -math.pi then diff = diff + 2 * math.pi end
+    -- Preservar velocidad exactamente como lo hace soft.lua
+    local savedVel = hrp.AssemblyLinearVelocity
+    pcall(function()
+        hrp.CFrame = CFrame.new(hrp.Position)
+            * CFrame.Angles(0, curYaw + diff * SOFTAIM_BODY_SMOOTH, 0)
+        hrp.AssemblyLinearVelocity = savedVel
+    end)
+end
 -- ──────────────────────────────────────────────────────────────────
 local function toggleLock()
     if not L.lockActive then
@@ -543,6 +588,7 @@ local function startLockSystem()
         updateLockInfoGui()
         updateLockCamera()
         updateLockHighlight()
+        updateSoftBodyRotation()
     end)
 end
 
@@ -786,6 +832,13 @@ function M.SetFlyEnabledProvider(fn)
         isFlyEnabledFn = fn
     end
 end
+
+-- Activa o desactiva el giro suave del HRP importado de soft.lua.
+-- Por defecto está activado (true). Llamar con false para desactivarlo.
+function M.SetSoftBodyRotation(enabled)
+    L.softBodyRotation = (enabled == true or enabled == nil)
+end
+function M.GetSoftBodyRotation() return L.softBodyRotation end
 
 -- Callback opcional: se invoca con la altura (en studs) que tenía el
 -- jugador justo antes de un TP "estar abajo de" disparado por el
