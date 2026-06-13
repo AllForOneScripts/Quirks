@@ -5987,20 +5987,10 @@ local function _disconnectGlobal()
 end
  
 
-
 -- ──────────────────────────────────────────────────────────────────
 -- [29]  API PÚBLICA
 -- ──────────────────────────────────────────────────────────────────
 local M = {}
-
--- Listeners externos que quieren saber cuándo cambia el estado del fly
-local _stateListeners = {}
-
-local function _notifyState(state)
-    for _, cb in ipairs(_stateListeners) do
-        pcall(cb, state)
-    end
-end
 
 function M.Start(lplrRef, flyKey)
     lplr   = lplrRef or Players.LocalPlayer
@@ -6017,15 +6007,9 @@ end
 
 function M.Toggle(state)
     if state then
-        if not flyanim.enabled then
-            _flyOn()
-            _notifyState(true)
-        end
+        if not flyanim.enabled then _flyOn() end
     else
-        if flyanim.enabled then
-            _flyOff()
-            _notifyState(false)
-        end
+        if flyanim.enabled then _flyOff() end
     end
 end
 
@@ -6055,25 +6039,6 @@ function M.GetLockKey() return flyanim.lockKey end
 -- Estado actual: true = volando, false = apagado
 function M.IsEnabled()
     return flyanim.enabled == true
-end
-
--- Alias más explícito, por si otros scripts buscan este nombre
-function M.IsFlying()
-    return flyanim.enabled == true
-end
-
--- Permite a otros scripts suscribirse a cambios de estado
--- Devuelve una función para desconectar
-function M.OnStateChanged(callback)
-    table.insert(_stateListeners, callback)
-    return function()
-        for i, cb in ipairs(_stateListeners) do
-            if cb == callback then
-                table.remove(_stateListeners, i)
-                break
-            end
-        end
-    end
 end
 
 return M
