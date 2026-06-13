@@ -125,6 +125,18 @@ local LOCK_ROTATION_SMOOTH = 0.8
 local SOFTAIM_BODY_SMOOTH  = 0.8
 local LOCK_ICON_ID = "rbxassetid://82817965256191"
 
+-- ── Constantes del sistema de freno (brake) ──────────────────────
+-- Copiadas exactamente de Fly v2.10 BRAKE_DISTANCE / BRAKE_HARD_DISTANCE
+local BRAKE_DISTANCE      = 35   -- studs: inicio del frenado gradual
+local BRAKE_HARD_DISTANCE = 14   -- studs: freno total (dashVel = 0)
+
+-- Referencia directa a flyanim (tabla de estado del módulo Fly).
+-- Cuando fly.lua llama M.SetFlyAnimRef(flyanim), los tres sub-sistemas
+-- de vuelo (brake, BodyGyro, snap-to-target) pasan a ser auto-contenidos
+-- dentro de lock.lua sin que Fly tenga que llamar hooks adicionales.
+-- Mientras sea nil, los sub-sistemas caen de vuelta a los hooks (M.GetAimCFrame, etc.)
+local flyAnim = nil
+
 local L = {
     lockKey        = Enum.KeyCode.X,
     lockActive     = false,
@@ -145,6 +157,9 @@ local L = {
     -- Giro suave del HRP (importado de soft.lua):
     -- true = rotar el cuerpo hacia el target mientras el lock esté activo.
     softBodyRotation = true,
+
+    -- Freno activo (true mientras dashVel está siendo reducido por brake)
+    brakingActive = false,
 
     -- usado por el hook de anti-orbiting (M.ApplyAntiOrbit)
     straightLineActive = false,
@@ -548,6 +563,135 @@ local function updateSoftBodyRotation()
     end)
 end
 -- ──────────────────────────────────────────────────────────────────
+-- [7c] SUB-SISTEMAS FLY+LOCK  (brake · BodyGyro · snap-to-target)
+--
+-- Estos tres sistemas solo se activan cuando:
+--   a) fly.lua llamó M.SetFlyAnimRef(flyanim)   → flyAnim ~= nil
+--   b) isFlyEnabledFn() == true                 → el vuelo está ON
+--   c) L.lockActive == true                      → hay un target fijado
+--
+-- Se llaman cada frame desde el RenderStepped de startLockSystem.
+-- ──────────────────────────────────────────────────────────────────
+
+-- [A] FRENO (Brake)
+-- Réplica exacta de startBrakeSystem() de Fly v2.10.
+-- Reduce dashVel de forma gradual entre BRAKE_DISTANCE y BRAKE_HARD_DISTANCE,
+-- y lo anula completamente al llegar a BRAKE_HARD_DISTANCE.
+-- Requiere flyAnim (modifica .dashVel, .dashTimer, .brakingActive directamente).
+local function updateBrakeSystem()
+    if not isFlyEnabledFn() or not flyAnim then
+        if flyAnim then flyAnim.brakingActive = false end
+        return
+    end
+    if flyAnim.mode ~= "fast" and flyAnim.mode ~= "turbo" then
+        flyAnim.brakingActive = false; return
+    end
+    if not L.lockActive or not L.lockedTarget then
+        flyAnim.brakingActive = false; return
+    end
+    if not flyAnim.dashTimer or flyAnim.dashTimer <= 0 then
+        flyAnim.brakingActive = false; return
+    end
+    local myChar = lplr and lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local tChar = L.lockedTarget.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot then return end
+    local dist = (myRoot.Position - tRoot.Position).Magnitude
+    if isnan(dist) then return end
+    if dist <= BRAKE_HARD_DISTANCE then
+        -- Freno total: detener el dash inmediatamente
+        flyAnim.dashVel       = Vector3.new(0, 0, 0)
+        flyAnim.dashTimer     = 0
+        flyAnim.brakingActive = false
+    elseif dist <= BRAKE_DISTANCE then
+        -- Frenado gradual proporcional a la proximidad al target
+        local t = 1 - ((dist - BRAKE_HARD_DISTANCE) / (BRAKE_DISTANCE - BRAKE_HARD_DISTANCE))
+        local brakeFactor = 1 - (t * 0.92)
+        flyAnim.dashVel       = flyAnim.dashVel * math.max(brakeFactor, 0.05)
+        flyAnim.brakingActive = true
+    else
+        flyAnim.brakingActive = false
+    end
+end
+
+-- [B] ROTACIÓN BODYGYRO
+-- Réplica exacta del bloque "lockActive" dentro del rsConn de Fly v2.10.
+-- Dirige el BodyGyro del jugador hacia el target (rotación 3D: arriba/abajo + yaw).
+-- Requiere flyAnim con .bg activo. Si flyAnim no está disponible,
+-- el fallback es M.GetAimCFrame (hook que Fly llama manualmente).
+local function updateBodyGyroRotation()
+    if not isFlyEnabledFn() or not flyAnim then return end
+    local bg = flyAnim.bg
+    if not bg or not bg.Parent then return end
+    if not L.lockActive or not L.lockedTarget then return end
+    local tChar = L.lockedTarget.Character
+    if not tChar or not isTargetValidForLock(L.lockedTarget) then
+        clearLock(); return
+    end
+    local myChar = lplr and lplr.Character
+    local root   = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local aimPart = tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("HumanoidRootPart")
+    if not aimPart then clearLock(); return end
+    local desiredCF = CFrame.lookAt(root.Position, aimPart.Position, Vector3.new(0, 1, 0))
+    local dashMag   = (flyAnim.dashVel and flyAnim.dashVel.Magnitude) or 0
+    local smooth    = LOCK_ROTATION_SMOOTH * (1 + math.min(0.5, dashMag / 300))
+    smooth = math.clamp(smooth, 0, 1)
+    pcall(function() bg.cframe = bg.cframe:Lerp(desiredCF, smooth) end)
+end
+
+-- [C] SNAP-TO-TARGET  (TP en turbo / "estar en tu target")
+-- Réplica del bloque noFloor dentro del tpMoveConn de Fly v2.10.
+-- Condiciones: fly activo · modo fast/turbo · W presionado · lock activo
+--              · sin suelo a 5 studs bajo el jugador · target >10 studs más alto.
+-- Cuando se cumplen, TP al jugador a 5 studs detrás del target mirando hacia él.
+-- Registra la altura pre-TP en flyAnim.maxHeightAboveGround para que _flyOff
+-- dispare la caída épica aunque el TP nos deje justo al nivel del suelo.
+-- Nota: cuando flyAnim está disponible, M.ApplyAntiOrbit omite este bloque
+-- para evitar ejecución doble.
+local function updateSnapToTarget()
+    if not isFlyEnabledFn() or not flyAnim then return end
+    if flyAnim.mode ~= "fast" and flyAnim.mode ~= "turbo" then return end
+    if not L.lockActive or not L.lockedTarget then return end
+    if not UserInputService:IsKeyDown(Enum.KeyCode.W) then return end
+    local myChar = lplr and lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local tChar = L.lockedTarget.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not tRoot or not safepos(tRoot.Position) then return end
+    -- Detectar ausencia de suelo (≤5 studs bajo el jugador)
+    local rpSnap = RaycastParams.new()
+    rpSnap.FilterType = Enum.RaycastFilterType.Exclude
+    if myChar then rpSnap.FilterDescendantsInstances = {myChar} end
+    if workspace:Raycast(myRoot.Position, Vector3.new(0, -5, 0), rpSnap) then return end
+    local heightDiff = tRoot.Position.Y - myRoot.Position.Y
+    if isnan(heightDiff) or heightDiff <= 10 then return end
+    -- Registrar altura pre-TP en el watchdog de caída épica de Fly
+    local preH = 0
+    do
+        local rpH = RaycastParams.new()
+        rpH.FilterType = Enum.RaycastFilterType.Exclude
+        if myChar then rpH.FilterDescendantsInstances = {myChar} end
+        local rayH = workspace:Raycast(myRoot.Position, Vector3.new(0, -3000, 0), rpH)
+        if rayH then preH = myRoot.Position.Y - rayH.Position.Y end
+    end
+    -- TP: 5 studs detrás del target, mirando hacia él
+    local toTarget = tRoot.Position - myRoot.Position
+    if toTarget.Magnitude <= 0.01 then return end
+    local newPos = tRoot.Position - (toTarget.Unit * 5)
+    if safepos(newPos) then
+        pcall(function() myRoot.CFrame = CFrame.new(newPos, tRoot.Position) end)
+        if not isnan(preH) and flyAnim.maxHeightAboveGround and preH > flyAnim.maxHeightAboveGround then
+            flyAnim.maxHeightAboveGround = preH
+        end
+    end
+end
+-- ──────────────────────────────────────────────────────────────────
+-- [8]  TOGGLE / START / STOP
+-- ──────────────────────────────────────────────────────────────────
 local function toggleLock()
     if not L.lockActive then
         local found = getClosestLockTarget()
@@ -589,6 +733,9 @@ local function startLockSystem()
         updateLockCamera()
         updateLockHighlight()
         updateSoftBodyRotation()
+        updateBrakeSystem()
+        updateBodyGyroRotation()
+        updateSnapToTarget()
     end)
 end
 
@@ -715,21 +862,25 @@ local function applyAntiOrbit(root2, move, mode, wD)
     -- Si no hay suelo bajo nosotros y el objetivo está muy por encima,
     -- nos colocamos justo detrás/al lado del objetivo para evitar
     -- quedar "flotando lejos" (parte del anti-orbiting).
-    local noFloor = false
-    do
-        local rpCheck = RaycastParams.new()
-        rpCheck.FilterType = Enum.RaycastFilterType.Exclude
-        if lplr and lplr.Character then rpCheck.FilterDescendantsInstances = {lplr.Character} end
-        local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
-        noFloor = (hitCheck == nil)
-    end
-    local heightDiff = targetRoot2.Position.Y - root2.Position.Y
-    if noFloor and not isnan(heightDiff) and heightDiff > 10 then
-        local toTarget = targetRoot2.Position - root2.Position
-        if toTarget.Magnitude > 0.01 then
-            local newPos = targetRoot2.Position - (toTarget.Unit * 5)
-            if safepos(newPos) then
-                pcall(function() root2.CFrame = CFrame.new(newPos, targetRoot2.Position) end)
+    -- NOTA: si flyAnim está disponible, updateSnapToTarget() lo maneja
+    -- internamente cada frame; omitir aquí para evitar doble-ejecución.
+    if not flyAnim then
+        local noFloor = false
+        do
+            local rpCheck = RaycastParams.new()
+            rpCheck.FilterType = Enum.RaycastFilterType.Exclude
+            if lplr and lplr.Character then rpCheck.FilterDescendantsInstances = {lplr.Character} end
+            local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
+            noFloor = (hitCheck == nil)
+        end
+        local heightDiff = targetRoot2.Position.Y - root2.Position.Y
+        if noFloor and not isnan(heightDiff) and heightDiff > 10 then
+            local toTarget = targetRoot2.Position - root2.Position
+            if toTarget.Magnitude > 0.01 then
+                local newPos = targetRoot2.Position - (toTarget.Unit * 5)
+                if safepos(newPos) then
+                    pcall(function() root2.CFrame = CFrame.new(newPos, targetRoot2.Position) end)
+                end
             end
         end
     end
@@ -832,6 +983,27 @@ function M.SetFlyEnabledProvider(fn)
         isFlyEnabledFn = fn
     end
 end
+
+-- ── INTEGRACIÓN PROFUNDA CON FLY ────────────────────────────────────
+-- Fly debe llamar esto UNA VEZ en M.Start, pasando su tabla flyanim:
+--
+--   LockModule.SetFlyAnimRef(flyanim)
+--
+-- Con esto los cuatro sub-sistemas vuelan-lock pasan a ser auto-contenidos:
+--
+--   A) Brake       → modifica flyanim.dashVel / .dashTimer / .brakingActive
+--   B) BodyGyro    → modifica flyanim.bg.cframe hacia el target (3D)
+--   C) Snap-to-target → TP al jugador a 5 studs del target en turbo/fast
+--   D) TP "abajo"  → ya auto-contenido (updateLockInfoGui + isFlyEnabledFn)
+--
+-- Sin esta llamada, A/B/C no se ejecutan (flyAnim == nil).
+-- Los hooks M.GetAimCFrame y M.ApplyAntiOrbit siguen disponibles
+-- como fallback para integraciones manuales sin ref directa.
+-- ────────────────────────────────────────────────────────────────────
+function M.SetFlyAnimRef(ref)
+    flyAnim = ref
+end
+function M.GetFlyAnimRef() return flyAnim end
 
 -- Activa o desactiva el giro suave del HRP importado de soft.lua.
 -- Por defecto está activado (true). Llamar con false para desactivarlo.
