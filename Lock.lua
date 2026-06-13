@@ -41,9 +41,10 @@
   conectarlo con el estado real del Fly:
 
     a) M.Start(lplrRef, lockKeyCode, flyModuleRef) — si flyModuleRef
-       expone .OnStateChanged(callback), lock.lua se suscribe
-       directamente y mantiene el estado sincronizado en vivo.
-       También usa flyModuleRef.IsEnabled() como valor inicial.
+       expone .IsEnabled(), lock.lua relee esa función CADA FRAME
+       (RenderStepped) para mantener isFlyEnabledFn al día.
+       (.OnStateChanged se ignora a propósito: existe en algunos
+       builds de Fly pero nunca dispara eventos reales).
 
     b) M.SetFlyEnabledProvider(function() return ... end) — alternativa
        manual si no se pasa flyModuleRef a M.Start.
@@ -141,8 +142,10 @@ local L = {
     -- usado por el hook de anti-orbiting (M.ApplyAntiOrbit)
     straightLineActive = false,
 
-    -- desuscriptor de flyModule.OnStateChanged (si se conectó)
-    _flyStateUnsub = nil,
+    -- referencia a flyModule.IsEnabled (si se pasó en M.Start), para
+    -- polling cada frame en startLockSystem. OnStateChanged NO se usa
+    -- porque en builds actuales de Fly existe pero nunca dispara.
+    _flyIsEnabledFn = nil,
 }
 
 local lplr   = nil
@@ -526,6 +529,17 @@ local function startLockSystem()
     end)
 
     L.lockRenderConn = RunService.RenderStepped:Connect(function()
+        -- Polling de IsEnabled(): OnStateChanged no es confiable en
+        -- algunos builds de Fly, así que cada frame se relee el
+        -- estado real directamente. Coste despreciable (una llamada
+        -- a función ya local al módulo Fly).
+        if L._flyIsEnabledFn then
+            local ok, state = pcall(L._flyIsEnabledFn)
+            if ok then
+                isFlyEnabledFn = function() return state end
+            end
+        end
+
         updateLockInfoGui()
         updateLockCamera()
         updateLockHighlight()
@@ -537,7 +551,7 @@ local function stopLockSystem()
     if L.lockRenderConn then L.lockRenderConn:Disconnect(); L.lockRenderConn = nil end
     clearLock()
     if L.lockHighlight then pcall(function() L.lockHighlight:Destroy() end); L.lockHighlight = nil end
-    if L._flyStateUnsub then pcall(L._flyStateUnsub); L._flyStateUnsub = nil end
+    L._flyIsEnabledFn = nil
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -709,11 +723,12 @@ local M = {}
 --   lplrRef      : Players.LocalPlayer (o referencia)
 --   lockKeyCode  : Enum.KeyCode opcional (default X)
 --   flyModuleRef : (opcional) referencia al módulo Fly (M de fly_con_lock).
---                  Si tiene .OnStateChanged, lock.lua se suscribe
---                  directamente para mantener isFlyEnabledFn al día,
---                  sin necesidad de llamar SetFlyEnabledProvider aparte.
---                  Si tiene .IsEnabled, se usa también como valor
---                  inicial inmediato (antes del primer cambio de estado).
+--                  Si tiene .IsEnabled(), lock.lua lo relee cada frame
+--                  (polling en RenderStepped) para mantener
+--                  isFlyEnabledFn sincronizado con el estado real.
+--                  NOTA: .OnStateChanged NO se usa — en builds actuales
+--                  de Fly existe pero nunca dispara eventos, así que
+--                  el polling de IsEnabled() es la fuente confiable.
 --
 -- NOTA GUI: el panel de información (lockInfoGui) NO se crea aquí.
 -- Solo se crea cuando el jugador fija un objetivo (toggleLock -> ON),
@@ -725,17 +740,10 @@ function M.Start(lplrRef, lockKeyCode, flyModuleRef)
     if lockKeyCode then L.lockKey = lockKeyCode end
     _reloadFT()
 
-    if flyModuleRef then
-        if type(flyModuleRef.IsEnabled) == "function" then
-            local ok, val = pcall(flyModuleRef.IsEnabled)
-            if ok then isFlyEnabledFn = function() return val end end
-        end
-        if type(flyModuleRef.OnStateChanged) == "function" then
-            if L._flyStateUnsub then pcall(L._flyStateUnsub) end
-            L._flyStateUnsub = flyModuleRef.OnStateChanged(function(isFlying)
-                isFlyEnabledFn = function() return isFlying end
-            end)
-        end
+    if flyModuleRef and type(flyModuleRef.IsEnabled) == "function" then
+        L._flyIsEnabledFn = flyModuleRef.IsEnabled
+        local ok, val = pcall(flyModuleRef.IsEnabled)
+        if ok then isFlyEnabledFn = function() return val end end
     end
 
     startLockSystem()
