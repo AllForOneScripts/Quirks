@@ -1,11 +1,6 @@
-print("version 2.10")
+print("version 2.11")
 
 --[[
-╔══════════════════════════════════════════════════════════════════╗
-║                    FLY SYSTEM  v2.10                            ║
-║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
-╚══════════════════════════════════════════════════════════════════╝
-
   ÍNDICE DE SECCIONES
   ───────────────────
   [1]  SERVICIOS
@@ -2678,6 +2673,15 @@ local function spawnLandingEffects(position, velocity)
                 floorMaterial = floorHit.Instance.Material
             end
 
+            -- Capturar también el MaterialVariant del suelo (textura personalizada)
+            -- para que las rocas repliquen fielmente la apariencia del suelo.
+            local floorMaterialVariant = ""
+            if floorHit then
+                pcall(function()
+                    floorMaterialVariant = floorHit.Instance.MaterialVariant or ""
+                end)
+            end
+
             -- Wait adicional antes de spawnear las rocas para garantizar que
             -- el personaje está asentado y el raycast de color/material ya es fiable.
             task.wait(0.05)
@@ -2710,6 +2714,10 @@ local function spawnLandingEffects(position, velocity)
                     chunk.CanCollide  = false
                     chunk.Material    = floorMaterial
                     chunk.Color       = floorColor
+                    -- Copiar la textura personalizada del suelo (MaterialVariant)
+                    if floorMaterialVariant and floorMaterialVariant ~= "" then
+                        pcall(function() chunk.MaterialVariant = floorMaterialVariant end)
+                    end
                     local lookAt = CFrame.lookAt(chunk.Position, Vector3.new(position.X, chunk.Position.Y, position.Z))
                     local upTilt = math.rad(-math.random(30, 55) + (ring.radius * 1.5 / escalaSize))
                     local sideRoll = math.rad(math.random(-15, 15))
@@ -3126,11 +3134,19 @@ local function _launchComboAnim(animId, speed)
             pcall(function() track:Stop(0.05) end)
         end
     end
-    -- BUG FIX 1: También detener normalTracks para evitar que animaciones de
-    -- modo normal (estatica, mov_forward, brazos, etc.) queden congeladas en
-    -- el último frame entre golpes del combo.
-    for key, track in pairs(flyanim.normalTracks) do
-        if key ~= "levitacion" then
+    -- BUG FIX 1: Detener SOLO las pistas de movimiento activo de normalTracks
+    -- (brazos, mov_forward, mov_back, mov_brazos, lateral, espacio_prim, espacio_sec)
+    -- para evitar que queden congeladas en el último frame entre golpes del combo.
+    -- Se excluyen "estatica" y "levitacion" (son la base visual pasiva y no interfieren
+    -- visualmente con el combo) y las pistas turbo/mega (no aplican en modo normal).
+    local COMBO_STOP_NORM = {
+        "brazos", "mov_forward", "mov_back", "mov_brazos",
+        "lateral", "espacio_prim", "espacio_sec",
+    }
+    local nt = flyanim.normalTracks
+    if nt then
+        for _, key in ipairs(COMBO_STOP_NORM) do
+            local track = nt[key]
             pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
         end
     end
