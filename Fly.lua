@@ -2650,9 +2650,26 @@ local function spawnLandingEffects(position, velocity)
             if lplr and lplr.Character then
                 rpFloor.FilterDescendantsInstances = {lplr.Character}
             end
-            -- Primer intento: rango generoso desde arriba del punto de impacto
-            local floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
+            -- BUG FIX 2: Usar la posición ACTUAL del HRP (post-aterrizaje) en lugar de la
+            -- posición capturada al inicio del vuelo. El personaje ya está sobre el suelo
+            -- después de task.wait(0.08), así que leer la posición fresca garantiza que el
+            -- raycast pegue en la superficie correcta (igual que hace el código de Gemini).
+            local currentRootPos = position  -- fallback a la posición original
+            local charNow = lplr and lplr.Character
+            local rootNow = charNow and charNow:FindFirstChild("HumanoidRootPart")
+            if rootNow and rootNow.Parent then
+                currentRootPos = rootNow.Position
+            end
+            -- Primer intento: rango generoso desde arriba del punto de impacto actual
+            local floorHit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
             -- Segundo intento si el primero falla: rango aún más largo
+            if not floorHit then
+                floorHit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
+            end
+            -- Tercer intento: desde la posición original capturada por si el personaje se movió lejos
+            if not floorHit then
+                floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
+            end
             if not floorHit then
                 floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
             end
@@ -2810,7 +2827,19 @@ local function startIdleWatcher()
                 if not flyanim.comboPlaying then
                     flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
                     iniciarCicloNormal(flyanim._normalPlayId)
+                    -- BUG FIX 3: Evaluar el movimiento al volver a idle para que la
+                    -- animación correcta (quieto / moviéndose) se active de inmediato,
+                    -- igual que hace finalizarCombo(). Sin esto el personaje queda
+                    -- con la animación estática aunque esté presionando WASD.
+                    -- También se agrega `continue` para evitar que el loop siga
+                    -- procesando tras haber ejecutado la transición.
+                    task.defer(function()
+                        if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                            evaluarMovimientoNormal()
+                        end
+                    end)
                 end
+                continue
             end
         end
     end)
@@ -3095,6 +3124,14 @@ local function _launchComboAnim(animId, speed)
     for id, track in pairs(flyanim.tracks) do
         if id ~= animId and id ~= ANIM.levitacion and track and track.IsPlaying then
             pcall(function() track:Stop(0.05) end)
+        end
+    end
+    -- BUG FIX 1: También detener normalTracks para evitar que animaciones de
+    -- modo normal (estatica, mov_forward, brazos, etc.) queden congeladas en
+    -- el último frame entre golpes del combo.
+    for key, track in pairs(flyanim.normalTracks) do
+        if key ~= "levitacion" then
+            pcall(function() if track and track.IsPlaying then track:Stop(0.05) end end)
         end
     end
     local t = getTrack(animId)
