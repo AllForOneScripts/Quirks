@@ -1,9 +1,9 @@
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    LOCK SYSTEM  (módulo modular)                  ║
+║                    LOCK SYSTEM  (módulo independiente)           ║
 ║  Sistema de lock/target: cámara, GUI info, highlight, icono,      ║
 ║  tecla de lock, y "hooks" que el módulo de Fly puede consultar    ║
-║  para aplicar TP-debajo / anti-orbiting / rotación-Y SOLO         ║
+║  para aplicar TP‑debajo / anti‑orbiting / rotación‑Y SOLO         ║
 ║  cuando el vuelo está activo.                                     ║
 ║                                                                    ║
 ║  VERSIÓN MODULAR: sin ejecución de código al cargar, todo         ║
@@ -75,7 +75,7 @@ local L = {
 
     lockCameraLerp = 0.18,
 
-    straightLineActive = false,
+    straightLineActive = false,      -- usado por anti‑orbiting
 }
 
 local lplr   = nil
@@ -83,6 +83,9 @@ local camera = nil
 
 -- Proveedor del estado del Fly (se asigna con M.SetFlyEnabledProvider)
 local isFlyEnabledFn = function() return false end
+
+-- Callback opcional para registrar altura previa a TP (caída épica)
+local onPreTeleportHeight = nil
 
 -- ──────────────────────────────────────────────────────────────────
 -- [4]  TARGETING
@@ -348,8 +351,8 @@ local function updateLockInfoGui()
                         myRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
                         myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                     end)
-                    if preTPHeight > 0 and type(L.onPreTeleportHeight) == "function" then
-                        pcall(L.onPreTeleportHeight, preTPHeight)
+                    if preTPHeight > 0 and type(onPreTeleportHeight) == "function" then
+                        pcall(onPreTeleportHeight, preTPHeight)
                     end
                 end
             end
@@ -485,8 +488,11 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [10] HOOKS PARA FLY
+-- [10] HOOKS PARA FLY (sub-sistemas condicionados)
 -- ──────────────────────────────────────────────────────────────────
+
+-- [SUB-SISTEMA 3] Rotación Y (mirar arriba/abajo hacia el target)
+-- Devuelve nil si el Fly está apagado o no hay lock activo/válido.
 local function getAimCFrame(rootPosition, dashMagnitude)
     if not isFlyEnabledFn() then return nil end
     if not L.lockActive or not L.lockedTarget then return nil end
@@ -503,6 +509,9 @@ local function getAimCFrame(rootPosition, dashMagnitude)
     return desiredCF, smooth
 end
 
+-- [SUB-SISTEMA 2] Anti-orbiting
+-- Redirige el vector de movimiento para evitar orbitar al objetivo.
+-- Solo se aplica si el Fly está activo, el modo es fast/turbo, hay lock y W presionada.
 local function applyAntiOrbit(root2, move, mode, wD)
     if not isFlyEnabledFn() then
         L.straightLineActive = false
@@ -519,6 +528,7 @@ local function applyAntiOrbit(root2, move, mode, wD)
     local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
     if not targetRoot2 or not safepos(targetRoot2.Position) then return move end
 
+    -- Si no hay suelo y objetivo muy arriba, TP lateral (parte del anti-orbiting)
     local noFloor = false
     do
         local rpCheck = RaycastParams.new()
@@ -538,6 +548,7 @@ local function applyAntiOrbit(root2, move, mode, wD)
         end
     end
 
+    -- Redirección del vector de movimiento
     local toTarget3D = targetRoot2.Position - root2.Position
     local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
     local vertDiff   = math.abs(toTarget3D.Y)
@@ -651,7 +662,7 @@ end
 
 -- Callback opcional: se invoca con la altura previa a un TP "estar abajo de".
 function M.SetPreTeleportHeightCallback(fn)
-    L.onPreTeleportHeight = fn
+    onPreTeleportHeight = fn
 end
 
 -- Crea el panel de información (lo llama el Fly cuando construye su HUD)
