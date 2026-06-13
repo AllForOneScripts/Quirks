@@ -1,9 +1,9 @@
-print("version 2.10-nolock")
+print("version 2.10")
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║               FLY SYSTEM  v2.10-nolock                          ║
-║  Módulo de vuelo avanzado · Sin sistema de lock/target           ║
+║                    FLY SYSTEM  v2.10                            ║
+║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
   ÍNDICE DE SECCIONES
@@ -27,6 +27,7 @@ print("version 2.10-nolock")
   [17] PARTÍCULAS MEGA UP       (estelas verticales, efectomegaup)
   [18] WHITE FLASH  (escala por velocidad)
   [19] EFECTOS VFX  (sonicBoom, airShock, landing, crater)
+  [20] SISTEMA DE LOCK / TARGET
   [21] SISTEMA NOCLIP / ANTI-IMPULSO / ANOMALÍAS
   [22] SISTEMA DE FRENO (brake)
   [23] DASH / COLISIÓN
@@ -86,6 +87,7 @@ local SFX_LANDING_GLASS    = "rbxassetid://132535085898211"  -- impacto sobre cr
 local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
 
 -- ── Lock icon ────────────────────────────────────────────────────
+-- (usado en applyLockIcon, ver sección [20])
 -- "rbxassetid://82817965256191"  ← declarado inline donde se usa
 
 -- ──────────────────────────────────────────────────────────────────
@@ -227,6 +229,7 @@ local DEFAULT_BASE  = 60
 local DEFAULT_FAST  = 3.0
 local DEFAULT_TURBO = 6.0
 
+local LOCK_ROTATION_SMOOTH = 0.8
 local COORD_SANITY_LIMIT   = 50000
 
 -- ──────────────────────────────────────────────────────────────────
@@ -299,6 +302,7 @@ local flyanim = {
     enabled     = false,
     speed       = BASE_SPEED,
     flyKey      = Enum.KeyCode.C,
+    lockKey     = Enum.KeyCode.X,
     bg          = nil,
     bv          = nil,
     bf          = nil,
@@ -349,6 +353,15 @@ local flyanim = {
     SPACE_HOLD_TIME   = 2,
     megaTurboUpConn   = nil,
     megaTurboUpActive = false,
+    lockActive      = false,
+    lockedTarget    = nil,
+    lockIconGui     = nil,
+    lockInfoGui     = nil,
+    lockCameraLerp  = 0.18,
+    lockHighlight   = nil,
+    lockConn        = nil,
+    lockRenderConn  = nil,
+    straightLineActive = false,
     brakingActive     = false,
     BRAKE_DISTANCE    = 35,
     BRAKE_HARD_DISTANCE = 14,
@@ -423,6 +436,7 @@ local flyanim = {
     teleportGuardConn = nil,
     isTeleportGuardActive = false,
     sessionToken = 0,
+    lockLabels = nil,
     _dragInputConn = nil,
     _comboEndConn  = nil,
 }
@@ -1884,12 +1898,12 @@ local function startBrakeSystem()
         end
         if not flyanim.enabled then return end
         if flyanim.mode ~= "fast" and flyanim.mode ~= "turbo" then return end
-        return -- freno requiere lock activo (sistema de lock eliminado)
+        if not flyanim.lockActive or not flyanim.lockedTarget then return end
         if flyanim.dashTimer <= 0 then return end
         local char   = lplr and lplr.Character
         local myRoot = char and char:FindFirstChild("HumanoidRootPart")
         if not myRoot then return end
-        local targetChar = nil  -- sin sistema de lock
+        local targetChar = flyanim.lockedTarget.Character
         local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
         if not targetRoot then return end
         local dist = (myRoot.Position - targetRoot.Position).Magnitude
@@ -3915,6 +3929,345 @@ local function stopMegaTurboUpListener()
 end
 
 -- ──────────────────────────────────────────────────────────────────
+-- [20]  SISTEMA DE LOCK / TARGET
+-- ──────────────────────────────────────────────────────────────────
+local function isTargetValidForLock(target)
+    if not target then return false end
+    local char = target.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    if hum.Health <= 0 then return false end
+    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    return true
+end
+
+local function getClosestLockTarget()
+    local closestPlayer = nil
+    local bestScore     = math.huge
+    local myChar = lplr and lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not camera then return nil end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == lplr then continue end
+        if not isTargetValidForLock(player) then continue end
+        local targetChar = player.Character
+        if not targetChar then continue end
+        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+        if not targetRoot then continue end
+        local ok3, screenPos, onScreen = pcall(function()
+            return camera:WorldToScreenPoint(targetRoot.Position)
+        end)
+        if not ok3 or not onScreen then continue end
+        local mousePos   = UserInputService:GetMouseLocation()
+        local screenDist = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+        if isnan(screenDist) or screenDist > 300 then continue end
+        local worldDist  = myRoot and (myRoot.Position - targetRoot.Position).Magnitude or 0
+        if isnan(worldDist) then continue end
+        local score = screenDist + (worldDist * 0.2)
+        if score < bestScore then bestScore = score; closestPlayer = player end
+    end
+    return closestPlayer
+end
+
+local function removeLockIcon()
+    if flyanim.lockIconGui then pcall(function() flyanim.lockIconGui:Destroy() end); flyanim.lockIconGui = nil end
+end
+
+local function applyLockIcon(player)
+    removeLockIcon()
+    local chest = player.Character and player.Character:FindFirstChild("UpperTorso")
+    local torso = chest or (player.Character and player.Character:FindFirstChild("HumanoidRootPart"))
+    if not torso then return end
+    flyanim.lockIconGui = Instance.new("BillboardGui", torso)
+    flyanim.lockIconGui.Name        = "LockIcon"
+    flyanim.lockIconGui.Size        = UDim2.new(0, 50, 0, 50)
+    flyanim.lockIconGui.AlwaysOnTop = true
+    flyanim.lockIconGui.StudsOffset = Vector3.new(0, 0, 0)
+    local img = Instance.new("ImageLabel", flyanim.lockIconGui)
+    img.Size = UDim2.new(1, 0, 1, 0); img.BackgroundTransparency = 1
+    img.Image = "rbxassetid://82817965256191"
+    img.ImageColor3 = Color3.fromRGB(255, 255, 255); img.ScaleType = Enum.ScaleType.Fit
+end
+
+local function ensureLockHighlight()
+    if not flyanim.lockHighlight then
+        flyanim.lockHighlight = Instance.new("Highlight")
+        flyanim.lockHighlight.FillTransparency    = 1
+        flyanim.lockHighlight.OutlineColor        = Color3.fromRGB(255, 255, 255)
+        flyanim.lockHighlight.OutlineTransparency = 0
+    end
+end
+
+local function updateLockHighlight()
+    if not flyanim.lockActive or not flyanim.lockedTarget then
+        if flyanim.lockHighlight then flyanim.lockHighlight.Parent = nil end
+        return
+    end
+    if not isTargetValidForLock(flyanim.lockedTarget) then
+        if flyanim.lockHighlight then flyanim.lockHighlight.Parent = nil end
+        return
+    end
+    ensureLockHighlight()
+    local targetChar = flyanim.lockedTarget.Character
+    if targetChar then flyanim.lockHighlight.Parent = targetChar
+    else flyanim.lockHighlight.Parent = nil end
+end
+
+local function loadAvatarImage()
+    if not flyanim.lockInfoGui then return end
+    local playerImg = flyanim.lockInfoGui:FindFirstChild("PlayerImage", true)
+    if not playerImg then return end
+    if flyanim.lockActive and flyanim.lockedTarget then
+        local userId = flyanim.lockedTarget.UserId
+        task.spawn(function()
+            local success, content = pcall(function()
+                return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size420x420)
+            end)
+            if success and content and playerImg and playerImg.Parent then
+                playerImg.Image = content
+            end
+        end)
+    end
+end
+
+local function createLockInfoGui(parentFrame)
+    if flyanim.lockInfoGui then pcall(function() flyanim.lockInfoGui:Destroy() end); flyanim.lockInfoGui = nil end
+    local C_PURPLE = Color3.fromRGB(110, 30, 180)
+    local C_BLACK  = Color3.fromRGB(6, 4, 12)
+    local C_TEXT   = Color3.fromRGB(220, 190, 255)
+    local infoFrame = Instance.new("Frame")
+    infoFrame.Name = "LockInfoPanel"; infoFrame.Size = UDim2.new(0, 220, 0, 95)
+    infoFrame.Position = UDim2.new(1, 12, 0, 8); infoFrame.BackgroundColor3 = C_BLACK
+    infoFrame.BackgroundTransparency = 0.15; infoFrame.BorderSizePixel = 0
+    infoFrame.ZIndex = 10; infoFrame.Visible = false; infoFrame.Parent = parentFrame
+    Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 8)
+    local stroke = Instance.new("UIStroke", infoFrame)
+    stroke.Color = C_PURPLE; stroke.Thickness = 1; stroke.Transparency = 0.5
+    local iconLbl = Instance.new("TextLabel", infoFrame)
+    iconLbl.Size=UDim2.new(0,28,0,28); iconLbl.Position=UDim2.new(0,6,0.5,-14)
+    iconLbl.BackgroundTransparency=1; iconLbl.Font=Enum.Font.Legacy
+    iconLbl.TextSize=20; iconLbl.TextColor3=Color3.fromRGB(255,220,80); iconLbl.Text="🎯"
+    local nameLabel = Instance.new("TextLabel", infoFrame)
+    nameLabel.Name="NameLabel"; nameLabel.Size=UDim2.new(0,120,0,20); nameLabel.Position=UDim2.new(0,40,0,6)
+    nameLabel.BackgroundTransparency=1; nameLabel.Font=Enum.Font.GothamBold
+    nameLabel.TextSize=12; nameLabel.TextColor3=C_TEXT; nameLabel.Text="---"; nameLabel.TextXAlignment=Enum.TextXAlignment.Left
+    local distLabel = Instance.new("TextLabel", infoFrame)
+    distLabel.Name="DistLabel"; distLabel.Size=UDim2.new(0,120,0,18); distLabel.Position=UDim2.new(0,40,0,28)
+    distLabel.BackgroundTransparency=1; distLabel.Font=Enum.Font.Gotham
+    distLabel.TextSize=10; distLabel.TextColor3=Color3.fromRGB(200,170,255); distLabel.Text="--- studs"; distLabel.TextXAlignment=Enum.TextXAlignment.Left
+    local healthLabel = Instance.new("TextLabel", infoFrame)
+    healthLabel.Name="HealthLabel"; healthLabel.Size=UDim2.new(0,120,0,18); healthLabel.Position=UDim2.new(0,40,0,48)
+    healthLabel.BackgroundTransparency=1; healthLabel.Font=Enum.Font.Legacy
+    healthLabel.TextSize=10; healthLabel.TextColor3=Color3.fromRGB(255,150,150); healthLabel.Text="❤️ ---"; healthLabel.TextXAlignment=Enum.TextXAlignment.Left
+    local heightLabel = Instance.new("TextLabel", infoFrame)
+    heightLabel.Name="HeightLabel"; heightLabel.Size=UDim2.new(0,120,0,15); heightLabel.Position=UDim2.new(0,40,0,68)
+    heightLabel.BackgroundTransparency=1; heightLabel.Font=Enum.Font.Gotham
+    heightLabel.TextSize=9; heightLabel.TextColor3=Color3.fromRGB(150,220,255); heightLabel.Text="---"; heightLabel.TextXAlignment=Enum.TextXAlignment.Left
+    local playerImgContainer = Instance.new("Frame", infoFrame)
+    playerImgContainer.Name="PlayerImgContainer"; playerImgContainer.Size=UDim2.new(0,55,0,55)
+    playerImgContainer.Position=UDim2.new(1,-65,0,20); playerImgContainer.BackgroundColor3=Color3.fromRGB(20,10,40)
+    playerImgContainer.BackgroundTransparency=0.3; playerImgContainer.BorderSizePixel=0; playerImgContainer.ZIndex=11
+    Instance.new("UICorner", playerImgContainer).CornerRadius = UDim.new(1, 0)
+    local playerImg = Instance.new("ImageLabel", playerImgContainer)
+    playerImg.Name="PlayerImage"; playerImg.Size=UDim2.new(1,0,1,0); playerImg.Position=UDim2.new(0,0,0,0)
+    playerImg.BackgroundTransparency=1; playerImg.Image=""; playerImg.ZIndex=12
+    Instance.new("UICorner", playerImg).CornerRadius = UDim.new(1, 0)
+    flyanim.lockInfoGui = infoFrame
+end
+
+local function updateLockInfoGui()
+    if not flyanim.lockInfoGui then return end
+    if not flyanim.lockActive or not flyanim.lockedTarget
+    or not flyanim.lockedTarget.Character
+    or not isTargetValidForLock(flyanim.lockedTarget) then
+        flyanim.lockInfoGui.Visible = false
+        if flyanim.lockActive and flyanim.lockedTarget and not isTargetValidForLock(flyanim.lockedTarget) then
+            flyanim.lockActive   = false
+            flyanim.lockedTarget = nil
+            removeLockIcon()
+            updateLockHighlight()
+        end
+        return
+    end
+    flyanim.lockInfoGui.Visible = true
+    local root     = flyanim.lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+    local humanoid = flyanim.lockedTarget.Character:FindFirstChildOfClass("Humanoid")
+    local myChar   = lplr and lplr.Character
+    local myRoot   = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local dist = camera and (camera.CFrame.Position - root.Position).Magnitude or 0
+    if isnan(dist) then dist = 0 end
+    local displayName = flyanim.lockedTarget.DisplayName or "?"
+    if #displayName > 14 then displayName = displayName:sub(1, 12) .. ".." end
+    local nameLabel = flyanim.lockInfoGui:FindFirstChild("NameLabel")
+    if nameLabel then nameLabel.Text = displayName end
+    local distLabel = flyanim.lockInfoGui:FindFirstChild("DistLabel")
+    if distLabel then distLabel.Text = math.floor(dist) .. " studs" end
+    local healthLabel = flyanim.lockInfoGui:FindFirstChild("HealthLabel")
+    if healthLabel and humanoid then
+        local rawHealth = math.max(humanoid.Health, 0)
+        local maxHealth = math.max(humanoid.MaxHealth, 1)
+        local healthStr
+        local intPart = math.floor(rawHealth)
+        if intPart == 0 and rawHealth > 0 then
+            
+            local rounded = math.floor(rawHealth * 100 + 0.5) / 100
+            healthStr = string.format("%.2f", rounded)
+        else
+            healthStr = tostring(math.floor(rawHealth + 0.5))
+        end
+        local pct = rawHealth / maxHealth
+        local heartEmoji
+        if rawHealth <= 0 then
+            heartEmoji = "☠️"
+        elseif pct > 0.75 then
+            heartEmoji = "💚"
+        elseif pct > 0.50 then
+            heartEmoji = "💛"
+        elseif pct > 0.25 then
+            heartEmoji = "🧡"
+        else
+            heartEmoji = "❤️"
+        end
+        healthLabel.Font = Enum.Font.Legacy
+        healthLabel.Text = heartEmoji .. " " .. healthStr .. "/" .. tostring(math.floor(maxHealth + 0.5))
+        if rawHealth <= 0 then
+            healthLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
+        elseif pct > 0.75 then
+            healthLabel.TextColor3 = Color3.fromRGB(80, 255, 80)
+        elseif pct > 0.50 then
+            healthLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
+        elseif pct > 0.25 then
+            healthLabel.TextColor3 = Color3.fromRGB(255, 160, 60)
+        else
+            healthLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+        end
+    end
+    local heightLabel = flyanim.lockInfoGui:FindFirstChild("HeightLabel")
+    if heightLabel and myRoot then
+        local heightDiff = math.floor(myRoot.Position.Y - root.Position.Y)
+        if isnan(heightDiff) then heightDiff = 0 end
+        if heightDiff > 0 then
+            heightLabel.Text = "▼ " .. heightDiff .. " " .. FT.height_below
+            heightLabel.TextColor3 = Color3.fromRGB(150, 220, 255)
+        elseif heightDiff < 0 then
+            heightLabel.Text = "▲ " .. math.abs(heightDiff) .. " " .. FT.height_above
+            heightLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+            if flyanim.enabled and math.abs(heightDiff) >= 15 then
+                local toTargetH = Vector3.new(
+                    root.Position.X - myRoot.Position.X, 0,
+                    root.Position.Z - myRoot.Position.Z
+                )
+                local behindDir = toTargetH.Magnitude > 0.1 and -toTargetH.Unit or Vector3.new(0, 0, 1)
+                local tpPos = root.Position + behindDir * 3
+                if safepos(tpPos) then
+                    -- Si el TP es desde una altura significativa, registrarla en el
+                    -- watchdog de altura (igual que el resto del sistema) para que
+                    -- _flyOff dispare siempre la caída épica al apagar el vuelo,
+                    -- aunque el TP nos deje justo al lado del objetivo en el suelo.
+                    local preTPHeight = 0
+                    do
+                        local rp4 = RaycastParams.new()
+                        rp4.FilterType = Enum.RaycastFilterType.Exclude
+                        rp4.FilterDescendantsInstances = {lplr and lplr.Character}
+                        local ray4 = workspace:Raycast(myRoot.Position, Vector3.new(0, -3000, 0), rp4)
+                        if ray4 then preTPHeight = myRoot.Position.Y - ray4.Position.Y end
+                    end
+                    pcall(function()
+                        myRoot.CFrame = CFrame.new(tpPos, root.Position)
+                        myRoot.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                        myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end)
+                    if preTPHeight > (flyanim.maxHeightAboveGround or 0) then
+                        flyanim.maxHeightAboveGround = preTPHeight
+                    end
+                end
+            end
+        else
+            heightLabel.Text = "● " .. FT.height_same
+            heightLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+        end
+    end
+    loadAvatarImage()
+end
+
+local function updateLockCamera()
+    if not flyanim.lockActive or not flyanim.lockedTarget then return end
+    local targetChar = flyanim.lockedTarget.Character
+    if not targetChar then flyanim.lockActive=false; flyanim.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return end
+    if not isTargetValidForLock(flyanim.lockedTarget) then
+        flyanim.lockActive=false; flyanim.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return
+    end
+    local myChar     = lplr and lplr.Character
+    local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    if myRoot and targetRoot then
+        local d = (myRoot.Position - targetRoot.Position).Magnitude
+        if not isnan(d) and d > 750 then
+            flyanim.lockActive=false; flyanim.lockedTarget=nil; removeLockIcon(); updateLockHighlight(); return
+        end
+    end
+    local targetPart = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetPart then return end
+    if not camera then return end
+    local worldDist = myRoot and (myRoot.Position - targetPart.Position).Magnitude or 999
+    if isnan(worldDist) then worldDist = 999 end
+    local currentPos = camera.CFrame.Position
+    local desiredCF  = CFrame.new(currentPos, targetPart.Position)
+    local lerpFactor = flyanim.lockCameraLerp
+    if worldDist < 8  then lerpFactor = lerpFactor * 0.25
+    elseif worldDist < 20 then lerpFactor = lerpFactor * 0.6 end
+    lerpFactor = math.clamp(lerpFactor, 0, 1)
+    pcall(function() camera.CFrame = camera.CFrame:Lerp(desiredCF, lerpFactor) end)
+end
+
+local function toggleLock()
+    if not flyanim.enabled then return end
+    if not flyanim.lockActive then
+        local found = getClosestLockTarget()
+        if found and isTargetValidForLock(found) then
+            flyanim.lockedTarget = found
+            flyanim.lockActive   = true
+            applyLockIcon(found)
+            updateLockHighlight()
+            loadAvatarImage()
+        end
+    else
+        flyanim.lockActive   = false
+        flyanim.lockedTarget = nil
+        removeLockIcon()
+        updateLockHighlight()
+    end
+end
+
+local function startLockSystem()
+    local lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe or isTyping() then return end
+        if input.KeyCode == flyanim.lockKey then toggleLock() end
+    end)
+    local lockRenderConn = RunService.RenderStepped:Connect(function()
+        if not flyanim.enabled then return end
+        updateLockInfoGui()
+        updateLockCamera()
+        updateLockHighlight()
+    end)
+    flyanim.lockConn       = lockConn
+    flyanim.lockRenderConn = lockRenderConn
+end
+
+local function stopLockSystem()
+    if flyanim.lockConn       then flyanim.lockConn:Disconnect();       flyanim.lockConn       = nil end
+    if flyanim.lockRenderConn then flyanim.lockRenderConn:Disconnect(); flyanim.lockRenderConn = nil end
+    flyanim.lockActive   = false
+    flyanim.lockedTarget = nil
+    removeLockIcon()
+    updateLockHighlight()
+    if flyanim.lockInfoGui   then pcall(function() flyanim.lockInfoGui:Destroy() end);   flyanim.lockInfoGui   = nil end
+    if flyanim.lockHighlight then pcall(function() flyanim.lockHighlight:Destroy() end); flyanim.lockHighlight = nil end
+end
+
+-- ──────────────────────────────────────────────────────────────────
 -- [24]  GUI  (panel HUD)
 -- ──────────────────────────────────────────────────────────────────
 local function _flyDestroyGui()
@@ -3922,6 +4275,7 @@ local function _flyDestroyGui()
     flyanim.expanded = false; flyanim.updateLbl = nil; flyanim.updateMode = nil
     if flyanim._dragInputConn then flyanim._dragInputConn:Disconnect(); flyanim._dragInputConn = nil end
     if flyanim.gui then pcall(function() flyanim.gui:Destroy() end); flyanim.gui = nil end
+    flyanim.lockInfoGui = nil
 end
 
 local function createToggle(parent, xPos, yPos, initialState, onChange)
@@ -3986,9 +4340,10 @@ local function _flyBuildGui()
     
     
     
+    local H_LOCK   = 38
     local H_NOCLIP = 8 + 20 + 4 + 3*(ROW_H + 4) + 8
     local H_SPEED  = 8 + 3*(ROW_H + 6) + 8 + 28 + 8
-    local CONTENT_H = H_NOCLIP + 6 + H_SPEED + 4
+    local CONTENT_H = H_LOCK + 6 + H_NOCLIP + 6 + H_SPEED + 4
     local H_FULL   = H_MINI + 4 + CONTENT_H + 4
 
     local TW = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -4118,6 +4473,34 @@ local function _flyBuildGui()
     end
 
     
+    local lockSec = makeSection(H_LOCK, C_SEC1, C_ACCENT)
+    lockSec.Parent = expandZone
+
+    local lockRow = makeRow(lockSec, (H_LOCK - ROW_H) / 2)
+    local lockIconEmoji = Instance.new("TextLabel", lockRow)
+    lockIconEmoji.Size = UDim2.new(0, 18, 1, 0); lockIconEmoji.Position = UDim2.new(0, 0, 0, 0)
+    lockIconEmoji.BackgroundTransparency = 1; lockIconEmoji.Font = Enum.Font.Legacy
+    lockIconEmoji.TextSize = 11; lockIconEmoji.TextColor3 = C_GOLD
+    lockIconEmoji.Text = "🎯"; lockIconEmoji.TextXAlignment = Enum.TextXAlignment.Center
+    lockIconEmoji.TextYAlignment = Enum.TextYAlignment.Center
+
+    local lockLabel = Instance.new("TextLabel", lockRow)
+    lockLabel.Size = UDim2.new(0, 100, 1, 0); lockLabel.Position = UDim2.new(0, 22, 0, 0)
+    lockLabel.BackgroundTransparency = 1; lockLabel.Font = Enum.Font.GothamBold
+    lockLabel.TextSize = 11; lockLabel.TextColor3 = C_TEXT
+    lockLabel.Text = FT.lock_label .. "  [" .. flyanim.lockKey.Name .. "]"
+    lockLabel.TextXAlignment = Enum.TextXAlignment.Left
+    lockLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+    local lockHint = Instance.new("TextLabel", lockRow)
+    lockHint.Size = UDim2.new(1, -128, 1, 0); lockHint.Position = UDim2.new(0, 124, 0, 0)
+    lockHint.BackgroundTransparency = 1; lockHint.Font = Enum.Font.Gotham
+    lockHint.TextSize = 9; lockHint.TextColor3 = C_SUBTEXT
+    lockHint.Text = FT.lock_hint_prefix .. flyanim.lockKey.Name
+    lockHint.TextXAlignment = Enum.TextXAlignment.Right
+    lockHint.TextYAlignment = Enum.TextYAlignment.Center
+    flyanim.lockLabels = { label = lockLabel, hint = lockHint }
+
     
     local noclipSec = makeSection(H_NOCLIP, C_SEC2, C_PURPLE)
     noclipSec.Parent = expandZone
@@ -4370,6 +4753,7 @@ local function _flyBuildGui()
         end)
     end
 
+    createLockInfoGui(root)
 
     
     if flyanim.updateMode then flyanim.updateMode(flyanim.mode) end
@@ -4440,6 +4824,7 @@ local function _flyOn()
             end)
         end
     end)
+    startLockSystem()
     startBrakeSystem()
     startAntiImpulse()
     startMegaTurboUpListener()
@@ -4484,6 +4869,54 @@ local function _flyOn()
         if sD then move = move - cam.CFrame.LookVector end
         if aD then move = move - cam.CFrame.RightVector end
         if dD then move = move + cam.CFrame.RightVector end
+        if (flyanim.mode == "fast" or flyanim.mode == "turbo") and flyanim.lockActive and flyanim.lockedTarget and wD then
+            local targetChar2 = flyanim.lockedTarget.Character
+            if targetChar2 then
+                local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
+                if targetRoot2 and safepos(targetRoot2.Position) then
+                    local noFloor = false
+                    do
+                        local rpCheck = RaycastParams.new()
+                        rpCheck.FilterType = Enum.RaycastFilterType.Exclude
+                        if cc then rpCheck.FilterDescendantsInstances = {cc} end
+                        local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
+                        noFloor = (hitCheck == nil)
+                    end
+                    local heightDiff = targetRoot2.Position.Y - root2.Position.Y
+                    if noFloor and not isnan(heightDiff) and heightDiff > 10 and flyanim.enabled then
+                        local toTarget = targetRoot2.Position - root2.Position
+                        if toTarget.Magnitude > 0.01 then
+                            local newPos = targetRoot2.Position - (toTarget.Unit * 5)
+                            if safepos(newPos) then
+                                pcall(function() root2.CFrame = CFrame.new(newPos, targetRoot2.Position) end)
+                            end
+                        end
+                    end
+                    local toTarget3D = targetRoot2.Position - root2.Position
+                    local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
+                    local vertDiff   = math.abs(toTarget3D.Y)
+                    if not isnan(horDist2) and not isnan(vertDiff) and horDist2 < 25 and vertDiff > 8 then
+                        flyanim.straightLineActive = true
+                        if toTarget3D.Magnitude > 0.1 then
+                            move = toTarget3D.Unit * move.Magnitude
+                            if move.Magnitude < 0.01 then move = toTarget3D.Unit end
+                        end
+                    else
+                        flyanim.straightLineActive = false
+                        local horDir2 = Vector3.new(toTarget3D.X, 0, toTarget3D.Z)
+                        if horDir2.Magnitude > 0.1 then
+                            move = Vector3.new(horDir2.Unit.X * move.Magnitude, move.Y, horDir2.Unit.Z * move.Magnitude)
+                        end
+                        if not isnan(horDist2) and horDist2 < 15 then
+                            local factor2 = math.clamp(horDist2 / 15, 0.2, 1)
+                            move = move * factor2
+                        end
+                    end
+                end
+            end
+        else
+            flyanim.straightLineActive = false
+        end
         if flyanim.megaTurboUpActive then move = move + Vector3.new(0, 2, 0)
         elseif spaceDown              then move = move + Vector3.new(0, 1, 0) end
         if ctrlDown then move = move - Vector3.new(0, 1, 0) end
@@ -4567,6 +5000,21 @@ local function _flyOn()
         flyanim.isWDown=wD; flyanim.isSDown=sD; flyanim.isADown=aD; flyanim.isDDown=dD
         if flyanim.bv and flyanim.bv.Parent then flyanim.bv.velocity = Vector3.new(0, 0, 0) end
         if flyanim.bg and flyanim.bg.Parent then
+            if flyanim.lockActive and flyanim.lockedTarget then
+                local tChar = flyanim.lockedTarget.Character
+                if tChar and isTargetValidForLock(flyanim.lockedTarget) then
+                    local aimPart = tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("HumanoidRootPart")
+                    if aimPart then
+                        local desiredCF = CFrame.lookAt(root.Position, aimPart.Position, Vector3.new(0, 1, 0))
+                        local smooth    = LOCK_ROTATION_SMOOTH * (1 + math.min(0.5, (flyanim.dashVel.Magnitude / 300)))
+                        smooth = math.clamp(smooth, 0, 1)
+                        flyanim.bg.cframe = flyanim.bg.cframe:Lerp(desiredCF, smooth)
+                    else
+                        flyanim.lockActive=false; flyanim.lockedTarget=nil; removeLockIcon(); updateLockHighlight()
+                    end
+                else
+                    flyanim.lockActive=false; flyanim.lockedTarget=nil; removeLockIcon(); updateLockHighlight()
+                end
             else
                 local move = Vector3.new()
                 if wD then move = move + cam.CFrame.LookVector end
@@ -4866,6 +5314,8 @@ local function _flyOff()
         end)
     end
  
+    if flyanim.lockConn            then flyanim.lockConn:Disconnect();            flyanim.lockConn            = nil end
+    if flyanim.lockRenderConn      then flyanim.lockRenderConn:Disconnect();      flyanim.lockRenderConn      = nil end
     if flyanim.damageConn          then flyanim.damageConn:Disconnect();          flyanim.damageConn          = nil end
     if flyanim.animConn            then flyanim.animConn:Disconnect();            flyanim.animConn            = nil end
     if flyanim.comboConn           then flyanim.comboConn:Disconnect();           flyanim.comboConn           = nil end
@@ -5005,6 +5455,7 @@ local function _flyOff()
     flyanim.mode  = "normal"
     flyanim.speed = BASE_SPEED
     _flyDestroyGui()
+    stopLockSystem()
  
     if not charCurrent or not hum or hum.Health <= 0 then
         local animScript2 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
@@ -5491,7 +5942,7 @@ local function _connectGlobal()
         _landBaseRef = nil; _landOverlayRef = nil
  
         stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
-        stopMegaTurboUpListener()
+        stopMegaTurboUpListener(); stopLockSystem()
         stopAnomalyProtection(); stopComboC0Lock()
         stopAnimBlockLoop(); stopTeleportGuard()
         detenerWatchdogAltura()
@@ -5573,8 +6024,18 @@ function M.SetKey(keyCode)
     _connectGlobal()
 end
  
+function M.SetLockKey(keyCode)
+    flyanim.lockKey = keyCode
+    if flyanim.lockLabels then
+        flyanim.lockLabels.label.Text = FT.lock_label .. "  [" .. keyCode.Name .. "]"
+        flyanim.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
+    end
+    if flyanim.lockConn then flyanim.lockConn:Disconnect(); flyanim.lockConn = nil end
+    if flyanim.enabled then startLockSystem() end
+end
+ 
 function M.GetFlyKey()  return flyanim.flyKey  end
-function M.GetFlyKey()  return flyanim.flyKey  end
+function M.GetLockKey() return flyanim.lockKey end
 function M.IsEnabled()  return flyanim.enabled end
  
 return M
