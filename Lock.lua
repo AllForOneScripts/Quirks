@@ -463,9 +463,12 @@ local function updateLockInfoGui()
 
             -- ════════════════════════════════════════════════════════
             -- [SUB-SISTEMA 1] TP "estar abajo de" el objetivo
-            -- Solo se aplica si el Fly está activo (isFlyEnabledFn).
+            -- Solo se aplica si el Fly está activo (AFO_FLYSTATE,
+            -- con fallback a isFlyEnabledFn()).
             -- ════════════════════════════════════════════════════════
-            if isFlyEnabledFn() and math.abs(heightDiff) >= 15 then
+            local flyStateGui = getgenv().AFO_FLYSTATE
+            if flyStateGui == nil then flyStateGui = isFlyEnabledFn() end
+            if flyStateGui and math.abs(heightDiff) >= 15 then
                 local toTargetH = Vector3.new(
                     root.Position.X - myRoot.Position.X, 0,
                     root.Position.Z - myRoot.Position.Z
@@ -855,7 +858,7 @@ local function getAimCFrame(rootPosition, dashMagnitude)
     return desiredCF, smooth
 end
 
--- [SUB-SISTEMA 2] Anti-orbiting
+-- [SUB-SISTEMA 2] Anti-orbiting + TP "turbo detrás del objetivo"
 --
 -- Llamar cada frame desde el loop de movimiento (Stepped) del Fly,
 -- ANTES de aplicar `move` con cc:TranslateBy(...):
@@ -865,16 +868,40 @@ end
 -- root2 : HumanoidRootPart del jugador
 -- move  : Vector3 de movimiento ya calculado (cámara + WASD)
 -- mode  : flyanim.mode ("normal" | "fast" | "turbo" | "megaup")
+--         (se usa solo como fallback; la fuente de verdad es
+--          getgenv().AFO_FLYMODE, actualizado por el poller)
 -- wD    : true si la tecla W está presionada
+--
+-- ════════════════════════════════════════════════════════════════
+-- TP "turbo detrás del objetivo" (nuevo sub-sistema):
+--   Se activa SOLO si TODAS estas condiciones se cumplen:
+--     1) Fly activo            (AFO_FLYSTATE == true)
+--     2) Modo == "turbo"       (AFO_FLYMODE  == "turbo")
+--     3) Hay lock activo con target válido
+--     4) Distancia al target <= 15 studs
+--     5) Tecla W presionada (wD == true)
+--   Y, dentro de ese contexto, se teletransporta 5 studs detrás
+--   del target (mirando hacia él) si ADEMÁS:
+--     a) No hay suelo debajo del jugador (raycast hacia abajo vacío), Y
+--     b) El target está al menos 10 studs por encima del jugador.
+-- ════════════════════════════════════════════════════════════════
 --
 -- Si el Fly está apagado, o no aplica (no es fast/turbo, no hay lock,
 -- o W no está presionado), devuelve `move` sin modificar.
 local function applyAntiOrbit(root2, move, mode, wD)
-    if not isFlyEnabledFn() then
+    -- Fuente de verdad: getgenv().AFO_FLYSTATE / AFO_FLYMODE (poller),
+    -- con fallback a isFlyEnabledFn()/mode si aún no se han poblado.
+    local flyState = getgenv().AFO_FLYSTATE
+    if flyState == nil then flyState = isFlyEnabledFn() end
+
+    local flyMode = getgenv().AFO_FLYMODE
+    if flyMode == nil then flyMode = mode end
+
+    if not flyState then
         L.straightLineActive = false
         return move
     end
-    if not ((mode == "fast" or mode == "turbo") and L.lockActive and L.lockedTarget and wD) then
+    if not ((flyMode == "fast" or flyMode == "turbo") and L.lockActive and L.lockedTarget and wD) then
         L.straightLineActive = false
         return move
     end
@@ -885,27 +912,32 @@ local function applyAntiOrbit(root2, move, mode, wD)
     local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
     if not targetRoot2 or not safepos(targetRoot2.Position) then return move end
 
-    -- Si no hay suelo bajo nosotros y el objetivo está muy por encima,
-    -- nos colocamos justo detrás/al lado del objetivo para evitar
-    -- quedar "flotando lejos" (parte del anti-orbiting).
-    -- NOTA: si flyAnim está disponible, updateSnapToTarget() lo maneja
-    -- internamente cada frame; omitir aquí para evitar doble-ejecución.
-    if not flyAnim then
-        local noFloor = false
-        do
-            local rpCheck = RaycastParams.new()
-            rpCheck.FilterType = Enum.RaycastFilterType.Exclude
-            if lplr and lplr.Character then rpCheck.FilterDescendantsInstances = {lplr.Character} end
-            local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
-            noFloor = (hitCheck == nil)
-        end
-        local heightDiff = targetRoot2.Position.Y - root2.Position.Y
-        if noFloor and not isnan(heightDiff) and heightDiff > 10 then
-            local toTarget = targetRoot2.Position - root2.Position
-            if toTarget.Magnitude > 0.01 then
-                local newPos = targetRoot2.Position - (toTarget.Unit * 5)
-                if safepos(newPos) then
-                    pcall(function() root2.CFrame = CFrame.new(newPos, targetRoot2.Position) end)
+    -- ── TP "turbo detrás del objetivo" ──────────────────────────────
+    -- Solo en modo "turbo", target a <=15 studs, sin suelo debajo y
+    -- el target al menos 10 studs por encima nuestro.
+    if flyMode == "turbo" then
+        local dist3D = (targetRoot2.Position - root2.Position).Magnitude
+        if not isnan(dist3D) and dist3D <= 15 then
+            local noFloor = false
+            do
+                local rpCheck = RaycastParams.new()
+                rpCheck.FilterType = Enum.RaycastFilterType.Exclude
+                if lplr and lplr.Character then rpCheck.FilterDescendantsInstances = {lplr.Character} end
+                local hitCheck = workspace:Raycast(root2.Position, Vector3.new(0, -5, 0), rpCheck)
+                noFloor = (hitCheck == nil)
+            end
+            local heightDiffTP = targetRoot2.Position.Y - root2.Position.Y
+            if noFloor and not isnan(heightDiffTP) and heightDiffTP > 10 then
+                local toTarget = targetRoot2.Position - root2.Position
+                if toTarget.Magnitude > 0.01 then
+                    local newPos = targetRoot2.Position - (toTarget.Unit * 5)
+                    if safepos(newPos) then
+                        pcall(function()
+                            root2.CFrame = CFrame.new(newPos, targetRoot2.Position)
+                            root2.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                            root2.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        end)
+                    end
                 end
             end
         end
@@ -1010,6 +1042,75 @@ end
 function M.GetLockKey()  return L.lockKey end
 function M.IsActive()    return L.lockActive end
 function M.GetTarget()   return L.lockedTarget end
+
+-- ──────────────────────────────────────────────────────────────────
+-- API DE ESTADO PÚBLICO (lock activo · target · vida · distancia)
+-- ──────────────────────────────────────────────────────────────────
+
+-- M.IsLockActive() -> true/false
+-- true solo si hay lock activo Y el target sigue siendo válido.
+function M.IsLockActive()
+    return L.lockActive == true
+        and L.lockedTarget ~= nil
+        and isTargetValidForLock(L.lockedTarget)
+end
+
+-- M.GetTargetInfo() -> Player | nil
+-- Devuelve la instancia Player del objetivo actualmente fijado,
+-- o nil si no hay lock activo / target inválido.
+function M.GetTargetInfo()
+    if not M.IsLockActive() then return nil end
+    return L.lockedTarget
+end
+
+-- M.GetTargetHealth() -> number, number  (health, maxHealth)
+-- Devuelve 0, 0 si no hay lock activo o el Humanoid no existe.
+function M.GetTargetHealth()
+    if not M.IsLockActive() then return 0, 0 end
+    local char = L.lockedTarget.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return 0, 0 end
+    return math.max(hum.Health, 0), math.max(hum.MaxHealth, 1)
+end
+
+-- M.GetTargetDistance() -> number | nil
+-- Distancia 3D (en studs) entre el jugador y el target, o nil si
+-- no hay lock activo o falta algún HumanoidRootPart.
+function M.GetTargetDistance()
+    if not M.IsLockActive() then return nil end
+    local myChar = lplr and lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local tChar  = L.lockedTarget.Character
+    local tRoot  = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot or not tRoot then return nil end
+    local dist = (myRoot.Position - tRoot.Position).Magnitude
+    if isnan(dist) then return nil end
+    return dist
+end
+
+-- M.GetStatus() -> table
+-- Snapshot completo del estado del Lock en una sola llamada:
+--   {
+--     lockActive   = true/false,
+--     target       = Player | nil,
+--     targetName   = string | nil,
+--     health       = number,
+--     maxHealth    = number,
+--     distance     = number | nil,
+--   }
+function M.GetStatus()
+    local active = M.IsLockActive()
+    local health, maxHealth = M.GetTargetHealth()
+    return {
+        lockActive = active,
+        target     = active and L.lockedTarget or nil,
+        targetName = active and L.lockedTarget.Name or nil,
+        health     = health,
+        maxHealth  = maxHealth,
+        distance   = M.GetTargetDistance(),
+    }
+end
+
 
 -- El módulo de Fly debe llamar esto una vez al iniciar, pasando una
 -- función que devuelva `flyanim.enabled` (o flyModule.IsEnabled()).
