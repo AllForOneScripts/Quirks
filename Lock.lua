@@ -459,10 +459,6 @@ local function updateLockInfoGui()
                 local behindDir = toTargetH.Magnitude > 0.1 and -toTargetH.Unit or Vector3.new(0, 0, 1)
                 local tpPos = root.Position + behindDir * 3
                 if safepos(tpPos) then
-                    -- Si el TP es desde una altura significativa, lo
-                    -- reportamos al Fly mediante M.onPreTeleportHeight
-                    -- para que su watchdog de altura dispare la caída
-                    -- épica al apagar el vuelo (igual que antes).
                     local preTPHeight = 0
                     do
                         local rp4 = RaycastParams.new()
@@ -525,15 +521,6 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [7b] GIRO SUAVE DEL HRP  (lógica de soft.lua integrada en lock)
 -- ──────────────────────────────────────────────────────────────────
--- Mientras el lock está activo, rota el cuerpo del jugador
--- suavemente hacia el target (igual que soft.lua durante sus 0.75s).
--- Solo aplica el eje Y (horizontal): no inclina el torso.
--- Preserva la velocidad lineal para no interrumpir el movimiento.
---
--- Diferencia clave con la cámara de lock:
---   updateLockCamera → mueve la CÁMARA para mirar al target
---   updateSoftBodyRotation → gira el HRP (el CUERPO) hacia el target
---
 local function updateSoftBodyRotation()
     if not L.softBodyRotation then return end
     if not L.lockActive or not L.lockedTarget then return end
@@ -542,19 +529,15 @@ local function updateSoftBodyRotation()
     local myChar = lplr and lplr.Character
     local hrp    = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    -- Apuntamos al UpperTorso si existe, si no al HRP del target.
     local aimPart = tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("HumanoidRootPart")
     if not aimPart then return end
-    -- Solo rotación horizontal: mantenemos la Y del propio jugador.
     local lookTarget = Vector3.new(aimPart.Position.X, hrp.Position.Y, aimPart.Position.Z)
     if (lookTarget - hrp.Position).Magnitude <= 0.1 then return end
     local _, curYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
     local _, tarYaw, _ = CFrame.lookAt(hrp.Position, lookTarget):ToEulerAnglesYXZ()
-    -- Diferencia angular más corta (wrapping a [-π, π])
     local diff = tarYaw - curYaw
     if diff >  math.pi then diff = diff - 2 * math.pi end
     if diff < -math.pi then diff = diff + 2 * math.pi end
-    -- Preservar velocidad exactamente como lo hace soft.lua
     local savedVel = hrp.AssemblyLinearVelocity
     pcall(function()
         hrp.CFrame = CFrame.new(hrp.Position)
@@ -562,22 +545,12 @@ local function updateSoftBodyRotation()
         hrp.AssemblyLinearVelocity = savedVel
     end)
 end
+
 -- ──────────────────────────────────────────────────────────────────
 -- [7c] SUB-SISTEMAS FLY+LOCK  (brake · BodyGyro · snap-to-target)
---
--- Estos tres sistemas solo se activan cuando:
---   a) fly.lua llamó M.SetFlyAnimRef(flyanim)   → flyAnim ~= nil
---   b) isFlyEnabledFn() == true                 → el vuelo está ON
---   c) L.lockActive == true                      → hay un target fijado
---
--- Se llaman cada frame desde el RenderStepped de startLockSystem.
 -- ──────────────────────────────────────────────────────────────────
 
 -- [A] FRENO (Brake)
--- Réplica exacta de startBrakeSystem() de Fly v2.10.
--- Reduce dashVel de forma gradual entre BRAKE_DISTANCE y BRAKE_HARD_DISTANCE,
--- y lo anula completamente al llegar a BRAKE_HARD_DISTANCE.
--- Requiere flyAnim (modifica .dashVel, .dashTimer, .brakingActive directamente).
 local function updateBrakeSystem()
     if not isFlyEnabledFn() or not flyAnim then
         if flyAnim then flyAnim.brakingActive = false end
@@ -601,12 +574,10 @@ local function updateBrakeSystem()
     local dist = (myRoot.Position - tRoot.Position).Magnitude
     if isnan(dist) then return end
     if dist <= BRAKE_HARD_DISTANCE then
-        -- Freno total: detener el dash inmediatamente
         flyAnim.dashVel       = Vector3.new(0, 0, 0)
         flyAnim.dashTimer     = 0
         flyAnim.brakingActive = false
     elseif dist <= BRAKE_DISTANCE then
-        -- Frenado gradual proporcional a la proximidad al target
         local t = 1 - ((dist - BRAKE_HARD_DISTANCE) / (BRAKE_DISTANCE - BRAKE_HARD_DISTANCE))
         local brakeFactor = 1 - (t * 0.92)
         flyAnim.dashVel       = flyAnim.dashVel * math.max(brakeFactor, 0.05)
@@ -617,10 +588,6 @@ local function updateBrakeSystem()
 end
 
 -- [B] ROTACIÓN BODYGYRO
--- Réplica exacta del bloque "lockActive" dentro del rsConn de Fly v2.10.
--- Dirige el BodyGyro del jugador hacia el target (rotación 3D: arriba/abajo + yaw).
--- Requiere flyAnim con .bg activo. Si flyAnim no está disponible,
--- el fallback es M.GetAimCFrame (hook que Fly llama manualmente).
 local function updateBodyGyroRotation()
     if not isFlyEnabledFn() or not flyAnim then return end
     local bg = flyAnim.bg
@@ -642,15 +609,7 @@ local function updateBodyGyroRotation()
     pcall(function() bg.cframe = bg.cframe:Lerp(desiredCF, smooth) end)
 end
 
--- [C] SNAP-TO-TARGET  (TP en turbo / "estar en tu target")
--- Réplica del bloque noFloor dentro del tpMoveConn de Fly v2.10.
--- Condiciones: fly activo · modo fast/turbo · W presionado · lock activo
---              · sin suelo a 5 studs bajo el jugador · target >10 studs más alto.
--- Cuando se cumplen, TP al jugador a 5 studs detrás del target mirando hacia él.
--- Registra la altura pre-TP en flyAnim.maxHeightAboveGround para que _flyOff
--- dispare la caída épica aunque el TP nos deje justo al nivel del suelo.
--- Nota: cuando flyAnim está disponible, M.ApplyAntiOrbit omite este bloque
--- para evitar ejecución doble.
+-- [C] SNAP-TO-TARGET
 local function updateSnapToTarget()
     if not isFlyEnabledFn() or not flyAnim then return end
     if flyAnim.mode ~= "fast" and flyAnim.mode ~= "turbo" then return end
@@ -662,14 +621,12 @@ local function updateSnapToTarget()
     local tChar = L.lockedTarget.Character
     local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not tRoot or not safepos(tRoot.Position) then return end
-    -- Detectar ausencia de suelo (≤5 studs bajo el jugador)
     local rpSnap = RaycastParams.new()
     rpSnap.FilterType = Enum.RaycastFilterType.Exclude
     if myChar then rpSnap.FilterDescendantsInstances = {myChar} end
     if workspace:Raycast(myRoot.Position, Vector3.new(0, -5, 0), rpSnap) then return end
     local heightDiff = tRoot.Position.Y - myRoot.Position.Y
     if isnan(heightDiff) or heightDiff <= 10 then return end
-    -- Registrar altura pre-TP en el watchdog de caída épica de Fly
     local preH = 0
     do
         local rpH = RaycastParams.new()
@@ -678,7 +635,6 @@ local function updateSnapToTarget()
         local rayH = workspace:Raycast(myRoot.Position, Vector3.new(0, -3000, 0), rpH)
         if rayH then preH = myRoot.Position.Y - rayH.Position.Y end
     end
-    -- TP: 5 studs detrás del target, mirando hacia él
     local toTarget = tRoot.Position - myRoot.Position
     if toTarget.Magnitude <= 0.01 then return end
     local newPos = tRoot.Position - (toTarget.Unit * 5)
@@ -689,6 +645,7 @@ local function updateSnapToTarget()
         end
     end
 end
+
 -- ──────────────────────────────────────────────────────────────────
 -- [8]  TOGGLE / START / STOP
 -- ──────────────────────────────────────────────────────────────────
@@ -718,10 +675,6 @@ local function startLockSystem()
     end)
 
     L.lockRenderConn = RunService.RenderStepped:Connect(function()
-        -- Polling de IsEnabled(): OnStateChanged no es confiable en
-        -- algunos builds de Fly, así que cada frame se relee el
-        -- estado real directamente. Coste despreciable (una llamada
-        -- a función ya local al módulo Fly).
         if L._flyIsEnabledFn then
             local ok, state = pcall(L._flyIsEnabledFn)
             if ok then
@@ -750,15 +703,8 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [9]  GUI EMBEBIBLE — sección "LOCK" del HUD de Fly
 -- ──────────────────────────────────────────────────────────────────
--- Altura recomendada de la sección (igual que la original H_LOCK = 38)
 local HUD_SECTION_HEIGHT = 38
 
--- BuildHUDLockSection(expandZone, makeSection, makeRow, colors)
---   expandZone : Frame contenedor donde va la sección (del HUD de Fly)
---   makeSection: función(h, bgColor, strokeColor) -> Frame  (del HUD de Fly)
---   makeRow    : función(parent, yPos) -> Frame              (del HUD de Fly)
---   colors     : tabla { SEC1=, ACCENT=, GOLD=, TEXT=, SUBTEXT= }
--- Devuelve el Frame de la sección creada.
 local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
         colors.SEC1, colors.ACCENT, colors.GOLD, colors.TEXT, colors.SUBTEXT
@@ -799,20 +745,6 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [10] HOOKS PARA FLY
 -- ──────────────────────────────────────────────────────────────────
-
--- [SUB-SISTEMA 3] Rotación Y (mirar arriba/abajo hacia el target)
---
--- Llamar cada frame desde el loop del BodyGyro del Fly:
---
---   local desiredCF, smooth = LockModule.GetAimCFrame(root.Position, flyanim.dashVel.Magnitude)
---   if desiredCF then
---       flyanim.bg.cframe = flyanim.bg.cframe:Lerp(desiredCF, smooth)
---   else
---       -- ... lógica normal de rotación basada en cámara/movimiento ...
---   end
---
--- Devuelve nil si: el Fly está apagado, no hay lock activo, o el
--- objetivo dejó de ser válido (en ese caso también limpia el lock).
 local function getAimCFrame(rootPosition, dashMagnitude)
     if not isFlyEnabledFn() then return nil end
     if not L.lockActive or not L.lockedTarget then return nil end
@@ -829,20 +761,6 @@ local function getAimCFrame(rootPosition, dashMagnitude)
     return desiredCF, smooth
 end
 
--- [SUB-SISTEMA 2] Anti-orbiting
---
--- Llamar cada frame desde el loop de movimiento (Stepped) del Fly,
--- ANTES de aplicar `move` con cc:TranslateBy(...):
---
---   move = LockModule.ApplyAntiOrbit(root2, move, flyanim.mode, wD)
---
--- root2 : HumanoidRootPart del jugador
--- move  : Vector3 de movimiento ya calculado (cámara + WASD)
--- mode  : flyanim.mode ("normal" | "fast" | "turbo" | "megaup")
--- wD    : true si la tecla W está presionada
---
--- Si el Fly está apagado, o no aplica (no es fast/turbo, no hay lock,
--- o W no está presionado), devuelve `move` sin modificar.
 local function applyAntiOrbit(root2, move, mode, wD)
     if not isFlyEnabledFn() then
         L.straightLineActive = false
@@ -859,11 +777,6 @@ local function applyAntiOrbit(root2, move, mode, wD)
     local targetRoot2 = targetChar2:FindFirstChild("HumanoidRootPart")
     if not targetRoot2 or not safepos(targetRoot2.Position) then return move end
 
-    -- Si no hay suelo bajo nosotros y el objetivo está muy por encima,
-    -- nos colocamos justo detrás/al lado del objetivo para evitar
-    -- quedar "flotando lejos" (parte del anti-orbiting).
-    -- NOTA: si flyAnim está disponible, updateSnapToTarget() lo maneja
-    -- internamente cada frame; omitir aquí para evitar doble-ejecución.
     if not flyAnim then
         local noFloor = false
         do
@@ -885,8 +798,6 @@ local function applyAntiOrbit(root2, move, mode, wD)
         end
     end
 
-    -- Redirección del vector de movimiento para evitar "orbitar" al
-    -- objetivo cuando estamos cerca pero a una altura muy distinta.
     local toTarget3D = targetRoot2.Position - root2.Position
     local horDist2   = Vector3.new(toTarget3D.X, 0, toTarget3D.Z).Magnitude
     local vertDiff   = math.abs(toTarget3D.Y)
@@ -916,21 +827,6 @@ end
 -- ──────────────────────────────────────────────────────────────────
 local M = {}
 
--- M.Start(lplrRef, lockKeyCode, flyModuleRef)
---   lplrRef      : Players.LocalPlayer (o referencia)
---   lockKeyCode  : Enum.KeyCode opcional (default X)
---   flyModuleRef : (opcional) referencia al módulo Fly (M de fly_con_lock).
---                  Si tiene .IsEnabled(), lock.lua lo relee cada frame
---                  (polling en RenderStepped) para mantener
---                  isFlyEnabledFn sincronizado con el estado real.
---                  NOTA: .OnStateChanged NO se usa — en builds actuales
---                  de Fly existe pero nunca dispara eventos, así que
---                  el polling de IsEnabled() es la fuente confiable.
---
--- NOTA GUI: el panel de información (lockInfoGui) NO se crea aquí.
--- Solo se crea cuando el jugador fija un objetivo (toggleLock -> ON),
--- y se destruye cuando se suelta el lock (toggleLock -> OFF) o al
--- llamar M.Stop(). Así "no carga gui" == "no hay target", por diseño.
 function M.Start(lplrRef, lockKeyCode, flyModuleRef)
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
@@ -950,8 +846,6 @@ function M.Stop()
     stopLockSystem()
 end
 
--- Activa/desactiva manualmente el lock sobre el objetivo más cercano
--- al cursor (equivalente a presionar la tecla de lock).
 function M.Toggle()
     toggleLock()
 end
@@ -962,7 +856,6 @@ function M.SetLockKey(keyCode)
         L.lockLabels.label.Text = FT.lock_label .. "  [" .. keyCode.Name .. "]"
         L.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
     end
-    -- Reconectar el InputBegan con la nueva tecla
     if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
     L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe or isTyping() then return end
@@ -974,58 +867,47 @@ function M.GetLockKey()  return L.lockKey end
 function M.IsActive()    return L.lockActive end
 function M.GetTarget()   return L.lockedTarget end
 
--- El módulo de Fly debe llamar esto una vez al iniciar, pasando una
--- función que devuelva `flyanim.enabled` (o flyModule.IsEnabled()).
--- Mientras no se llame, los 3 sub-sistemas condicionados permanecen
--- desactivados.
+-- ── GetMode ────────────────────────────────────────────────────────
+-- Devuelve el modo de vuelo actual como cadena legible:
+--   "normal"     → modo base         (flyanim.mode == "normal")
+--   "turbo"      → modo fast         (flyanim.mode == "fast")
+--   "mega turbo" → modo mega         (flyanim.mode == "turbo")
+--   "mega up"    → modo mega up      (flyanim.mode == "megaup")
+-- Devuelve nil si el vuelo está apagado o flyAnim no está conectado.
+-- Requiere haber llamado M.SetFlyAnimRef(flyanim) previamente.
+function M.GetMode()
+    if not flyAnim then return nil end
+    if not flyAnim.enabled then return nil end
+    local map = {
+        ["normal"] = "normal",
+        ["fast"]   = "turbo",
+        ["turbo"]  = "mega turbo",
+        ["megaup"] = "mega up",
+    }
+    return map[flyAnim.mode] or flyAnim.mode
+end
+
 function M.SetFlyEnabledProvider(fn)
     if type(fn) == "function" then
         isFlyEnabledFn = fn
     end
 end
 
--- ── INTEGRACIÓN PROFUNDA CON FLY ────────────────────────────────────
--- Fly debe llamar esto UNA VEZ en M.Start, pasando su tabla flyanim:
---
---   LockModule.SetFlyAnimRef(flyanim)
---
--- Con esto los cuatro sub-sistemas vuelan-lock pasan a ser auto-contenidos:
---
---   A) Brake       → modifica flyanim.dashVel / .dashTimer / .brakingActive
---   B) BodyGyro    → modifica flyanim.bg.cframe hacia el target (3D)
---   C) Snap-to-target → TP al jugador a 5 studs del target en turbo/fast
---   D) TP "abajo"  → ya auto-contenido (updateLockInfoGui + isFlyEnabledFn)
---
--- Sin esta llamada, A/B/C no se ejecutan (flyAnim == nil).
--- Los hooks M.GetAimCFrame y M.ApplyAntiOrbit siguen disponibles
--- como fallback para integraciones manuales sin ref directa.
--- ────────────────────────────────────────────────────────────────────
 function M.SetFlyAnimRef(ref)
     flyAnim = ref
 end
 function M.GetFlyAnimRef() return flyAnim end
 
--- Activa o desactiva el giro suave del HRP importado de soft.lua.
--- Por defecto está activado (true). Llamar con false para desactivarlo.
 function M.SetSoftBodyRotation(enabled)
     L.softBodyRotation = (enabled == true or enabled == nil)
 end
 function M.GetSoftBodyRotation() return L.softBodyRotation end
 
--- Callback opcional: se invoca con la altura (en studs) que tenía el
--- jugador justo antes de un TP "estar abajo de" disparado por el
--- sub-sistema 1, para que el Fly pueda registrarlo en su watchdog de
--- altura (maxHeightAboveGround) y así disparar la caída épica al
--- desactivar el vuelo.
 function M.SetPreTeleportHeightCallback(fn)
     L.onPreTeleportHeight = fn
 end
 
--- LEGACY: expuestos por compatibilidad con integraciones antiguas que
--- llamaban CreateInfoGui/DestroyInfoGui desde el HUD del Fly. lock.lua
--- YA NO los usa internamente: la GUI se crea/destruye automáticamente
--- en toggleLock()/clearLock() según haya o no un target activo (punto 7).
--- Llamar M.CreateInfoGui manualmente forzaría la GUI sin target; evitar.
+-- LEGACY: compatibilidad con integraciones antiguas
 M.CreateInfoGui  = createLockInfoGui
 M.DestroyInfoGui = destroyLockInfoGui
 
@@ -1034,10 +916,9 @@ M.BuildHUDLockSection = buildHUDLockSection
 M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
 
 -- Hooks de Fly (sub-sistemas 2 y 3)
-M.GetAimCFrame  = getAimCFrame
+M.GetAimCFrame   = getAimCFrame
 M.ApplyAntiOrbit = applyAntiOrbit
 
--- Útil para que el Fly sepa si está en "línea recta forzada hacia el target"
 function M.IsStraightLineActive() return L.straightLineActive end
 
 return M
@@ -1049,28 +930,29 @@ return M
 
 A) CÓMO CARGAR lock.lua DESDE fly_con_lock.lua (uso inline, sin M global de AFO)
 ─────────────────────────────────────────────────────────────────────
-Mientras el script de Fly siga siendo INLINE (no modular), basta con
-ejecutar lock.lua y guardar la tabla devuelta:
+    local LockModule = loadstring(game:HttpGet("https://.../lock.lua"))()
 
-    local LockModule = loadstring(game:HttpGet(
-        "https://.../lock.lua"
-    ))()  -- o loadModule("Lock") si ya tienes ese loader
-
-    -- Conectar el estado de Fly con los 3 sub-sistemas condicionados
     LockModule.SetFlyEnabledProvider(function() return flyanim.enabled end)
+    LockModule.SetFlyAnimRef(flyanim)          -- habilita GetMode()
 
-    -- (Opcional) registrar altura previa a TPs "estar abajo de" en el
-    -- watchdog de altura del Fly, para conservar la caída épica:
     LockModule.SetPreTeleportHeightCallback(function(preTPHeight)
         if preTPHeight > (flyanim.maxHeightAboveGround or 0) then
             flyanim.maxHeightAboveGround = preTPHeight
         end
     end)
 
-    -- Iniciar el sistema de lock (independiente del estado del Fly)
     LockModule.Start(lplr, flyanim.lockKey)
 
-B) DÓNDE ENCAJAN LOS 3 SUB-SISTEMAS DENTRO DEL FLY INLINE
+B) USO DE GetMode()
+─────────────────────────────────────────────────────────────────────
+    local mode = LockModule.GetMode()
+    -- "normal"     → modo base
+    -- "turbo"      → fast
+    -- "mega turbo" → turbo (mega)
+    -- "mega up"    → megaup
+    -- nil          → vuelo apagado o flyAnim no conectado
+
+C) DÓNDE ENCAJAN LOS 3 SUB-SISTEMAS DENTRO DEL FLY INLINE
 ─────────────────────────────────────────────────────────────────────
 1) Rotación Y (BodyGyro, dentro del rsConn de _flyMakeMotors):
 
@@ -1079,141 +961,48 @@ B) DÓNDE ENCAJAN LOS 3 SUB-SISTEMAS DENTRO DEL FLY INLINE
         if desiredCF then
             flyanim.bg.cframe = flyanim.bg.cframe:Lerp(desiredCF, smooth)
         else
-            -- ... bloque original "else" de movimiento normal/fast/megaup ...
+            -- ... bloque original de movimiento normal/fast/megaup ...
         end
     end
 
-2) Anti-orbiting (dentro del tpMoveConn, justo antes de calcular `move`
-   final con cam.CFrame.LookVector/RightVector):
+2) Anti-orbiting (dentro del tpMoveConn, antes de TranslateBy):
 
-    local move = Vector3.new()
-    if wD then move = move + cam.CFrame.LookVector end
-    if sD then move = move - cam.CFrame.LookVector end
-    if aD then move = move - cam.CFrame.RightVector end
-    if dD then move = move + cam.CFrame.RightVector end
     move = LockModule.ApplyAntiOrbit(root2, move, flyanim.mode, wD)
-    -- (flyanim.straightLineActive ya no se usa directamente; si algo
-    --  más del script lo lee, usar LockModule.IsStraightLineActive())
 
-3) TP "estar abajo de" (sub-sistema 1): no requiere ningún cambio en
-   el Fly, ya está resuelto dentro de lock.lua (updateLockInfoGui),
-   gateado por LockModule.SetFlyEnabledProvider(...).
+3) TP "estar abajo de": auto-contenido en lock.lua (updateLockInfoGui),
+   gateado por SetFlyEnabledProvider.
 
-C) GUI — PANEL INFO Y SECCIÓN "LOCK" DEL HUD
+D) GUI
 ─────────────────────────────────────────────────────────────────────
-- En _flyBuildGui, donde antes se llamaba `createLockInfoGui(root)`,
-  ahora llamar: `LockModule.CreateInfoGui(root)`.
-
-- En la construcción del panel expandible, donde antes se armaba
-  `lockSec`/`lockRow` manualmente, ahora:
-
     local lockSec = LockModule.BuildHUDLockSection(expandZone, makeSection, makeRow, {
         SEC1=C_SEC1, ACCENT=C_ACCENT, GOLD=C_GOLD, TEXT=C_TEXT, SUBTEXT=C_SUBTEXT,
     })
-    -- usar LockModule.HUD_SECTION_HEIGHT en lugar de H_LOCK al calcular CONTENT_H
-
-- En _flyDestroyGui, donde antes se hacía `flyanim.lockInfoGui = nil`,
-  ahora llamar: `LockModule.DestroyInfoGui()`.
-
-D) KEYBIND DE LOCK (tecla X)
-─────────────────────────────────────────────────────────────────────
-Reemplazar M.SetLockKey(flyanim, keyCode)/flyanim.lockKey por:
-
-    LockModule.SetLockKey(keyCode)
-
-y la API pública del Fly (M.SetLockKey / M.GetLockKey) puede delegar
-directamente en LockModule.SetLockKey / LockModule.GetLockKey.
 
 E) _flyOn / _flyOff
 ─────────────────────────────────────────────────────────────────────
-- En _flyOn: ya NO es necesario llamar startLockSystem() — lock.lua
-  ya está corriendo desde que se llamó LockModule.Start(). Solo asegúrate
-  de llamar LockModule.CreateInfoGui(root) al reconstruir el HUD.
-
-- En _flyOff: ya NO es necesario llamar stopLockSystem() (lock sigue
-  activo aunque el Fly se apague — así el jugador conserva su target).
-  Si se desea apagar el lock junto con el Fly, llamar LockModule.Stop()
-  explícitamente y LockModule.Start(...) de nuevo al reactivar el Fly.
+- En _flyOn: NO llamar startLockSystem() — lock ya corre desde Start().
+- En _flyOff: NO llamar stopLockSystem() — lock permanece activo.
+  Si se quiere apagar junto con el Fly, llamar M.Stop() explícitamente.
 
 ╔══════════════════════════════════════════════════════════════════╗
-║  [13]  CÓMO CONVERTIR fly_con_lock.lua A UN MÓDULO "Fly" (M)      ║
-║  (siguiendo el patrón de "Fly 25 fixed" que ya usa loadModule)    ║
+║  [13]  INTEGRACIÓN MODULAR (patrón loadModule)                    ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-El bloque final del script (sección [29] API PÚBLICA) ya define una
-tabla `M` con Start/Stop/Toggle/SetKey/SetLockKey/GetFlyKey/GetLockKey
-/IsEnabled y hace `return M`. Para que fly_con_lock.lua se comporte
-EXACTAMENTE como el "Fly 25 fixed" del snippet de referencia (cargado
-vía `flyModule = loadModule("Fly")`), los pasos son:
+    -- En M.Start de fly_con_lock.lua:
+    LockModule = LockModule or loadModule("Lock")
+    if LockModule then
+        LockModule.SetFlyEnabledProvider(function() return flyanim.enabled end)
+        LockModule.SetFlyAnimRef(flyanim)
+        LockModule.SetPreTeleportHeightCallback(function(h)
+            if h > (flyanim.maxHeightAboveGround or 0) then
+                flyanim.maxHeightAboveGround = h
+            end
+        end)
+        LockModule.Start(lplr, flyanim.lockKey)
+    end
 
-  1. Quitar cualquier `print(...)`/ejecución inmediata de nivel de
-     módulo que dependa de `lplr`/`camera` antes de que M.Start() los
-     asigne (actualmente `lplr` y `camera` ya se asignan dentro de
-     M.Start, así que esto ya está bien).
-
-  2. Asegurarse de que TODO el código que antes corría "al cargar el
-     script" (conexiones globales, _connectGlobal, etc.) se dispare
-     SOLO desde M.Start(lplrRef, flyKey), nunca fuera de `M`.
-
-  3. Empaquetar este archivo (fly_con_lock.lua) como el contenido que
-     devuelve `loadModule("Fly")`, es decir, que el loader haga:
-
-         local flyModule = loadstring(<contenido de fly_con_lock.lua>)()
-
-     y reciba la tabla `M` (return M al final, que ya existe).
-
-  4. En el script principal (AllForOne), sustituir el código inline
-     de Fly por el snippet ya provisto por el usuario:
-
-         local flyModule = nil
-         local function flyInitialize()
-             flyModule = loadModule("Fly")
-             if flyModule then
-                 flyModule.Start(lplr, Keys.Fly)
-                 if flyModule.SetLockKey then
-                     flyModule.SetLockKey(Keys.FlyLock)
-                 end
-                 flyModule.Toggle(false)
-                 ...
-             end
-         end
-
-  5. Conectar lock.lua DENTRO de fly_con_lock.lua justo en M.Start:
-
-         function M.Start(lplrRef, flyKey)
-             lplr   = lplrRef or Players.LocalPlayer
-             camera = workspace.CurrentCamera
-             if flyKey then flyanim.flyKey = flyKey end
-             _reloadFT()
-
-             LockModule = LockModule or loadModule("Lock")
-             if LockModule then
-                 LockModule.SetFlyEnabledProvider(function() return flyanim.enabled end)
-                 LockModule.SetPreTeleportHeightCallback(function(h)
-                     if h > (flyanim.maxHeightAboveGround or 0) then
-                         flyanim.maxHeightAboveGround = h
-                     end
-                 end)
-                 LockModule.Start(lplr, flyanim.lockKey)
-             end
-
-             _connectGlobal()
-         end
-
-         function M.SetLockKey(keyCode)
-             flyanim.lockKey = keyCode
-             if LockModule then LockModule.SetLockKey(keyCode) end
-         end
-
-         function M.GetLockKey()
-             return LockModule and LockModule.GetLockKey() or flyanim.lockKey
-         end
-
-  6. Aplicar los cambios de la sección [12] B) y C) para conectar los
-     3 sub-sistemas condicionados y la GUI.
-
-Con esto, fly_con_lock.lua queda 100% compatible con el patrón modular
-de "Fly 25 fixed" (Start/Toggle/SetKey/SetLockKey/IsEnabled vía M),
-y lock.lua queda como un módulo hermano ("Lock") cargable de la misma
-forma con `loadModule("Lock")`.
+    -- En la API pública de fly_con_lock.lua:
+    function M.GetMode()
+        return LockModule and LockModule.GetMode()
+    end
 --]]
