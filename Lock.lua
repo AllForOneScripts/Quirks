@@ -745,10 +745,14 @@ local function updateSnapToTarget()
 end
 
 -- [D] TP TURBO DETRÁS DEL OBJETIVO ────────────────────────────────
--- Condiciones INDEPENDIENTES — cualquiera sola activa el TP:
---   A) turbo activo  +  dist3D <= 15  (cerca del target)
---   B) turbo activo  +  sin suelo bajo los pies  (volando)
---   C) turbo activo  +  target muy por encima (heightDiff > 10)
+--
+-- Condición A: fly activo + turbo + dist3D <= 15 (cerca del target)
+-- Condición B: fly activo + turbo + vacío real debajo (raycast -50)
+-- Condición C: fly activo + turbo + distancia horizontal <= 50
+--              Y target está >= 10 studs por encima
+--
+-- Basta con que UNA condición sea verdadera para ejecutar el TP.
+-- ─────────────────────────────────────────────────────────────────
 local function updateTurboTP()
     if not isFlyEnabledFn() then return end
 
@@ -764,23 +768,34 @@ local function updateTurboTP()
     local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not tRoot or not safepos(tRoot.Position) then return end
 
-    -- Evaluar cada condición por separado
+    -- Distancia 3D total
     local dist3D = (tRoot.Position - myRoot.Position).Magnitude
     if isnan(dist3D) then return end
 
-    local condA = dist3D <= 15  -- cerca del target
+    -- Condición A: a 15 studs o menos del target (distancia 3D)
+    local condA = dist3D <= 15
 
+    -- Condición B: vacío real debajo (raycast de 50 studs hacia abajo)
     local noFloor = false
     do
         local rpCheck = RaycastParams.new()
         rpCheck.FilterType = Enum.RaycastFilterType.Exclude
         if myChar then rpCheck.FilterDescendantsInstances = { myChar } end
-        noFloor = workspace:Raycast(myRoot.Position, Vector3.new(0, -5, 0), rpCheck) == nil
+        noFloor = workspace:Raycast(myRoot.Position, Vector3.new(0, -50, 0), rpCheck) == nil
     end
-    local condB = noFloor  -- sin suelo (volando)
+    local condB = noFloor
 
+    -- Condición C: distancia horizontal <= 50 Y target >= 10 studs por encima
+    local horizontalDist = Vector3.new(
+        tRoot.Position.X - myRoot.Position.X,
+        0,
+        tRoot.Position.Z - myRoot.Position.Z
+    ).Magnitude
     local heightDiffTP = tRoot.Position.Y - myRoot.Position.Y
-    local condC = not isnan(heightDiffTP) and heightDiffTP > 10  -- target muy por encima
+    local condC = not isnan(heightDiffTP)
+        and not isnan(horizontalDist)
+        and heightDiffTP >= 10
+        and horizontalDist <= 50
 
     -- Basta con que UNA condición sea verdadera
     if not (condA or condB or condC) then return end
