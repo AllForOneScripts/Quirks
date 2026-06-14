@@ -6,6 +6,15 @@
 ║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
+  MODOS INTERNOS (flyanim.mode):
+    "normal"     → vuelo base
+    "turbo"      → antes "fast"    (Q una vez)
+    "mega turbo" → antes "turbo"   (Q dos veces)
+    "mega up"    → antes "megaup"  (Space sostenido)
+
+  getgenv().AFO_FLYMODE  → modo actual (string)
+  getgenv().AFO_FLYSTATE → true/false (¿volando?)
+
   ÍNDICE DE SECCIONES
   ───────────────────
   [1]  SERVICIOS
@@ -1105,7 +1114,7 @@ local function manejarEspacioSoltadoNormal()
     flyanim.isSpaceAdv = false
     if flyanim.noclipSpaceActive then
         flyanim.noclipSpaceActive = false
-        if flyanim.mode ~= "turbo" and not flyanim.noclipCtrlActive then
+        if flyanim.mode ~= "mega turbo" and not flyanim.noclipCtrlActive then
             setNoclip(false)
         end
     end
@@ -1239,7 +1248,7 @@ local function iniciarPoseTurbo()
     task.spawn(function()
         local function debeAbortar()
             if flyanim.turboPreImpulsoToken ~= myToken then return true end
-            if not flyanim.enabled or flyanim.mode ~= "fast" then return true end
+            if not flyanim.enabled or flyanim.mode ~= "turbo" then return true end
             return false
         end
 
@@ -1257,8 +1266,10 @@ local function iniciarPoseTurbo()
             if nt.turbo_volado  then pcall(function() nt.turbo_volado:Stop(0.05) end) end
             for _, t in pairs(flyanim.tracks) do pcall(function() if t and t.IsPlaying then t:Stop(0.05) end end) end
             for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0.05) end end) end
-            if flyanim.mode == "fast" then
+            if flyanim.mode == "turbo" then
                 flyanim.mode  = "normal"
+                getgenv().AFO_FLYMODE  = flyanim.mode
+                getgenv().AFO_FLYSTATE = flyanim.enabled
                 flyanim.speed = BASE_SPEED
                 if flyanim.updateMode then flyanim.updateMode("normal") end
             end
@@ -1362,7 +1373,7 @@ local function iniciarPoseTurbo()
         if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect() end
         local myC0TkLoop = flyanim.c0ControlToken
         flyanim.turboRenderConn = RunService.RenderStepped:Connect(function()
-            if not flyanim.enabled or flyanim.mode ~= "fast" then
+            if not flyanim.enabled or flyanim.mode ~= "turbo" then
                 if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
                 if myC0TkLoop == flyanim.c0ControlToken then
                     detenerWatchdogAltura()
@@ -1397,7 +1408,7 @@ local function iniciarPoseTurbo()
         flyanim.turboTransitioning = false
         task.spawn(function()
             task.wait(0.1)
-            if not flyanim.enabled or flyanim.mode ~= "fast" then return end
+            if not flyanim.enabled or flyanim.mode ~= "turbo" then return end
             if flyanim.turboPreImpulsoActivo then return end
             flyanim.idleWatchToken = (flyanim.idleWatchToken or 0) + 1
             local myIdleToken = flyanim.idleWatchToken
@@ -1410,7 +1421,7 @@ local function iniciarPoseTurbo()
                 pcall(function() ntl.levitacion:AdjustSpeed(ANIM_NORMAL.VELOCIDAD_LEVITACION) end)
             end
             flyanim.idleAnimConn = RunService.Heartbeat:Connect(function(dt)
-                if not flyanim.enabled or flyanim.mode ~= "fast" then
+                if not flyanim.enabled or flyanim.mode ~= "turbo" then
                     if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn = nil end
                     return
                 end
@@ -1494,7 +1505,7 @@ local function iniciarPoseMega()
     if nt.mega_base   then nt.mega_base.Looped    = true; pcall(function() nt.mega_base:Play(0.2); nt.mega_base:AdjustSpeed(0.1) end) end
     if nt.mega_volado then nt.mega_volado.Looped  = true; pcall(function() nt.mega_volado:Play(0.2) end) end
     flyanim.megaRenderConn = RunService.RenderStepped:Connect(function()
-        if not flyanim.enabled or flyanim.mode ~= "turbo" then
+        if not flyanim.enabled or flyanim.mode ~= "mega turbo" then
             if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
             if myC0Token == flyanim.c0ControlToken then
                 detenerWatchdogAltura()
@@ -1563,13 +1574,13 @@ local function updateAnimForMovement()
             elseif dir == "back"  then playAnim(ANIM.back, true)
             else playAnim(ANIM.forward, true) end
         end
-    elseif mode == "fast" then
+    elseif mode == "turbo" then
         if flyanim.turboRenderConn then return end
         local enterFast = flyanim.tracks[ANIM.fast_enter]
         if enterFast and enterFast.IsPlaying then return end
         if not moving then playAnim(ANIM.fast_idle, true)
         else playAnim(ANIM.fast_move, true) end
-    elseif mode == "turbo" then
+    elseif mode == "mega turbo" then
         if flyanim.megaRenderConn then return end
         local enterTurbo = flyanim.tracks[ANIM.turbo_enter]
         if enterTurbo and enterTurbo.IsPlaying then return end
@@ -1964,7 +1975,7 @@ end
 
 local function createParticle(isMega)
     if not flyanim.enabled then return end
-    if flyanim.megaTurboUpActive or flyanim.mode == "megaup" then return end
+    if flyanim.megaTurboUpActive or flyanim.mode == "mega up" then return end
     local char = lplr and lplr.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -2036,13 +2047,13 @@ local function startParticleEmitter()
     flyanim.particleConn = task.spawn(function()
         while flyanim.enabled
             and flyanim.sessionToken == emitSession
-            and (flyanim.mode == "fast" or flyanim.mode == "turbo")
+            and (flyanim.mode == "turbo" or flyanim.mode == "mega turbo")
             and not flyanim.megaTurboUpActive
-            and flyanim.mode ~= "megaup"
+            and flyanim.mode ~= "mega up"
         do
             local char = lplr and lplr.Character
             if char and char:FindFirstChild("HumanoidRootPart") then
-                local isMega = (flyanim.mode == "turbo")
+                local isMega = (flyanim.mode == "mega turbo")
                 createParticle(isMega)
                 if isMega then task.wait(0.04); createParticle(true) end
             end
@@ -2169,14 +2180,14 @@ end
 local function speedWhiteFlash(mode)
     destroyWhiteFlash()
     -- Para mega up y turbo la velocidad efectiva es BASE_SPEED * TURBO_MULT
-    local effectiveSpeed = (mode == "turbo" or mode == "megaup")
+    local effectiveSpeed = (mode == "mega turbo" or mode == "mega up")
         and (BASE_SPEED * TURBO_MULT)
         or  BASE_SPEED
     local t = getBrightnessFactor(effectiveSpeed)
     if t <= 0 then return end
     local baseOpacity = 0.38
-    -- "megaup" tiene flash brillante igual que turbo (misma escala de velocidad)
-    local maxOpacity  = (mode == "turbo" or mode == "megaup") and (baseOpacity * 1.4) or baseOpacity
+    -- "mega up" tiene flash brillante igual que turbo (misma escala de velocidad)
+    local maxOpacity  = (mode == "mega turbo" or mode == "mega up") and (baseOpacity * 1.4) or baseOpacity
     local opacity     = maxOpacity * t
     local sg = Instance.new("ScreenGui")
     sg.Name="AFO_WhiteFlash"; sg.ResetOnSpawn=false
@@ -2740,9 +2751,9 @@ local function startIdleWatcher()
 
             -- ── Mega Up: cancela cuando el personaje está quieto ────────────
             -- (Space suelto ya lo cancela en el listener, esto es la capa idle)
-            -- Nota: en modo "megaup" megaTurboUpActive puede seguir en true mientras
+            -- Nota: en modo "mega up" megaTurboUpActive puede seguir en true mientras
             -- el loop corre; la condición correcta es solo chequear el modo y las teclas.
-            if flyanim.mode == "megaup" and not anyKey then
+            if flyanim.mode == "mega up" and not anyKey then
                 MegaUpLogic.Deactivate()
                 _megaUp_restaurarNormal()
                 -- Restaurar animaciones normales inmediatamente tras cancelar Mega Up por idle
@@ -2762,9 +2773,11 @@ local function startIdleWatcher()
             end
 
             -- ── Turbo / Fast: sin teclas → volver a normal ─────────────────
-            if (flyanim.mode == "fast" or flyanim.mode == "turbo") and not anyKey then
+            if (flyanim.mode == "turbo" or flyanim.mode == "mega turbo") and not anyKey then
                 local prevMode = flyanim.mode
                 flyanim.mode   = "normal"
+                getgenv().AFO_FLYMODE  = flyanim.mode
+                getgenv().AFO_FLYSTATE = flyanim.enabled
                 flyanim.speed  = BASE_SPEED
                 flyanim.qLastPress = 0
                 if flyanim.updateMode then flyanim.updateMode("normal") end
@@ -2773,9 +2786,9 @@ local function startIdleWatcher()
                 if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
                 if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
                 detenerWatchdogAltura()
-                if prevMode == "fast" then
+                if prevMode == "turbo" then
                     detenerPoseTurbo()
-                elseif prevMode == "turbo" then
+                elseif prevMode == "mega turbo" then
                     detenerPoseMega()
                     detenerPoseTurbo()
                 end
@@ -3396,10 +3409,10 @@ end
 --  · Comparte con Mega Turbo: sonido (SFX_MEGA_TURBO), lógica de
 --    aceleración (escala con TURBO_MULT) y expulsión de datos hacia
 --    la GUI.
---  · Es INDEPENDIENTE en: nombre de modo ("megaup"), partículas
+--  · Es INDEPENDIENTE en: nombre de modo ("mega up"), partículas
 --    (verticales, ver sección [17]), efectos VFX propios (cono hacia
 --    abajo en vez de anillos horizontales) y white flash propio.
---  · No llama "turbo" en ninguna parte; no genera partículas turbo.
+--  · No llama "mega turbo" en ninguna parte; no genera partículas turbo.
 -- ──────────────────────────────────────────────────────────────────
 
 -- ── VFX verticales exclusivos de Mega Up (efectomegaup.lua) ─────
@@ -3536,6 +3549,8 @@ local function _megaUp_restaurarNormal()
     flyanim.megaTurboUpActive = false
     flyanim.speed             = BASE_SPEED
     flyanim.mode              = "normal"
+    getgenv().AFO_FLYMODE  = flyanim.mode
+    getgenv().AFO_FLYSTATE = flyanim.enabled
     if flyanim.updateMode then flyanim.updateMode("normal") end
     -- Invalidar el token de C0 para detener el RenderStepped de Mega Up
     flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
@@ -3568,8 +3583,8 @@ end
 --  Escala de opacidad igual que turbo pero usando la velocidad
 --  resultante de BASE_SPEED * TURBO_MULT para ser coherente.
 local function speedWhiteFlashMegaUp()
-    -- reutiliza la misma función con flag "megaup"
-    speedWhiteFlash("megaup")
+    -- reutiliza la misma función con flag "mega up"
+    speedWhiteFlash("mega up")
 end
 
 -- ── Partícula vertical Mega Up ──────────────────────────────────
@@ -3636,7 +3651,7 @@ end
 
 function MegaUpLogic.Activate()
     if MegaUpLogic.Active                               then return end
-    if flyanim.mode == "turbo"                          then return end
+    if flyanim.mode == "mega turbo"                          then return end
     if flyanim.turboTransitioning or flyanim.megaTransitioning then return end
 
     MegaUpLogic.Deactivate()
@@ -3669,11 +3684,13 @@ function MegaUpLogic.Activate()
         end
     end
 
-    -- ── 5. Notificar GUI con modo "megaup" (no "turbo") ────────
+    -- ── 5. Notificar GUI con modo "mega up" (no "mega turbo") ────────
     flyanim.megaTurboUpActive = true
-    flyanim.mode  = "megaup"
+    flyanim.mode  = "mega up"
+    getgenv().AFO_FLYMODE  = flyanim.mode
+    getgenv().AFO_FLYSTATE = flyanim.enabled
     flyanim.speed = BASE_SPEED * TURBO_MULT
-    if flyanim.updateMode then flyanim.updateMode("megaup") end
+    if flyanim.updateMode then flyanim.updateMode("mega up") end
 
     -- ── 5b. Animación exclusiva de Mega Up (espacio_sec congelada al 50%) ──
     -- Usa la pista espacio_sec igual que el script aislado EspacioUpMegaUp.lua:
@@ -3724,7 +3741,7 @@ function MegaUpLogic.Activate()
             -- Guardado en megaRenderConn para limpieza correcta
             if rootJoint and originalC0 then
                 flyanim.megaRenderConn = RunService.RenderStepped:Connect(function()
-                    if not MegaUpLogic.Active or not flyanim.enabled or flyanim.mode ~= "megaup" then
+                    if not MegaUpLogic.Active or not flyanim.enabled or flyanim.mode ~= "mega up" then
                         if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
                         return
                     end
@@ -3825,7 +3842,7 @@ local function startMegaTurboUpListener()
         if isTyping() then return end
         if flyanim.turboPreImpulsoActivo then return end
         -- Bloquear mega up durante turbo (Mega Turbo) y durante cualquier transición
-        if flyanim.mode == "turbo" then
+        if flyanim.mode == "mega turbo" then
             flyanim.spaceHoldStart = nil
             return
         end
@@ -3834,7 +3851,7 @@ local function startMegaTurboUpListener()
             return
         end
         local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-        local modeOk    = (flyanim.mode == "normal" or flyanim.mode == "fast") and not flyanim.megaTurboUpActive
+        local modeOk    = (flyanim.mode == "normal" or flyanim.mode == "turbo") and not flyanim.megaTurboUpActive
         if spaceDown and modeOk then
             if not flyanim.spaceHoldStart then flyanim.spaceHoldStart = tick() end
             if tick() - flyanim.spaceHoldStart >= flyanim.SPACE_HOLD_TIME then
@@ -4200,8 +4217,8 @@ local function _flyBuildGui()
         if isnan(FAST_MULT)  then FAST_MULT  = DEFAULT_FAST end
         if isnan(TURBO_MULT) then TURBO_MULT = DEFAULT_TURBO end
         if flyanim.mode == "normal" then flyanim.speed = BASE_SPEED
-        elseif flyanim.mode == "fast"  then flyanim.speed = BASE_SPEED * FAST_MULT
-        elseif flyanim.mode == "turbo" then flyanim.speed = BASE_SPEED * TURBO_MULT end
+        elseif flyanim.mode == "turbo"  then flyanim.speed = BASE_SPEED * FAST_MULT
+        elseif flyanim.mode == "mega turbo" then flyanim.speed = BASE_SPEED * TURBO_MULT end
         if isnan(flyanim.speed) then flyanim.speed = BASE_SPEED end
     end
 
@@ -4342,6 +4359,8 @@ local function _flyOn()
     flyanim.sessionToken = (flyanim.sessionToken or 0) + 1
     flyanim.enabled      = true
     flyanim.mode         = "normal"
+    getgenv().AFO_FLYMODE  = flyanim.mode
+    getgenv().AFO_FLYSTATE = flyanim.enabled
     flyanim.speed        = BASE_SPEED
     flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
     flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
@@ -4420,7 +4439,7 @@ local function _flyOn()
             setNoclip(true)
         elseif not ctrlDown and flyanim.noclipCtrlActive then
             flyanim.noclipCtrlActive = false
-            local megaActive = (flyanim.mode == "turbo") and flyanim.noclipMegaEnabled
+            local megaActive = (flyanim.mode == "mega turbo") and flyanim.noclipMegaEnabled
             if not flyanim.noclipSpaceActive and not megaActive then setNoclip(false) end
         end
         local move = Vector3.new()
@@ -4526,8 +4545,8 @@ local function _flyOn()
             if aD then move = move - cam.CFrame.RightVector end
             if dD then move = move + cam.CFrame.RightVector end
             local targetCFrame
-            local isFastMode2 = (flyanim.mode == "fast" or flyanim.mode == "turbo")
-            local isMegaUp    = (flyanim.mode == "megaup")
+            local isFastMode2 = (flyanim.mode == "turbo" or flyanim.mode == "mega turbo")
+            local isMegaUp    = (flyanim.mode == "mega up")
                 if isMegaUp then
                     -- [FIX-3] Mega Up: mantener el personaje perfectamente vertical
                     -- Extraer sólo el yaw de la cámara para que gire con el jugador
@@ -4951,6 +4970,8 @@ local function _flyOff()
     local hum = charCurrent and charCurrent:FindFirstChildOfClass("Humanoid")
  
     flyanim.mode  = "normal"
+    getgenv().AFO_FLYMODE  = flyanim.mode
+    getgenv().AFO_FLYSTATE = flyanim.enabled
     flyanim.speed = BASE_SPEED
     _flyDestroyGui()
  
@@ -5161,14 +5182,16 @@ local function triggerDash(direction, speed, duration)
 end
 
 local function activateMegaTurbo()
-    if flyanim.mode ~= "fast" then return end
-    flyanim.mode  = "turbo"
+    if flyanim.mode ~= "turbo" then return end
+    flyanim.mode  = "mega turbo"
+    getgenv().AFO_FLYMODE  = flyanim.mode
+    getgenv().AFO_FLYSTATE = flyanim.enabled
     flyanim.speed = BASE_SPEED * TURBO_MULT
-    if flyanim.updateMode then flyanim.updateMode("turbo") end
+    if flyanim.updateMode then flyanim.updateMode("mega turbo") end
     if flyanim.noclipMegaEnabled then setNoclip(true) end
     shakeCamera(3.5, 0.4)
     playLocalSound(SFX_MEGA_TURBO, 0.88)
-    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("turbo")
+    sonicBoomEffect(2); airShockAura(2); speedWhiteFlash("mega turbo")
     triggerDash("forward", flyanim.TURBO_DASH_SPEED * 1.5, flyanim.TURBO_DASH_DURATION * 1.2)
     startParticleEmitter(); detenerPoseTurbo(); iniciarPoseMega()
 end
@@ -5273,7 +5296,7 @@ local function handleQPress()
 
     
     
-    if flyanim.mode == "fast" then
+    if flyanim.mode == "turbo" then
         local elapsed = tick() - flyanim.turboActivatedAt
         if elapsed >= 0.75 then activateMegaTurbo() end
         return
@@ -5290,15 +5313,17 @@ local function handleQPress()
         end
         flyanim.noclipCtrlActive = false
 
-        flyanim.mode  = "fast"
+        flyanim.mode  = "turbo"
+        getgenv().AFO_FLYMODE  = flyanim.mode
+        getgenv().AFO_FLYSTATE = flyanim.enabled
         flyanim.speed = BASE_SPEED * FAST_MULT
         flyanim.qLastPress       = tick()
         flyanim.turboActivatedAt = tick()
-        if flyanim.updateMode then flyanim.updateMode("fast") end
+        if flyanim.updateMode then flyanim.updateMode("turbo") end
         setNoclip(false)
         shakeCamera(2.0, 0.3)
         playLocalSound(SFX_TURBO, 0.82)
-        sonicBoomEffect(1); airShockAura(1); speedWhiteFlash("fast")
+        sonicBoomEffect(1); airShockAura(1); speedWhiteFlash("turbo")
         triggerDash("forward", flyanim.TURBO_DASH_SPEED, flyanim.TURBO_DASH_DURATION)
         startParticleEmitter()
         detenerNormalTracks(0.1); detenerEspacioAvanzado()
@@ -5395,6 +5420,8 @@ local function _connectGlobal()
  
         stopLandingWatcher()
         flyanim.mode="normal"
+        getgenv().AFO_FLYMODE  = flyanim.mode
+        getgenv().AFO_FLYSTATE = flyanim.enabled
         flyanim.speed=BASE_SPEED; flyanim.isMoving=false
         flyanim.wDown=false; flyanim.sDown=false; flyanim.aDown=false; flyanim.dDown=false
         flyanim.isWDown=false; flyanim.isSDown=false; flyanim.isADown=false; flyanim.isDDown=false
@@ -5527,20 +5554,14 @@ function M.IsEnabled()
 end
 
 -- Modo de vuelo actual:
---   "normal"     → modo base         (flyanim.mode == "normal")
---   "turbo"      → modo fast         (flyanim.mode == "fast")
---   "mega turbo" → modo mega         (flyanim.mode == "turbo")
---   "mega up"    → modo mega up      (flyanim.mode == "megaup")
+--   "normal"     → vuelo base
+--   "turbo"      → antes: fast    (Q una vez)
+--   "mega turbo" → antes: turbo   (Q dos veces)
+--   "mega up"    → antes: megaup  (Space sostenido)
 -- Devuelve nil si el vuelo está apagado.
 function M.GetMode()
     if not flyanim.enabled then return nil end
-    local map = {
-        ["normal"] = "normal",
-        ["fast"]   = "turbo",
-        ["turbo"]  = "mega turbo",
-        ["megaup"] = "mega up",
-    }
-    return map[flyanim.mode] or flyanim.mode
+    return flyanim.mode
 end
 
 return M
