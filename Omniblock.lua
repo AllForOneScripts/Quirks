@@ -97,10 +97,6 @@ end
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SEGUIMIENTO DE TERRENO (subir escalones, bajar rampas, evitar el vacío)
 -- ═══════════════════════════════════════════════════════════════════════════
--- prevPos:  posición actual del "suelo" del clon (X,Y,Z) -- Y equivale a la
---           altura del HRP (no la superficie del suelo).
--- newPosXZ: posición propuesta tras aplicar el movimiento (misma Y que prevPos).
--- Devuelve la nueva omniGroundPos corregida.
 local function omniFollowGround(prevPos, newPosXZ, dt)
     local moveDelta = Vector3.new(newPosXZ.X - prevPos.X, 0, newPosXZ.Z - prevPos.Z)
     if moveDelta.Magnitude < 0.01 then return newPosXZ end
@@ -117,12 +113,10 @@ local function omniFollowGround(prevPos, newPosXZ, dt)
     local curY = prevPos.Y
     local maxStep = OCFG.MAX_VERTICAL_SPEED * dt
 
-    -- ¿Hay una pared/obstáculo a la altura de los pies en la dirección de avance?
     local footOrigin = Vector3.new(prevPos.X, curY - omniFootOffset + 0.15, prevPos.Z)
     local hitWall = workspace:Raycast(footOrigin, forwardDir * OCFG.GROUND_PROBE_AHEAD, rayParam)
 
     if hitWall then
-        -- Comprobar si es un escalón subible (sondear desde por encima del obstáculo hacia abajo)
         local topOrigin = Vector3.new(hitWall.Position.X, (curY - omniFootOffset) + OCFG.CLIMB_STEP_MAX + 0.1, hitWall.Position.Z)
         local hitTop = workspace:Raycast(topOrigin, Vector3.new(0, -(OCFG.CLIMB_STEP_MAX + 0.2), 0), rayParam)
         if hitTop then
@@ -133,36 +127,27 @@ local function omniFollowGround(prevPos, newPosXZ, dt)
                 return Vector3.new(newPosXZ.X, curY + diff, newPosXZ.Z)
             end
         end
-        -- Pared real (no subible) o sin información de techo: no avanzar.
         return prevPos
     end
 
-    -- Sin pared al frente: comprobar el suelo bajo el punto de destino
-    -- (rampa/escalón hacia abajo, o vacío).
     local downOrigin = Vector3.new(newPosXZ.X, (curY - omniFootOffset) + 1, newPosXZ.Z)
     local hitGround = workspace:Raycast(downOrigin, Vector3.new(0, -(OCFG.DESCEND_STEP_MAX + 1), 0), rayParam)
     if hitGround then
         local dropHeight = (curY - omniFootOffset) - hitGround.Position.Y
         if dropHeight > OCFG.DESCEND_STEP_MAX then
-            -- Caída demasiado grande: quedarse en el borde, no avanzar.
             return prevPos
         elseif dropHeight > 0.05 then
             local targetY = hitGround.Position.Y + omniFootOffset
             local diff = math.max(targetY - curY, -maxStep)
             return Vector3.new(newPosXZ.X, curY + diff, newPosXZ.Z)
         else
-            -- Suelo plano (o ligera subida natural cubierta por el margen de +1): avanzar sin tocar Y.
             return Vector3.new(newPosXZ.X, curY, newPosXZ.Z)
         end
     end
 
-    -- No se encontró suelo bajo el destino: es un vacío. No avanzar (evita que el
-    -- clon "vuele" sobre huecos o se quede flotando en el aire).
     return prevPos
 end
 
--- Snap de seguridad: busca el suelo real bajo `pos` y devuelve la altura de HRP
--- correcta (superficie + offset de pies). Si no encuentra nada cercano, devuelve nil.
 local function omniGetSnapY(pos, char)
     local rayParam = RaycastParams.new()
     rayParam.FilterType = Enum.RaycastFilterType.Exclude
@@ -341,9 +326,6 @@ local function omniDeactivate4D()
                 end
             end
 
-            -- Snap de seguridad: corrige la altura final contra el suelo real,
-            -- evitando que el jugador aparezca por debajo (o muy por encima) del piso
-            -- por una desviación acumulada del seguimiento de terreno del clon.
             local snapY = omniGetSnapY(landPos, char)
             if snapY then
                 landCF = CFrame.new(landPos.X, snapY, landPos.Z) * (landCF - landCF.Position)
@@ -637,6 +619,10 @@ local function omniStart()
             omniModeX = true
             if omniRmbHeld and not omniInSky then omniModeY = true; omniActivate4D() end
         end
+        -- Tecla Modo 4D (configurable, distinta de OmniBlock)
+        if input.KeyCode == _keys.Omni4D then
+            if not omniInSky then omniActivate4D() end
+        end
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
             omniRmbHeld = true
             if omniModeX and not omniInSky then omniModeY = true; omniActivate4D() end
@@ -646,6 +632,10 @@ local function omniStart()
     omniInputEnd = trackConnection(UserInputService.InputEnded:Connect(function(input)
         if input.KeyCode == _keys.OmniBlock then
             omniModeX = false; omniClearESP()
+            if omniInSky then omniModeY = false; omniDeactivate4D() end
+        end
+        -- Soltar la tecla Modo 4D también desactiva
+        if input.KeyCode == _keys.Omni4D then
             if omniInSky then omniModeY = false; omniDeactivate4D() end
         end
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
@@ -667,7 +657,10 @@ end
 --  API PÚBLICA
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- Inicia OmniBlock. Keys debe tener el campo `OmniBlock` (KeyCode).
+-- Inicia OmniBlock.
+-- Keys debe tener los campos:
+--   OmniBlock  (KeyCode) – tecla de bloqueo. NO es modificable en caliente.
+--   Omni4D     (KeyCode) – tecla para activar/desactivar el Modo 4D. SÍ es modificable.
 function M.Start(Keys, lplr)
     if enabled then M.Stop() end
     _keys = Keys
@@ -683,14 +676,10 @@ function M.Stop()
     disconnectAllConnections()
 end
 
--- Cambia la tecla de OmniBlock en caliente.
-function M.SetKey(kc)
-    if _keys then _keys.OmniBlock = kc end
-end
-
--- ¿Está el módulo iniciado/activo?
-function M.IsActive()
-    return enabled
+-- Cambia en caliente SOLO la tecla del Modo 4D.
+-- La tecla OmniBlock (F) es fija y no puede modificarse desde aquí.
+function M.Set4DKey(kc)
+    if _keys then _keys.Omni4D = kc end
 end
 
 -- ¿Está OmniBlock en modo bloqueo activo (tecla mantenida)?
