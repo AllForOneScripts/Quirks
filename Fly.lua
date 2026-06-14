@@ -27,9 +27,7 @@
   [17] PARTÍCULAS MEGA UP       (estelas verticales, efectomegaup)
   [18] WHITE FLASH  (escala por velocidad)
   [19] EFECTOS VFX  (sonicBoom, airShock, landing, crater)
-  [20] SISTEMA DE LOCK / TARGET
   [21] SISTEMA NOCLIP / ANTI-IMPULSO / ANOMALÍAS
-  [22] SISTEMA DE FRENO (brake)
   [23] DASH / COLISIÓN
   [24] GUI  (panel HUD)
   [25] FÍSICA DEL VUELO  (motores, rsConn, tpMoveConn)
@@ -87,7 +85,6 @@ local SFX_LANDING_GLASS    = "rbxassetid://132535085898211"  -- impacto sobre cr
 local SHOCKWAVE_CIRCLE_TEX = "rbxassetid://5457833933"
 
 -- ── Lock icon ────────────────────────────────────────────────────
--- (usado en applyLockIcon, ver sección [20])
 -- "rbxassetid://82817965256191"  ← declarado inline donde se usa
 
 -- ──────────────────────────────────────────────────────────────────
@@ -229,7 +226,6 @@ local DEFAULT_BASE  = 60
 local DEFAULT_FAST  = 3.0
 local DEFAULT_TURBO = 6.0
 
--- (lock system removed)
 local COORD_SANITY_LIMIT   = 50000
 
 -- ──────────────────────────────────────────────────────────────────
@@ -293,8 +289,6 @@ local COMBO_HOLD_INTERVAL  = 0.10
 local ANOMALY_COOLDOWN     = 0.12
 local MOTOR_RESET_COOLDOWN = 0.5
 
-local Q_DEBOUNCE = 0.10
-
 -- ──────────────────────────────────────────────────────────────────
 -- [7]  ESTADO PRINCIPAL  (tabla flyanim)
 -- ──────────────────────────────────────────────────────────────────
@@ -352,10 +346,6 @@ local flyanim = {
     SPACE_HOLD_TIME   = 2,
     megaTurboUpConn   = nil,
     megaTurboUpActive = false,
-    straightLineActive = false,
-    brakingActive     = false,
-    BRAKE_DISTANCE    = 35,
-    BRAKE_HARD_DISTANCE = 14,
     particleRunning = false,
     particleConn    = nil,
     particleList    = {},
@@ -384,7 +374,6 @@ local flyanim = {
     blockCancelledByCombo = false,
     rootJoint   = nil,
     originalC0  = nil,
-    c0HeightOffset = 0,
     c0HeightConn   = nil,
     c0HeightToken  = 0,
     normalTracks  = {},
@@ -448,10 +437,6 @@ end
 local function safepos(v3)
     if not v3 then return false end
     return not (isnan(v3.X) or isnan(v3.Y) or isnan(v3.Z))
-end
-
-local function setC0Desired(cf)
-    c0DesiredCFrame = cf
 end
 
 local function clearC0Desired()
@@ -1864,20 +1849,6 @@ local function showHitboxMarkers(targetChar)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [22]  SISTEMA DE FRENO  (brake al acercarse a target)
--- ──────────────────────────────────────────────────────────────────
-local brakeConn = nil
-
-local function startBrakeSystem()
-    -- Sistema de freno: dependía exclusivamente del lock system (eliminado).
-    -- Se mantiene el stub para compatibilidad con las llamadas existentes.
-end
-
-local function stopBrakeSystem()
-    flyanim.brakingActive = false
-end
-
--- ──────────────────────────────────────────────────────────────────
 -- [23]  DASH / COLISIÓN
 -- ──────────────────────────────────────────────────────────────────
 local dashConnection = nil
@@ -3124,19 +3095,6 @@ local function stopComboC0Lock()
     if flyanim.comboC0Conn then flyanim.comboC0Conn:Disconnect(); flyanim.comboC0Conn = nil end
 end
 
-local function cancelComboIfActive()
-    if not flyanim.comboPlaying then return end
-    flyanim.comboToken = (flyanim.comboToken or 0) + 1
-    flyanim.comboPlaying = false
-    flyanim.comboBusy    = false
-    flyanim.combo4Frozen = false
-    stopComboC0Lock()
-    resetCombo()
-    for _, track in pairs(flyanim.tracks) do
-        pcall(function() if track and track.IsPlaying then track:Stop(0.08) end end)
-    end
-end
-
 local function startComboC0Lock()
     if flyanim.comboC0Conn then flyanim.comboC0Conn:Disconnect(); flyanim.comboC0Conn = nil end
     if not flyanim.rootJoint or not flyanim.originalC0 then return end
@@ -3877,20 +3835,6 @@ local function stopMegaTurboUpListener()
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [20]  SISTEMA DE LOCK / TARGET  (ELIMINADO - stubs vacíos)
--- ──────────────────────────────────────────────────────────────────
-local function isTargetValidForLock() return false end
-local function getClosestLockTarget() return nil end
-local function applyLockIcon() end
-local function removeLockIcon() end
-local function updateLockHighlight() end
-local function loadAvatarImage() end
-local function createLockInfoGui() end
-local function toggleLock() end
-local function startLockSystem() end
-local function stopLockSystem() end
-
--- ──────────────────────────────────────────────────────────────────
 -- [24]  GUI  (panel HUD)
 -- ──────────────────────────────────────────────────────────────────
 local function _flyDestroyGui()
@@ -4416,7 +4360,6 @@ local function _flyOn()
             end)
         end
     end)
-    startBrakeSystem()
     startAntiImpulse()
     startMegaTurboUpListener()
     startAnomalyProtection()
@@ -4460,7 +4403,6 @@ local function _flyOn()
         if sD then move = move - cam.CFrame.LookVector end
         if aD then move = move - cam.CFrame.RightVector end
         if dD then move = move + cam.CFrame.RightVector end
-        flyanim.straightLineActive = false
         if flyanim.megaTurboUpActive then move = move + Vector3.new(0, 2, 0)
         elseif spaceDown              then move = move + Vector3.new(0, 1, 0) end
         if ctrlDown then move = move - Vector3.new(0, 1, 0) end
@@ -4817,7 +4759,6 @@ local function _flyOff()
     if flyanim.blockRenderConn     then flyanim.blockRenderConn:Disconnect();     flyanim.blockRenderConn     = nil end
     if flyanim.idleAnimConn        then flyanim.idleAnimConn:Disconnect();        flyanim.idleAnimConn        = nil end
     if flyanim.megaTurboUpConn     then flyanim.megaTurboUpConn:Disconnect();     flyanim.megaTurboUpConn     = nil end
-    if brakeConn                   then brakeConn:Disconnect();                   brakeConn                   = nil end
     if flyanim.antiImpulseConn     then flyanim.antiImpulseConn:Disconnect();     flyanim.antiImpulseConn     = nil end
     if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
     if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
@@ -4942,7 +4883,6 @@ local function _flyOff()
  
     flyanim.megaTurboUpActive     = false
     flyanim.spaceHoldStart        = nil
-    flyanim.brakingActive         = false
     flyanim.noclipSpaceActive     = false
     flyanim.noclipCtrlActive      = false
     flyanim.isBlocking            = false
@@ -4966,7 +4906,6 @@ local function _flyOff()
     stopBlocking()
     stopParticleEmitter()
     stopAntiImpulse()
-    stopBrakeSystem()
     stopMegaTurboUpListener()
     _megaUp_killParticles()    -- limpieza partículas mega up
     stopAnomalyProtection()
@@ -4989,7 +4928,6 @@ local function _flyOff()
     flyanim.mode  = "normal"
     flyanim.speed = BASE_SPEED
     _flyDestroyGui()
-    stopLockSystem()
  
     if not charCurrent or not hum or hum.Health <= 0 then
         local animScript2 = charCurrent and charCurrent:FindFirstChild("Animate") or flyanim.animScript
@@ -5451,7 +5389,6 @@ local function _connectGlobal()
         flyanim.c0ControlToken     = 0
         flyanim.c0HeightToken      = 0
         flyanim.lastDamageTime     = 0
-        flyanim.straightLineActive = false
         flyanim.noclipSpaceActive  = false
         flyanim.noclipCtrlActive   = false
         flyanim.mouseHeld          = false
@@ -5475,8 +5412,8 @@ local function _connectGlobal()
         _landAnimToken         = _landAnimToken + 1
         _landBaseRef = nil; _landOverlayRef = nil
  
-        stopParticleEmitter(); stopBrakeSystem(); stopAntiImpulse()
-        stopMegaTurboUpListener(); stopLockSystem()
+        stopParticleEmitter(); stopAntiImpulse()
+        stopMegaTurboUpListener()
         stopAnomalyProtection(); stopComboC0Lock()
         stopAnimBlockLoop(); stopTeleportGuard()
         detenerWatchdogAltura()
