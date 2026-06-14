@@ -165,9 +165,9 @@ local function getFlyModeFn()
 end
 
 -- Modos que activan snap-to-target y anti-orbit
-local function isFastOrTurboMode(mode)
-    return mode == "fast"
-        or mode == "turbo"
+-- FIX (bug bonus): eliminado "fast" — string obsoleto, renombrado a "turbo"
+local function isTurboOrMegaTurboMode(mode)
+    return mode == "turbo"
         or mode == "mega turbo"
 end
 
@@ -619,6 +619,11 @@ local function updateSoftBodyRotation()
     if not L.softBodyRotation then return end
     -- OmniBlock: esta función SOLO rota en X (yaw) → siempre bloqueada
     if isOmniActive() then return end
+    -- FIX (bug 2): con vuelo activo, updateBodyGyroRotation() controla
+    -- yaw + pitch completo sobre el BodyGyro. Si también escribimos hrp.CFrame
+    -- aquí (con pitch = 0), anulamos el pitch del BodyGyro cada frame.
+    -- Solución: ceder el control total al BodyGyro cuando el vuelo está activo.
+    if isFlyEnabledFn() then return end
     if not L.lockActive or not L.lockedTarget then return end
     local tChar = L.lockedTarget.Character
     if not tChar or not isTargetValidForLock(L.lockedTarget) then return end
@@ -694,13 +699,14 @@ local function updateBodyGyroRotation()
 end
 
 -- [C] SNAP-TO-TARGET ───────────────────────────────────────────────
--- Teleporta al jugador cerca del target cuando está en turbo/fast
+-- Teleporta al jugador cerca del target cuando está en turbo
 -- y el target está muy por encima.
 local function updateSnapToTarget()
     if not isFlyEnabledFn() then return end
 
     local mode = getFlyModeFn()
-    if not isFastOrTurboMode(mode) then return end
+    -- FIX (bug bonus): usa isTurboOrMegaTurboMode, ya sin "fast"
+    if not isTurboOrMegaTurboMode(mode) then return end
     if not L.lockActive or not L.lockedTarget then return end
     if not UserInputService:IsKeyDown(Enum.KeyCode.W) then return end
 
@@ -746,18 +752,16 @@ end
 
 -- [D] TP TURBO DETRÁS DEL OBJETIVO ────────────────────────────────
 --
--- Condición A: fly activo + turbo + dist3D <= 15 (cerca del target)
--- Condición B: fly activo + turbo + vacío real debajo (raycast -50)
--- Condición C: fly activo + turbo + distancia horizontal <= 50
---              Y target está >= 10 studs por encima
---
--- Basta con que UNA condición sea verdadera para ejecutar el TP.
+-- FIX (bug 1): simplificado a modo "turbo" únicamente, condición única
+-- dist3D ≤ 30. Las condiciones B y C causaban TPs no deseados en
+-- mega turbo y situaciones de vacío/altura normales.
 -- ─────────────────────────────────────────────────────────────────
 local function updateTurboTP()
     if not isFlyEnabledFn() then return end
 
     local mode = getFlyModeFn()
-    if mode ~= "turbo" and mode ~= "mega turbo" then return end
+    -- FIX (bug 1): solo "turbo", excluye "mega turbo"
+    if mode ~= "turbo" then return end
     if not L.lockActive or not L.lockedTarget then return end
 
     local myChar = lplr and lplr.Character
@@ -768,37 +772,9 @@ local function updateTurboTP()
     local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not tRoot or not safepos(tRoot.Position) then return end
 
-    -- Distancia 3D total
+    -- FIX (bug 1): única condición — distancia esférica ≤ 30 studs
     local dist3D = (tRoot.Position - myRoot.Position).Magnitude
-    if isnan(dist3D) then return end
-
-    -- Condición A: a 15 studs o menos del target (distancia 3D)
-    local condA = dist3D <= 15
-
-    -- Condición B: vacío real debajo (raycast de 50 studs hacia abajo)
-    local noFloor = false
-    do
-        local rpCheck = RaycastParams.new()
-        rpCheck.FilterType = Enum.RaycastFilterType.Exclude
-        if myChar then rpCheck.FilterDescendantsInstances = { myChar } end
-        noFloor = workspace:Raycast(myRoot.Position, Vector3.new(0, -50, 0), rpCheck) == nil
-    end
-    local condB = noFloor
-
-    -- Condición C: distancia horizontal <= 50 Y target >= 10 studs por encima
-    local horizontalDist = Vector3.new(
-        tRoot.Position.X - myRoot.Position.X,
-        0,
-        tRoot.Position.Z - myRoot.Position.Z
-    ).Magnitude
-    local heightDiffTP = tRoot.Position.Y - myRoot.Position.Y
-    local condC = not isnan(heightDiffTP)
-        and not isnan(horizontalDist)
-        and heightDiffTP >= 10
-        and horizontalDist <= 50
-
-    -- Basta con que UNA condición sea verdadera
-    if not (condA or condB or condC) then return end
+    if isnan(dist3D) or dist3D > 30 then return end
 
     local toTarget = tRoot.Position - myRoot.Position
     if toTarget.Magnitude <= 0.01 then return end
@@ -968,7 +944,8 @@ local function applyAntiOrbit(root2, move, mode, wD)
 
     local flyMode = getFlyModeFn() or mode
 
-    if not (isFastOrTurboMode(flyMode) and L.lockActive and L.lockedTarget and wD) then
+    -- FIX (bug bonus): usa isTurboOrMegaTurboMode, ya sin "fast"
+    if not (isTurboOrMegaTurboMode(flyMode) and L.lockActive and L.lockedTarget and wD) then
         L.straightLineActive = false
         return move
     end
