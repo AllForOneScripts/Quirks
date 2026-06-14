@@ -1,4 +1,4 @@
-print("version 2.11")
+-- version 2.11
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
@@ -5562,6 +5562,23 @@ function M.GetFlyKey()  return flyanim.flyKey  end
 -- Estado actual: true = volando, false = apagado
 function M.IsEnabled()
     return flyanim.enabled == true
+end
+
+-- Modo de vuelo actual:
+--   "normal"     → modo base         (flyanim.mode == "normal")
+--   "turbo"      → modo fast         (flyanim.mode == "fast")
+--   "mega turbo" → modo mega         (flyanim.mode == "turbo")
+--   "mega up"    → modo mega up      (flyanim.mode == "megaup")
+-- Devuelve nil si el vuelo está apagado.
+function M.GetMode()
+    if not flyanim.enabled then return nil end
+    local map = {
+        ["normal"] = "normal",
+        ["fast"]   = "turbo",
+        ["turbo"]  = "mega turbo",
+        ["megaup"] = "mega up",
+    }
+    return map[flyanim.mode] or flyanim.mode
 end
 
 return M
