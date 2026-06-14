@@ -2530,14 +2530,19 @@ local function spawnLandingEffects(position, velocity)
             craterFolder.Parent = workspace
 
             -- Detectar color/material del suelo en el punto de impacto.
-            -- Valores por defecto en caso de que el raycast falle.
-            local floorColor    = Color3.fromRGB(106, 127, 63)
-            local floorMaterial = Enum.Material.Grass
+            -- Valores por defecto (FALLBACK) si el raycast no logra info:
+            -- usamos un material/color tipo "roca" en vez de césped verde,
+            -- para que el cráter no luzca como bloques de lego blancos
+            -- cuando no se pudo leer el suelo real.
+            local FALLBACK_FLOOR_COLOR    = Color3.fromRGB(120, 115, 110)
+            local FALLBACK_FLOOR_MATERIAL = Enum.Material.Rock
+            local floorColor    = FALLBACK_FLOOR_COLOR
+            local floorMaterial = FALLBACK_FLOOR_MATERIAL
 
-            -- Esperar un momento muy breve para que el personaje ya esté posado en el suelo
-            -- antes de hacer el raycast de posición (evita lecturas de Y en el aire).
-            -- El raycast de color/material se hace AQUÍ, post-wait, para leer la textura real.
-            task.wait(0.08)
+            -- Esperar a que el personaje ya esté posado/asentado en el suelo
+            -- antes de hacer el raycast de color/material (evita lecturas en
+            -- el aire mientras todavía está cayendo/aterrizando).
+            task.wait(0.15)
 
             -- Helper: detectar la Y real del suelo en un punto XZ dado
             local function getFloorY(worldPos, fallbackY)
@@ -2569,29 +2574,46 @@ local function spawnLandingEffects(position, velocity)
             if lplr and lplr.Character then
                 rpFloor.FilterDescendantsInstances = {lplr.Character}
             end
-            -- BUG FIX 2: Usar la posición ACTUAL del HRP (post-aterrizaje) en lugar de la
+            -- Usar la posición ACTUAL del HRP (post-aterrizaje) en lugar de la
             -- posición capturada al inicio del vuelo. El personaje ya está sobre el suelo
-            -- después de task.wait(0.08), así que leer la posición fresca garantiza que el
-            -- raycast pegue en la superficie correcta (igual que hace el código de Gemini).
-            local currentRootPos = position  -- fallback a la posición original
-            local charNow = lplr and lplr.Character
-            local rootNow = charNow and charNow:FindFirstChild("HumanoidRootPart")
-            if rootNow and rootNow.Parent then
-                currentRootPos = rootNow.Position
+            -- después de task.wait(0.15), así que leer la posición fresca garantiza que el
+            -- raycast pegue en la superficie correcta.
+            local function getCurrentRootPos()
+                local currentRootPos = position  -- fallback a la posición original
+                local charNow = lplr and lplr.Character
+                local rootNow = charNow and charNow:FindFirstChild("HumanoidRootPart")
+                if rootNow and rootNow.Parent then
+                    currentRootPos = rootNow.Position
+                end
+                return currentRootPos
             end
-            -- Primer intento: rango generoso desde arriba del punto de impacto actual
-            local floorHit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
-            -- Segundo intento si el primero falla: rango aún más largo
+
+            local function tryFloorRaycast()
+                local currentRootPos = getCurrentRootPos()
+                -- Primer intento: rango generoso desde arriba del punto de impacto actual
+                local hit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
+                -- Segundo intento si el primero falla: rango aún más largo
+                if not hit then
+                    hit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
+                end
+                -- Tercer intento: desde la posición original capturada por si el personaje se movió lejos
+                if not hit then
+                    hit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
+                end
+                if not hit then
+                    hit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
+                end
+                return hit
+            end
+
+            local floorHit = tryFloorRaycast()
+            -- Si todavía no hay info (personaje aún sin asentar), dar un poco
+            -- más de tiempo y reintentar una vez antes de rendirse al fallback.
             if not floorHit then
-                floorHit = workspace:Raycast(currentRootPos + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
+                task.wait(0.1)
+                floorHit = tryFloorRaycast()
             end
-            -- Tercer intento: desde la posición original capturada por si el personaje se movió lejos
-            if not floorHit then
-                floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -25, 0), rpFloor)
-            end
-            if not floorHit then
-                floorHit = workspace:Raycast(position + Vector3.new(0, 5, 0), Vector3.new(0, -60, 0), rpFloor)
-            end
+
             if floorHit then
                 floorColor    = floorHit.Instance.Color
                 floorMaterial = floorHit.Instance.Material
@@ -2599,6 +2621,8 @@ local function spawnLandingEffects(position, velocity)
 
             -- Capturar también el MaterialVariant del suelo (textura personalizada)
             -- para que las rocas repliquen fielmente la apariencia del suelo.
+            -- Si no hay floorHit, se deja vacío (las rocas usan el material/color
+            -- de fallback tipo roca, NO el MaterialVariant).
             local floorMaterialVariant = ""
             if floorHit then
                 pcall(function()
@@ -2609,6 +2633,7 @@ local function spawnLandingEffects(position, velocity)
             -- Wait adicional antes de spawnear las rocas para garantizar que
             -- el personaje está asentado y el raycast de color/material ya es fiable.
             task.wait(0.05)
+
 
             local rings = {
                 {pieces = math.max(4, math.floor(8  * escalaCantidad)), radius = 5  * escalaSize, sizeMult = 1.0 * escalaSize},
