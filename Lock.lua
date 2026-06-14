@@ -55,8 +55,8 @@
 
   Modos reconocidos en AFO_FLYMODE:
     "normal"      → modo base
-    "turbo"       → fast (snap-to-target y brake activos)
-    "mega turbo"  → turbo (snap-to-target y brake activos)
+    "turbo"       → fast (snap-to-target activo)
+    "mega turbo"  → turbo (snap-to-target activo)
     "mega up"     → modo mega up
 
   El BodyGyro se busca directamente en el HumanoidRootPart del
@@ -123,9 +123,6 @@ local LOCK_ROTATION_SMOOTH = 0.8
 local SOFTAIM_BODY_SMOOTH  = 0.8
 local LOCK_ICON_ID         = "rbxassetid://82817965256191"
 
-local BRAKE_DISTANCE      = 35
-local BRAKE_HARD_DISTANCE = 14
-
 local L = {
     lockKey        = Enum.KeyCode.X,
     lockActive     = false,
@@ -144,14 +141,7 @@ local L = {
     lockCameraLerp = 0.18,
 
     softBodyRotation = true,
-
-    brakingActive      = false,
     straightLineActive = false,
-
-    -- Estado de brake interno (reemplaza flyAnim.brakingActive)
-    _brakingActive = false,
-    -- dashVel interno para el brake (leído desde getgenv si existe)
-    _dashVel       = Vector3.new(0, 0, 0),
 }
 
 -- getgenv globals escritos por Fly.lua
@@ -174,7 +164,7 @@ local function getFlyModeFn()
     return getgenv().AFO_FLYMODE
 end
 
--- Modos que activan snap-to-target, brake y anti-orbit
+-- Modos que activan snap-to-target y anti-orbit
 local function isFastOrTurboMode(mode)
     return mode == "fast"
         or mode == "turbo"
@@ -659,79 +649,10 @@ end
 -- Lock ya NO accede a flyAnim. En su lugar:
 --   • El BodyGyro se busca directamente en el HumanoidRootPart.
 --   • El modo se lee de getgenv().AFO_FLYMODE.
---   • El estado de dash/velocidad se lee de
---     getgenv().AFO_DASHVEL (Vector3) si Fly lo expone,
---     o se asume Vector3.zero si no existe.
 -- ──────────────────────────────────────────────────────────────────
-
--- Helper: velocidad de dash actual (Fly puede escribir AFO_DASHVEL)
-local function getDashVel()
-    local v = getgenv().AFO_DASHVEL
-    if type(v) == "userdata" then return v end
-    return Vector3.new(0, 0, 0)
-end
-
--- Helper: timer de dash activo (Fly puede escribir AFO_DASHTIMER)
-local function getDashTimer()
-    local t = getgenv().AFO_DASHTIMER
-    if type(t) == "number" then return t end
-    return 0
-end
-
--- [A] FRENO (Brake) ────────────────────────────────────────────────
-local function updateBrakeSystem()
-    if not isFlyEnabledFn() then
-        L._brakingActive = false
-        return
-    end
-
-    local mode = getFlyModeFn()
-    if not isFastOrTurboMode(mode) then
-        L._brakingActive = false
-        return
-    end
-
-    if not L.lockActive or not L.lockedTarget then
-        L._brakingActive = false
-        return
-    end
-
-    local dashTimer = getDashTimer()
-    if dashTimer <= 0 then
-        L._brakingActive = false
-        return
-    end
-
-    local myChar = lplr and lplr.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-
-    local tChar = L.lockedTarget.Character
-    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
-    if not tRoot then return end
-
-    local dist = (myRoot.Position - tRoot.Position).Magnitude
-    if isnan(dist) then return end
-
-    if dist <= BRAKE_HARD_DISTANCE then
-        -- Frenar en seco: escribe los globales para que Fly los lea
-        getgenv().AFO_DASHVEL   = Vector3.new(0, 0, 0)
-        getgenv().AFO_DASHTIMER = 0
-        L._brakingActive        = false
-    elseif dist <= BRAKE_DISTANCE then
-        local t           = 1 - ((dist - BRAKE_HARD_DISTANCE) / (BRAKE_DISTANCE - BRAKE_HARD_DISTANCE))
-        local brakeFactor = 1 - (t * 0.92)
-        local curVel      = getDashVel()
-        getgenv().AFO_DASHVEL = curVel * math.max(brakeFactor, 0.05)
-        L._brakingActive      = true
-    else
-        L._brakingActive = false
-    end
-end
 
 -- [B] ROTACIÓN BODYGIRO ────────────────────────────────────────────
 -- Lock busca el BodyGyro directamente en el HumanoidRootPart.
--- No necesita que nadie le pase flyAnim.
 local function updateBodyGyroRotation()
     if not isFlyEnabledFn() then return end
     if not L.lockActive or not L.lockedTarget then return end
@@ -754,11 +675,7 @@ local function updateBodyGyroRotation()
         or tChar:FindFirstChild("HumanoidRootPart")
     if not aimPart then clearLock(); return end
 
-    local dashMag = getDashVel().Magnitude
-    local smooth  = math.clamp(
-        LOCK_ROTATION_SMOOTH * (1 + math.min(0.5, dashMag / 300)),
-        0, 1
-    )
+    local smooth = LOCK_ROTATION_SMOOTH
 
     if isOmniActive() then
         -- Con OmniBlock + vuelo: solo pitch, yaw libre
@@ -914,7 +831,6 @@ local function startLockSystem()
         updateLockCamera()
         updateLockHighlight()
         updateSoftBodyRotation()
-        updateBrakeSystem()
         updateBodyGyroRotation()
         updateSnapToTarget()
         updateTurboTP()
@@ -989,7 +905,7 @@ end
 -- ──────────────────────────────────────────────────────────────────
 
 -- Hook de rotación Y (pitch hacia el target) — uso externo opcional
-local function getAimCFrame(rootPosition, dashMagnitude)
+local function getAimCFrame(rootPosition)
     if not isFlyEnabledFn() then return nil end
     if not L.lockActive or not L.lockedTarget then return nil end
     local tChar = L.lockedTarget.Character
@@ -1001,10 +917,7 @@ local function getAimCFrame(rootPosition, dashMagnitude)
         or tChar:FindFirstChild("HumanoidRootPart")
     if not aimPart then return nil end
 
-    local smooth = math.clamp(
-        LOCK_ROTATION_SMOOTH * (1 + math.min(0.5, ((dashMagnitude or 0) / 300))),
-        0, 1
-    )
+    local smooth = LOCK_ROTATION_SMOOTH
 
     if isOmniActive() then
         local fullCF        = CFrame.lookAt(rootPosition, aimPart.Position, Vector3.new(0, 1, 0))
@@ -1201,14 +1114,6 @@ M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
 M.GetAimCFrame   = getAimCFrame
 M.ApplyAntiOrbit = applyAntiOrbit
 
-function M.IsBrakingActive()     return L._brakingActive     end
 function M.IsStraightLineActive() return L.straightLineActive end
-
--- Eliminados (ya no necesarios):
---   M.SetFlyEnabledProvider  → Lock lee getgenv().AFO_FLYSTATE
---   M.SetFlyAnimRef          → Lock busca el BodyGyro directamente
---   M.GetFlyAnimRef          → ídem
---   M.GetFlyState            → usar getgenv().AFO_FLYSTATE directamente
---   M.GetFlyMode             → usar getgenv().AFO_FLYMODE directamente
 
 return M
