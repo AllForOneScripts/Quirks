@@ -2752,7 +2752,9 @@ local function startIdleWatcher()
             end
         end
     end)
-end(char, expectedSession)
+end
+
+local function setupAnimator(char, expectedSession)
     local animScript = char:FindFirstChild("Animate") or char:WaitForChild("Animate", 3)
     if expectedSession and flyanim.sessionToken ~= expectedSession then return end
     if animScript then animScript.Disabled = true; flyanim.animScript = animScript end
