@@ -517,16 +517,19 @@ local function updateLockInfoGui()
             heightLabel.Text      = "▲ " .. math.abs(heightDiff) .. " " .. FT.height_above
             heightLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
 
-            -- TP debajo del objetivo (solo con vuelo activo)
-            if isFlyEnabledFn() and math.abs(heightDiff) >= 15 then
+            -- "Anti floor pass": TP cuando el objetivo está 10+ studs
+            -- arriba de mí (solo con vuelo activo). Mismo destino que
+            -- "Anti orbiting": mirando al objetivo, 4 studs arriba y
+            -- 3 studs detrás de él.
+            if isFlyEnabledFn() and math.abs(heightDiff) >= 10 then
                 local toTargetH = Vector3.new(
                     root.Position.X - myRoot.Position.X, 0,
                     root.Position.Z - myRoot.Position.Z
                 )
                 local behindDir = toTargetH.Magnitude > 0.1
-                    and -toTargetH.Unit
+                    and toTargetH.Unit
                     or Vector3.new(0, 0, 1)
-                local tpPos = root.Position + behindDir * 3
+                local tpPos = root.Position + behindDir * 3 + Vector3.new(0, 4, 0)
                 if safepos(tpPos) then
                     local preTPHeight = 0
                     do
@@ -752,9 +755,11 @@ end
 
 -- [D] TP TURBO DETRÁS DEL OBJETIVO ────────────────────────────────
 --
--- FIX (bug 1): simplificado a modo "turbo" únicamente, condición única
--- dist3D ≤ 30. Las condiciones B y C causaban TPs no deseados en
--- mega turbo y situaciones de vacío/altura normales.
+-- FIX (bug 1): condición ahora es:
+--   Fly + turbo + dist3D ≤ 25 studs + W presionado SIN A/S/D.
+-- El TP resultante coloca al jugador MIRANDO AL OBJETIVO,
+-- 4 studs arriba y 3 studs detrás de él (continuando la dirección
+-- de aproximación horizontal más allá del objetivo).
 -- ─────────────────────────────────────────────────────────────────
 local function updateTurboTP()
     if not isFlyEnabledFn() then return end
@@ -764,6 +769,14 @@ local function updateTurboTP()
     if mode ~= "turbo" then return end
     if not L.lockActive or not L.lockedTarget then return end
 
+    -- FIX (bug 1): requiere W presionado y A/S/D NO presionados
+    if not UserInputService:IsKeyDown(Enum.KeyCode.W) then return end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A)
+        or UserInputService:IsKeyDown(Enum.KeyCode.S)
+        or UserInputService:IsKeyDown(Enum.KeyCode.D) then
+        return
+    end
+
     local myChar = lplr and lplr.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then return end
@@ -772,14 +785,21 @@ local function updateTurboTP()
     local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not tRoot or not safepos(tRoot.Position) then return end
 
-    -- FIX (bug 1): única condición — distancia esférica ≤ 30 studs
+    -- FIX (bug 1): única condición de distancia — esférica ≤ 25 studs
     local dist3D = (tRoot.Position - myRoot.Position).Magnitude
-    if isnan(dist3D) or dist3D > 30 then return end
+    if isnan(dist3D) or dist3D > 25 then return end
 
     local toTarget = tRoot.Position - myRoot.Position
     if toTarget.Magnitude <= 0.01 then return end
 
-    local newPos = tRoot.Position - (toTarget.Unit * 5)
+    -- "Detrás" del objetivo = continuar (horizontalmente) en la misma
+    -- dirección de aproximación más allá de él, y sumar 4 studs de altura.
+    local horDir = Vector3.new(toTarget.X, 0, toTarget.Z)
+    local behindDir = horDir.Magnitude > 0.1
+        and horDir.Unit
+        or Vector3.new(0, 0, 1)
+
+    local newPos = tRoot.Position + behindDir * 3 + Vector3.new(0, 4, 0)
     if safepos(newPos) then
         pcall(function()
             myRoot.CFrame = CFrame.new(newPos, tRoot.Position)
