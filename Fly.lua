@@ -1,8 +1,8 @@
--- version 2.11
+-- version 2.12
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    FLY SYSTEM  v2.10                            ║
+║                    FLY SYSTEM  v2.12                            ║
 ║  Módulo de vuelo avanzado · Sistema de partículas independiente  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
@@ -420,10 +420,6 @@ local flyanim = {
     dashAnimToken  = 0,
     c0ControlToken = 0,
     tpMoveConn = nil,
-    lastSafePos      = nil,
-    lastSafeTime     = 0,
-    teleportGuardConn = nil,
-    isTeleportGuardActive = false,
     sessionToken = 0,
     _dragInputConn = nil,
     _comboEndConn  = nil,
@@ -458,71 +454,6 @@ local function restaurarC0Inmediato()
         pcall(function() flyanim.rootJoint.C0 = flyanim.originalC0 end)
     end
     clearC0Desired()
-end
-
-local function startTeleportGuard()
-    if flyanim.teleportGuardConn then
-        flyanim.teleportGuardConn:Disconnect()
-        flyanim.teleportGuardConn = nil
-    end
-    flyanim.lastSafePos  = nil
-    flyanim.lastSafeTime = tick()
-    flyanim.isTeleportGuardActive = true
-    local mySession = flyanim.sessionToken
-    flyanim.teleportGuardConn = RunService.Stepped:Connect(function()
-        if not flyanim.enabled then
-            if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
-            flyanim.isTeleportGuardActive = false
-            return
-        end
-        if flyanim.sessionToken ~= mySession then
-            if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
-            flyanim.isTeleportGuardActive = false
-            return
-        end
-        if not flyanim.isTeleportGuardActive then return end
-        local char = lplr.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then flyanim.lastSafePos = nil; return end
-        local pos = root.Position
-        if not safepos(pos) then return end
-        if pos.Y <= -500 then
-            local safePos = flyanim.lastSafePos
-            if safePos then
-                local targetCF = CFrame.new(safePos + Vector3.new(0, 5, 0))
-                pcall(function()
-                    root.CFrame = targetCF
-                    root.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end)
-                local cam = workspace.CurrentCamera
-                if cam then
-                    local camCF = cam.CFrame
-                    task.defer(function()
-                        if cam and cam.Parent then cam.CFrame = camCF end
-                    end)
-                end
-                flyanim.dashTimer = 0
-                flyanim.dashVel   = Vector3.new(0, 0, 0)
-                -- Solo reposicionamos si faltan motores; no tocamos humanoid state
-                -- para no interferir con sistemas de TP externos.
-                if not root:FindFirstChildOfClass("BodyGyro") then
-                    _flyMakeMotors()
-                end
-            end
-            return
-        end
-        if math.abs(pos.X) < COORD_SANITY_LIMIT and math.abs(pos.Z) < COORD_SANITY_LIMIT then
-            flyanim.lastSafePos  = pos
-            flyanim.lastSafeTime = tick()
-        end
-    end)
-end
-
-local function stopTeleportGuard()
-    flyanim.isTeleportGuardActive = false
-    if flyanim.teleportGuardConn then flyanim.teleportGuardConn:Disconnect(); flyanim.teleportGuardConn = nil end
-    flyanim.lastSafePos = nil
 end
 
 local function setNoclip(state)
@@ -1266,7 +1197,11 @@ local function iniciarPoseTurbo()
             if nt.turbo_volado  then pcall(function() nt.turbo_volado:Stop(0.05) end) end
             for _, t in pairs(flyanim.tracks) do pcall(function() if t and t.IsPlaying then t:Stop(0.05) end end) end
             for _, t in pairs(flyanim.normalTracks) do pcall(function() if t and t.IsPlaying then t:Stop(0.05) end end) end
-            if flyanim.mode == "turbo" then
+            -- BUG FIX: antes solo restauraba si el modo era exactamente "turbo".
+            -- Si el idle watcher ya lo había puesto en "normal", la condición
+            -- fallaba y nunca se llamaba iniciarCicloNormal(), dejando el personaje
+            -- congelado en la pose turbo. Ahora fuerza el estado normal en ambos casos.
+            if flyanim.mode == "turbo" or flyanim.mode == "normal" then
                 flyanim.mode  = "normal"
                 getgenv().AFO_FLYMODE  = flyanim.mode
                 getgenv().AFO_FLYSTATE = flyanim.enabled
@@ -1375,10 +1310,12 @@ local function iniciarPoseTurbo()
         flyanim.turboRenderConn = RunService.RenderStepped:Connect(function()
             if not flyanim.enabled or flyanim.mode ~= "turbo" then
                 if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
-                if myC0TkLoop == flyanim.c0ControlToken then
-                    detenerWatchdogAltura()
-                    restaurarC0Inmediato()
-                end
+                -- BUG FIX: siempre restaurar C0 al salir del modo turbo,
+                -- independientemente del token. El idle watcher puede haber
+                -- incrementado c0ControlToken ANTES de que este conn se ejecute,
+                -- lo que causaba que el personaje quedara inclinado al volver a normal.
+                detenerWatchdogAltura()
+                restaurarC0Inmediato()
                 return
             end
             if myC0TkLoop ~= flyanim.c0ControlToken then return end
@@ -1507,10 +1444,11 @@ local function iniciarPoseMega()
     flyanim.megaRenderConn = RunService.RenderStepped:Connect(function()
         if not flyanim.enabled or flyanim.mode ~= "mega turbo" then
             if flyanim.megaRenderConn then flyanim.megaRenderConn:Disconnect(); flyanim.megaRenderConn = nil end
-            if myC0Token == flyanim.c0ControlToken then
-                detenerWatchdogAltura()
-                restaurarC0Inmediato()
-            end
+            -- BUG FIX: siempre restaurar C0 al salir del modo mega turbo,
+            -- independientemente del token. Mismo problema que turboRenderConn:
+            -- el idle watcher puede haber incrementado c0ControlToken antes.
+            detenerWatchdogAltura()
+            restaurarC0Inmediato()
             return
         end
         if myC0Token ~= flyanim.c0ControlToken then return end
@@ -1590,7 +1528,7 @@ local function updateAnimForMovement()
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [21]  NOCLIP / ANTI-IMPULSO / ANOMALÍAS / TELEPORT GUARD
+-- [21]  NOCLIP / ANTI-IMPULSO / ANOMALÍAS
 -- ──────────────────────────────────────────────────────────────────
 local function startAntiImpulse()
     if flyanim.antiImpulseConn then flyanim.antiImpulseConn:Disconnect(); flyanim.antiImpulseConn = nil end
@@ -2775,6 +2713,15 @@ local function startIdleWatcher()
             -- ── Turbo / Fast: sin teclas → volver a normal ─────────────────
             if (flyanim.mode == "turbo" or flyanim.mode == "mega turbo") and not anyKey then
                 local prevMode = flyanim.mode
+                -- BUG FIX: desconectar los render conns ANTES de cambiar el modo.
+                -- Si primero se cambia mode a "normal" y luego se desconectan,
+                -- los render conns (turboRenderConn/megaRenderConn) pueden ejecutarse
+                -- un frame más con mode == "normal", detectar la salida y llamar
+                -- restaurarC0Inmediato() con un token ya invalido. Desconectando
+                -- primero evitamos ese frame fantasma y el race condition con
+                -- iniciarCicloNormal / turboPreImpulsoActivo.
+                if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
+                if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
                 flyanim.mode   = "normal"
                 getgenv().AFO_FLYMODE  = flyanim.mode
                 getgenv().AFO_FLYSTATE = flyanim.enabled
@@ -2783,8 +2730,6 @@ local function startIdleWatcher()
                 if flyanim.updateMode then flyanim.updateMode("normal") end
                 if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
                 stopParticleEmitter()
-                if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
-                if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
                 detenerWatchdogAltura()
                 if prevMode == "turbo" then
                     detenerPoseTurbo()
@@ -2797,12 +2742,6 @@ local function startIdleWatcher()
                 if not flyanim.comboPlaying then
                     flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
                     iniciarCicloNormal(flyanim._normalPlayId)
-                    -- BUG FIX 3: Evaluar el movimiento al volver a idle para que la
-                    -- animación correcta (quieto / moviéndose) se active de inmediato,
-                    -- igual que hace finalizarCombo(). Sin esto el personaje queda
-                    -- con la animación estática aunque esté presionando WASD.
-                    -- También se agrega `continue` para evitar que el loop siga
-                    -- procesando tras haber ejecutado la transición.
                     task.defer(function()
                         if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
                             evaluarMovimientoNormal()
@@ -2813,9 +2752,7 @@ local function startIdleWatcher()
             end
         end
     end)
-end
-
-local function setupAnimator(char, expectedSession)
+end(char, expectedSession)
     local animScript = char:FindFirstChild("Animate") or char:WaitForChild("Animate", 3)
     if expectedSession and flyanim.sessionToken ~= expectedSession then return end
     if animScript then animScript.Disabled = true; flyanim.animScript = animScript end
@@ -4370,7 +4307,6 @@ local function _flyOn()
     flyanim.noclipSpaceActive=false; flyanim.lastKnownPos=nil
     flyanim.ragdollDetected=false
     flyanim.fKeyHeld=false; flyanim.blockCancelledByCombo=false
-    flyanim.lastSafePos=nil; flyanim.lastSafeTime=tick()
     if flyanim.gyroProtectionTimer then task.cancel(flyanim.gyroProtectionTimer) end
     if flyanim.backupGyro then pcall(function() flyanim.backupGyro:Destroy() end); flyanim.backupGyro=nil end
     flyanim.isBlocking=false; flyanim.isSpaceAdv=false; flyanim._normalPlayId=0
@@ -4408,7 +4344,6 @@ local function _flyOn()
     startMegaTurboUpListener()
     startAnomalyProtection()
     startAnimBlockLoop()
-    startTeleportGuard()
  
     if flyanim.tpMoveConn then flyanim.tpMoveConn:Disconnect(); flyanim.tpMoveConn = nil end
     local _tpMoveSession = flyanim.sessionToken
@@ -4789,10 +4724,7 @@ local function _flyOff()
     flyanim.c0HeightToken         = (flyanim.c0HeightToken         or 0) + 1
     heightTweenToken              = heightTweenToken + 1
  
-    flyanim.lastSafePos           = nil
-    flyanim.lastSafeTime          = 0
     flyanim.lastKnownPos          = nil
-    flyanim.isTeleportGuardActive = false
  
     
     if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
@@ -4805,7 +4737,6 @@ local function _flyOff()
     if flyanim.megaTurboUpConn     then flyanim.megaTurboUpConn:Disconnect();     flyanim.megaTurboUpConn     = nil end
     if flyanim.antiImpulseConn     then flyanim.antiImpulseConn:Disconnect();     flyanim.antiImpulseConn     = nil end
     if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
-    if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
     if flyanim.rsConn              then flyanim.rsConn:Disconnect();              flyanim.rsConn              = nil end
     if flyanim.tpMoveConn          then flyanim.tpMoveConn:Disconnect();          flyanim.tpMoveConn          = nil end
     -- Matar el loop de MegaUp (Heartbeat independiente)
@@ -4955,7 +4886,6 @@ local function _flyOff()
     stopAnomalyProtection()
     stopComboC0Lock()
     stopAnimBlockLoop()
-    stopTeleportGuard()
     stopComboListener()
     setNoclip(false)
  
@@ -5449,9 +5379,6 @@ local function _connectGlobal()
         flyanim.fKeyHeld           = false
         flyanim.blockCancelledByCombo = false
         flyanim.comboAnimStartTime = 0
-        flyanim.lastSafePos        = nil
-        flyanim.lastSafeTime       = tick()
-        flyanim.isTeleportGuardActive = false
  
         if flyanim.idleAnimConn then flyanim.idleAnimConn:Disconnect(); flyanim.idleAnimConn=nil end
         flyanim.lateralKilled=true; flyanim.atrasKilled=true
@@ -5467,7 +5394,7 @@ local function _connectGlobal()
         stopParticleEmitter(); stopAntiImpulse()
         stopMegaTurboUpListener()
         stopAnomalyProtection(); stopComboC0Lock()
-        stopAnimBlockLoop(); stopTeleportGuard()
+        stopAnimBlockLoop()
         detenerWatchdogAltura()
  
         if flyanim.turboRenderConn     then flyanim.turboRenderConn:Disconnect();     flyanim.turboRenderConn     = nil end
@@ -5480,7 +5407,6 @@ local function _connectGlobal()
         if flyanim.idleTimer           then task.cancel(flyanim.idleTimer);           flyanim.idleTimer           = nil end
         if flyanim.damageConn          then flyanim.damageConn:Disconnect();          flyanim.damageConn          = nil end
         if flyanim.anomalyConn         then flyanim.anomalyConn:Disconnect();         flyanim.anomalyConn         = nil end
-        if flyanim.teleportGuardConn   then flyanim.teleportGuardConn:Disconnect();   flyanim.teleportGuardConn   = nil end
         if flyanim.animBlockRenderConn then flyanim.animBlockRenderConn:Disconnect(); flyanim.animBlockRenderConn = nil end
         if flyanim.c0HeightConn        then flyanim.c0HeightConn:Disconnect();        flyanim.c0HeightConn        = nil end
  
