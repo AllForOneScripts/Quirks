@@ -2675,80 +2675,103 @@ local function startIdleWatcher()
         while flyanim.enabled do
             task.wait(0.1)
             if not flyanim.enabled then break end
-            -- Mega Up es modo independiente: no necesita teclas para mantenerse activo,
-            -- pero sí debe cancelarse si el personaje se queda quieto.
-            -- Los modos "normal" y transiciones se ignoran aquí.
-            if flyanim.mode == "normal" then continue end
-            if flyanim.turboTransitioning or flyanim.megaTransitioning then continue end
-            if flyanim.turboPreImpulsoActivo then continue end
 
-            local anyKey = UserInputService:IsKeyDown(Enum.KeyCode.W)
-                        or UserInputService:IsKeyDown(Enum.KeyCode.S)
-                        or UserInputService:IsKeyDown(Enum.KeyCode.A)
-                        or UserInputService:IsKeyDown(Enum.KeyCode.D)
+            -- FIX: todo el cuerpo del watchdog va envuelto en pcall. Antes, un
+            -- error suelto aquí (animator/track en nil, GetPlayingAnimationTracks
+            -- fallando un frame, etc.) mataba esta corrutina PARA SIEMPRE: el
+            -- watchdog dejaba de correr y el personaje quedaba atascado en
+            -- turbo/mega turbo/mega up sin poder salir aunque se quedara quieto.
+            -- Con pcall, un fallo puntual solo se salta ese tick; el watchdog
+            -- sigue vivo y reintenta 0.1s después. (Se usa `return` en vez de
+            -- `continue` porque ahora estamos dentro de una función anónima,
+            -- no directamente en el cuerpo del while.)
+            local ok, err = pcall(function()
+                -- Mega Up es modo independiente: no necesita teclas para mantenerse activo,
+                -- pero sí debe cancelarse si el personaje se queda quieto.
+                -- Los modos "normal" y transiciones se ignoran aquí.
+                if flyanim.mode == "normal" then return end
+                if flyanim.turboTransitioning or flyanim.megaTransitioning then return end
+                if flyanim.turboPreImpulsoActivo then return end
 
-            -- ── Mega Up: cancela cuando el personaje está quieto ────────────
-            -- (Space suelto ya lo cancela en el listener, esto es la capa idle)
-            -- Nota: en modo "mega up" megaTurboUpActive puede seguir en true mientras
-            -- el loop corre; la condición correcta es solo chequear el modo y las teclas.
-            if flyanim.mode == "mega up" and not anyKey then
-                MegaUpLogic.Deactivate()
-                _megaUp_restaurarNormal()
-                -- Restaurar animaciones normales inmediatamente tras cancelar Mega Up por idle
-                task.defer(function()
-                    if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                local anyKey = UserInputService:IsKeyDown(Enum.KeyCode.W)
+                            or UserInputService:IsKeyDown(Enum.KeyCode.S)
+                            or UserInputService:IsKeyDown(Enum.KeyCode.A)
+                            or UserInputService:IsKeyDown(Enum.KeyCode.D)
+
+                -- ── Mega Up: cancela cuando el personaje está quieto ────────────
+                -- (Space suelto ya lo cancela en el listener, esto es la capa idle)
+                -- Nota: en modo "mega up" megaTurboUpActive puede seguir en true mientras
+                -- el loop corre; la condición correcta es solo chequear el modo y las teclas.
+                if flyanim.mode == "mega up" and not anyKey then
+                    MegaUpLogic.Deactivate()
+                    _megaUp_restaurarNormal()
+                    -- Restaurar animaciones normales inmediatamente tras cancelar Mega Up por idle
+                    task.defer(function()
+                        if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
+                            flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
+                            local pid = flyanim._normalPlayId
+                            iniciarCicloNormal(pid)
+                            task.delay(0.05, function()
+                                if flyanim.enabled and flyanim.mode == "normal" and flyanim._normalPlayId == pid then
+                                    evaluarMovimientoNormal()
+                                end
+                            end)
+                        end
+                    end)
+                    return
+                end
+
+                -- ── Turbo / Fast: sin teclas → volver a normal ─────────────────
+                if (flyanim.mode == "turbo" or flyanim.mode == "mega turbo") and not anyKey then
+                    local prevMode = flyanim.mode
+                    -- BUG FIX: desconectar los render conns ANTES de cambiar el modo.
+                    -- Si primero se cambia mode a "normal" y luego se desconectan,
+                    -- los render conns (turboRenderConn/megaRenderConn) pueden ejecutarse
+                    -- un frame más con mode == "normal", detectar la salida y llamar
+                    -- restaurarC0Inmediato() con un token ya invalido. Desconectando
+                    -- primero evitamos ese frame fantasma y el race condition con
+                    -- iniciarCicloNormal / turboPreImpulsoActivo.
+                    if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
+                    if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
+                    flyanim.speed  = BASE_SPEED
+                    flyanim.qLastPress = 0
+                    if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
+                    stopParticleEmitter()
+                    detenerWatchdogAltura()
+                    if prevMode == "turbo" then
+                        detenerPoseTurbo()
+                    elseif prevMode == "mega turbo" then
+                        detenerPoseMega()
+                        detenerPoseTurbo()
+                    end
+                    flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
+                    restaurarC0Inmediato()
+
+                    -- FIX: el reinicio de animación se intenta ANTES de marcar
+                    -- mode = "normal". Antes se marcaba el modo primero: si
+                    -- iniciarCicloNormal fallaba, la siguiente vuelta del watchdog
+                    -- ya veía mode == "normal" (línea de arriba) y nunca reintentaba,
+                    -- dejando al personaje congelado sin ninguna animación corriendo.
+                    -- Ahora, si esto tronara, el modo seguiría siendo turbo/mega turbo
+                    -- y el watchdog reintentaría solo en el próximo tick.
+                    if not flyanim.comboPlaying then
                         flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-                        local pid = flyanim._normalPlayId
-                        iniciarCicloNormal(pid)
-                        task.delay(0.05, function()
-                            if flyanim.enabled and flyanim.mode == "normal" and flyanim._normalPlayId == pid then
+                        iniciarCicloNormal(flyanim._normalPlayId)
+                        task.defer(function()
+                            if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
                                 evaluarMovimientoNormal()
                             end
                         end)
                     end
-                end)
-                continue
-            end
 
-            -- ── Turbo / Fast: sin teclas → volver a normal ─────────────────
-            if (flyanim.mode == "turbo" or flyanim.mode == "mega turbo") and not anyKey then
-                local prevMode = flyanim.mode
-                -- BUG FIX: desconectar los render conns ANTES de cambiar el modo.
-                -- Si primero se cambia mode a "normal" y luego se desconectan,
-                -- los render conns (turboRenderConn/megaRenderConn) pueden ejecutarse
-                -- un frame más con mode == "normal", detectar la salida y llamar
-                -- restaurarC0Inmediato() con un token ya invalido. Desconectando
-                -- primero evitamos ese frame fantasma y el race condition con
-                -- iniciarCicloNormal / turboPreImpulsoActivo.
-                if flyanim.turboRenderConn then flyanim.turboRenderConn:Disconnect(); flyanim.turboRenderConn = nil end
-                if flyanim.megaRenderConn  then flyanim.megaRenderConn:Disconnect();  flyanim.megaRenderConn  = nil end
-                flyanim.mode   = "normal"
-                getgenv().AFO_FLYMODE  = flyanim.mode
-                getgenv().AFO_FLYSTATE = flyanim.enabled
-                flyanim.speed  = BASE_SPEED
-                flyanim.qLastPress = 0
-                if flyanim.updateMode then flyanim.updateMode("normal") end
-                if not flyanim.noclipSpaceActive and not flyanim.noclipCtrlActive then setNoclip(false) end
-                stopParticleEmitter()
-                detenerWatchdogAltura()
-                if prevMode == "turbo" then
-                    detenerPoseTurbo()
-                elseif prevMode == "mega turbo" then
-                    detenerPoseMega()
-                    detenerPoseTurbo()
+                    flyanim.mode   = "normal"
+                    getgenv().AFO_FLYMODE  = flyanim.mode
+                    getgenv().AFO_FLYSTATE = flyanim.enabled
+                    if flyanim.updateMode then flyanim.updateMode("normal") end
                 end
-                flyanim.c0ControlToken = (flyanim.c0ControlToken or 0) + 1
-                restaurarC0Inmediato()
-                if not flyanim.comboPlaying then
-                    flyanim._normalPlayId = (flyanim._normalPlayId or 0) + 1
-                    iniciarCicloNormal(flyanim._normalPlayId)
-                    task.defer(function()
-                        if flyanim.enabled and flyanim.mode == "normal" and not flyanim.comboPlaying then
-                            evaluarMovimientoNormal()
-                        end
-                    end)
-                end
-                continue
+            end)
+            if not ok then
+                warn("[Fly] idleWatcher tick error: " .. tostring(err))
             end
         end
     end)
@@ -3257,6 +3280,7 @@ end
 
 local function handleComboClick()
     if not flyanim.enabled then return end
+    if flyanim.mode ~= "normal" then return end   -- FIX: bloquea combo en turbo/mega turbo/mega up
     if flyanim.turboPreImpulsoActivo then return end
     if flyanim.isBlocking then return end
     if flyanim.comboPlaying then
