@@ -19,16 +19,13 @@ function M.Start(lplr)
     -- Desconecta cualquier conexión anterior para evitar duplicados
     if _conn then M.Stop() end
     
-    -- Función separada para mayor claridad, igual que en tu segundo script
     local function removeFolders()
         local live = workspace:FindFirstChild("Live")
         if not live then return end
         
-        -- Buscamos el personaje en cada frame para asegurar que funcione incluso tras reaparecer (respawn)
         local targetParent = live:FindFirstChild(_lplr.Name)
         if not targetParent then return end
         
-        -- ipairs es ligeramente más rápido que pairs para listas/arrays indexados
         for _, folderName in ipairs(foldersToDelete) do
             local folder = targetParent:FindFirstChild(folderName)
             if folder then
