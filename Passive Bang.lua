@@ -3,7 +3,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
--- Variables de estado con prefijo '_' siguiendo tu estructura
+-- Variables de estado con prefijo '_'
 local _lplr = nil
 local _camera = workspace.CurrentCamera
 local _conns = {}
@@ -37,7 +37,7 @@ local PB = {
 }
 
 -- ──────────────────────────────────────────────────────────────────
--- FUNCIONES DE ESCANEO (Fallback si Lock no está activo)
+-- FUNCIONES DE ESCANEO (Solo corren si el Lock está apagado)
 -- ──────────────────────────────────────────────────────────────────
 local function pbScoreCandidate(candidatePlayer, myHRP, mouseX, mouseY)
     if candidatePlayer == _lplr then return nil end
@@ -124,9 +124,13 @@ function M.Start(lplr)
         
         local hasLock = false
         
-        -- 1. PRIORIDAD ABSOLUTA AL LOCK (Se revisa cada frame sin depender de _rescore)
-        if _lockModuleRef and _lockModuleRef.IsLockActive() then
-            local lockTarget = _lockModuleRef.GetTarget()
+        -- 1. PRIORIDAD ABSOLUTA AL LOCK
+        -- Evaluamos si el Lock está activo ANTES de intentar sacar a su objetivo.
+        if _lockModuleRef and type(_lockModuleRef.IsLockActive) == "function" and _lockModuleRef.IsLockActive() then
+            hasLock = true -- ESTAMOS EN MODO LOCK. EL ESCANEO PASIVO QUEDA TOTALMENTE ANULADO.
+            
+            local lockTarget = type(_lockModuleRef.GetTarget) == "function" and _lockModuleRef.GetTarget() or nil
+            
             if lockTarget and lockTarget.Character then
                 local lHRP = lockTarget.Character:FindFirstChild("HumanoidRootPart")
                 local lHum = lockTarget.Character:FindFirstChild("Humanoid")
@@ -134,15 +138,18 @@ function M.Start(lplr)
                 if lHRP and lHum and lHum.Health > 0 then
                     _targetHRP = lHRP
                     _targetPlayer = lockTarget
-                    hasLock = true
-                    -- Forzamos el reseteo del temporizador para que, si el lock se suelta, 
-                    -- busque inmediatamente el objetivo más cercano en el mismo frame.
                     _rescore = PB.RESCORE_INTERVAL
+                else
+                    _targetHRP = nil
+                    _targetPlayer = nil
                 end
+            else
+                _targetHRP = nil
+                _targetPlayer = nil
             end
         end
 
-        -- 2. ESCANEO PASIVO (Solo se ejecuta si NO hay Lock activo)
+        -- 2. ESCANEO PASIVO (Solo se ejecuta si el Lock está APAGADO)
         if not hasLock then
             _rescore = _rescore + 1
             if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
@@ -162,7 +169,7 @@ function M.Start(lplr)
                 _targetHRP = nil
                 _targetPlayer = nil
                 _rescore = PB.RESCORE_INTERVAL
-                return
+                return -- Cortamos aquí. Si estamos en Lock, el próximo frame volverá a buscar a tu objetivo exclusivo.
             end
         end
         
@@ -194,7 +201,7 @@ function M.Start(lplr)
         hrp.CFrame = CFrame.new(targetPos, predictedPos)
         _camera.CFrame = _camera.CFrame:Lerp(CFrame.new(_camera.CFrame.Position, predictedPos), 0.25)
         
-        -- Desenganche manual (Note: si el Lock sigue activo, volverá a enganchar al frame siguiente)
+        -- Desenganche manual (solo afectará si NO estás usando Lock, ya que el Lock lo reengancharía al frame siguiente)
         if _leftDown and _rightDown then
             _targetHRP = nil
             _targetPlayer = nil
@@ -238,10 +245,15 @@ end
 
 function M.GetTeleportTarget()
     if not _holding then return nil end
+    local lockActive = false
+    if _lockModuleRef and type(_lockModuleRef.IsLockActive) == "function" then
+        lockActive = _lockModuleRef.IsLockActive()
+    end
+    
     return {
         player = _targetPlayer,
         hrp = _targetHRP,
-        isLockedByModule = (_lockModuleRef and _lockModuleRef.IsLockActive()) or false
+        isLockedByModule = lockActive
     }
 end
 
