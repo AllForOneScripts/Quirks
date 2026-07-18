@@ -119,8 +119,8 @@ _reloadFT()
 -- ──────────────────────────────────────────────────────────────────
 -- [3]  ESTADO INTERNO (L)
 -- ──────────────────────────────────────────────────────────────────
-local LOCK_ROTATION_SMOOTH = 0.8
-local SOFTAIM_BODY_SMOOTH  = 0.8
+local LOCK_ROTATION_SMOOTH = 1.0
+local SOFTAIM_BODY_SMOOTH  = 1.0
 local LOCK_ICON_ID         = "rbxassetid://82817965256191"
 
 local L = {
