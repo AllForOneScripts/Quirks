@@ -89,10 +89,8 @@ end
 -- ──────────────────────────────────────────────────────────────────
 
 function M.Start(lplr)
-    -- Si no se especifica un jugador, usa el LocalPlayer
     _lplr = lplr or Players.LocalPlayer
     
-    -- Desconecta cualquier conexión anterior para evitar duplicados
     if #_conns > 0 then M.Stop() end
     
     local char = _lplr.Character
@@ -124,20 +122,31 @@ function M.Start(lplr)
         if not _holding then return end
         if not hrp or not hrp.Parent then return end
         
-        _rescore = _rescore + 1
+        local hasLock = false
         
-        if _rescore >= PB.RESCORE_INTERVAL then
-            _rescore = 0
-            
-            -- INTEGRACIÓN CON LOCK.LUA
-            if _lockModuleRef and _lockModuleRef.IsLockActive() then
-                local lockTarget = _lockModuleRef.GetTarget()
-                if lockTarget and lockTarget.Character then
-                    _targetHRP = lockTarget.Character:FindFirstChild("HumanoidRootPart")
+        -- 1. PRIORIDAD ABSOLUTA AL LOCK (Se revisa cada frame sin depender de _rescore)
+        if _lockModuleRef and _lockModuleRef.IsLockActive() then
+            local lockTarget = _lockModuleRef.GetTarget()
+            if lockTarget and lockTarget.Character then
+                local lHRP = lockTarget.Character:FindFirstChild("HumanoidRootPart")
+                local lHum = lockTarget.Character:FindFirstChild("Humanoid")
+                
+                if lHRP and lHum and lHum.Health > 0 then
+                    _targetHRP = lHRP
                     _targetPlayer = lockTarget
+                    hasLock = true
+                    -- Forzamos el reseteo del temporizador para que, si el lock se suelta, 
+                    -- busque inmediatamente el objetivo más cercano en el mismo frame.
+                    _rescore = PB.RESCORE_INTERVAL
                 end
-            else
-                -- Fallback: sistema original de proximidad/mouse
+            end
+        end
+
+        -- 2. ESCANEO PASIVO (Solo se ejecuta si NO hay Lock activo)
+        if not hasLock then
+            _rescore = _rescore + 1
+            if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
+                _rescore = 0
                 local newHRP, newPlayer = pbSelectBestTarget(hrp)
                 if newHRP then 
                     _targetHRP = newHRP
@@ -146,6 +155,7 @@ function M.Start(lplr)
             end
         end
         
+        -- 3. VALIDACIÓN DEL OBJETIVO ACTUAL
         if _targetHRP then
             local tHum = _targetHRP.Parent and _targetHRP.Parent:FindFirstChild("Humanoid")
             if not _targetHRP.Parent or not tHum or tHum.Health <= 0 then
@@ -158,7 +168,7 @@ function M.Start(lplr)
         
         if not _targetHRP then return end
         
-        -- Lógica de TP y Predicción
+        -- 4. LÓGICA DE TELETRANSPORTE Y PREDICCIÓN
         local pingPredict = PB.PING_PREDICT_BASE + PB.PING_PREDICT_EXTRA
         local tVel = _targetHRP.AssemblyLinearVelocity
         local predictedPos = _targetHRP.Position + tVel * pingPredict
@@ -184,7 +194,7 @@ function M.Start(lplr)
         hrp.CFrame = CFrame.new(targetPos, predictedPos)
         _camera.CFrame = _camera.CFrame:Lerp(CFrame.new(_camera.CFrame.Position, predictedPos), 0.25)
         
-        -- Desenganche manual
+        -- Desenganche manual (Note: si el Lock sigue activo, volverá a enganchar al frame siguiente)
         if _leftDown and _rightDown then
             _targetHRP = nil
             _targetPlayer = nil
