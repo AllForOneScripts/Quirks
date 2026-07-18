@@ -1,16 +1,9 @@
--- ═══════════════════════════════════════════════════════════════════════════
---  CLUSTER - MOTOR DE MOVIMIENTO PURO
--- ═══════════════════════════════════════════════════════════════════════════
-
 local M = {}
 
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 
--- ───────────────────────────────────────────────────────────────────────────
---  VARIABLES DE ESTADO PRIVADAS
--- ───────────────────────────────────────────────────────────────────────────
 local _isEnabled = false
 local _speed = 50
 local _maxSpeed = 120
