@@ -166,60 +166,39 @@ local function predSimulate(p0, v0, excludeList)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SEGUIMIENTO DE TERRENO DEL CLON
+--  SEGUIMIENTO DE TERRENO DEL CLON (VERSIÓN SIMPLIFICADA Y CORREGIDA)
 -- ═══════════════════════════════════════════════════════════════════════════
-local function omniFollowGround(prevPos, desiredXZ, dt)
-    local char = _lplr and _lplr.Character
+local function omniGetGroundHeight(pos, char)
     local rp = RaycastParams.new()
     rp.FilterType = Enum.RaycastFilterType.Exclude
     local excl = {}
     if char then table.insert(excl, char) end
     if omniCloneModel then table.insert(excl, omniCloneModel) end
     rp.FilterDescendantsInstances = excl
-
-    local moveDelta = Vector3.new(desiredXZ.X - prevPos.X, 0, desiredXZ.Z - prevPos.Z)
-    if moveDelta.Magnitude < 0.001 then return prevPos end
-
-    local footY = prevPos.Y - omniFootOffset
-    local fwdOrigin = Vector3.new(prevPos.X, footY + 0.2, prevPos.Z)
-    local wallHit = workspace:Raycast(fwdOrigin, moveDelta.Unit * OCFG.GROUND_PROBE_AHEAD, rp)
-    if wallHit then
-        local stepOrigin = Vector3.new(wallHit.Position.X, footY + OCFG.CLIMB_STEP_MAX + 0.1, wallHit.Position.Z)
-        local stepDown   = workspace:Raycast(stepOrigin, Vector3.new(0, -(OCFG.CLIMB_STEP_MAX + 0.2), 0), rp)
-        if stepDown then
-            local stepH = stepDown.Position.Y - footY
-            if stepH > 0.05 and stepH <= OCFG.CLIMB_STEP_MAX then
-                local maxRise = OCFG.MAX_VERTICAL_SPEED * dt
-                local newY    = prevPos.Y + math.min(stepH, maxRise)
-                return Vector3.new(desiredXZ.X, newY, desiredXZ.Z)
-            end
-        end
-        return Vector3.new(prevPos.X, prevPos.Y, prevPos.Z)
-    end
-
-    local probeOrigin = Vector3.new(desiredXZ.X, prevPos.Y + OCFG.CLIMB_STEP_MAX + 0.5, desiredXZ.Z)
-    local groundHit   = workspace:Raycast(probeOrigin, Vector3.new(0, -(OCFG.DESCEND_STEP_MAX + OCFG.CLIMB_STEP_MAX + 1), 0), rp)
-    if groundHit then
-        local targetY = groundHit.Position.Y + omniFootOffset
-        local diff    = targetY - prevPos.Y
-        local maxDelta = OCFG.MAX_VERTICAL_SPEED * dt
-        local newY = prevPos.Y + math.clamp(diff, -maxDelta, maxDelta)
-        return Vector3.new(desiredXZ.X, newY, desiredXZ.Z)
-    end
-
-    return prevPos
-end
-
-local function omniGetSnapY(pos, char)
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    local excl = {}
-    if char        then table.insert(excl, char) end
-    if omniCloneModel then table.insert(excl, omniCloneModel) end
-    rp.FilterDescendantsInstances = excl
-    local hit = workspace:Raycast(Vector3.new(pos.X, pos.Y + 5, pos.Z), Vector3.new(0, -50, 0), rp)
+    local origin = Vector3.new(pos.X, pos.Y + 5, pos.Z)
+    local hit = workspace:Raycast(origin, Vector3.new(0, -50, 0), rp)
     if hit then return hit.Position.Y + omniFootOffset end
     return nil
+end
+
+local function omniFollowGround(prevPos, desiredXZ, dt, char)
+    -- Movimiento horizontal directo
+    local newPos = Vector3.new(desiredXZ.X, prevPos.Y, desiredXZ.Z)
+
+    -- Raycast para obtener altura del suelo en la nueva posición
+    local groundY = omniGetGroundHeight(newPos, char)
+    if groundY then
+        -- Limitar velocidad de descenso/ascenso para evitar tirones
+        local diff = groundY - prevPos.Y
+        local maxDelta = OCFG.MAX_VERTICAL_SPEED * dt
+        local newY = prevPos.Y + math.clamp(diff, -maxDelta, maxDelta)
+        newPos = Vector3.new(newPos.X, newY, newPos.Z)
+    else
+        -- Si no hay suelo, mantener Y actual (puede estar en el aire)
+        newPos = Vector3.new(newPos.X, prevPos.Y, newPos.Z)
+    end
+
+    return newPos
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -326,13 +305,15 @@ local function omniCreateDecoy(pos)
     end
     clone.Parent = workspace
     omniCloneModel = clone
-    local hrp     = omniGetHRP(char)
+
+    -- Establecer la PrimaryPart para poder usar SetPrimaryPartCFrame
+    local hrp = omniGetHRP(char)
     local cloneHRP = clone:FindFirstChild("HumanoidRootPart") or clone:FindFirstChild("Torso")
-    if hrp and cloneHRP then
-        cloneHRP.CFrame = CFrame.new(pos) * CFrame.Angles(0, select(2, hrp.CFrame:ToEulerAnglesYXZ()), 0)
-    else
-        pcall(function() clone:MoveTo(pos) end)
+    if cloneHRP then
+        clone:SetPrimaryPartCFrame(cloneHRP.CFrame)
+        clone.PrimaryPart = cloneHRP
     end
+
     local hl = Instance.new("Highlight", clone)
     hl.FillColor = Color3.fromRGB(200,220,255); hl.OutlineColor = Color3.fromRGB(180,200,255)
     hl.FillTransparency = 0.55; hl.OutlineTransparency = 0.2
@@ -428,8 +409,7 @@ local function omniDeactivate4D()
             local _fm = rawget(getgenv(), "_AFO_FLY_MODULE")
             if _fm and _fm.Bypass then _fm.Bypass(0.5, "omni4d_deactivate") end
 
-            local cloneHRP = omniCloneModel and
-                (omniCloneModel:FindFirstChild("HumanoidRootPart") or omniCloneModel:FindFirstChild("Torso"))
+            local cloneHRP = omniCloneModel and omniCloneModel.PrimaryPart
             local landPos, landCF
             if cloneHRP then
                 landPos = cloneHRP.Position
@@ -446,7 +426,7 @@ local function omniDeactivate4D()
                 end
             end
 
-            local snapY = omniGetSnapY(landPos, char)
+            local snapY = omniGetGroundHeight(landPos, char)
             if snapY then
                 landCF = CFrame.new(landPos.X, snapY, landPos.Z) * (landCF - landCF.Position)
             end
@@ -639,7 +619,6 @@ local function omniStop()
     if omniInSky then omniDeactivate4D() end
     omniModeX = false; omniModeY = false; omniRmbHeld = false
     omniClearESP()
-    -- Se eliminó predDestroyAll
     if omniHeartbeat  then disconnectTracked(omniHeartbeat);  omniHeartbeat  = nil end
     if omniInputBegin then disconnectTracked(omniInputBegin); omniInputBegin = nil end
     if omniInputEnd   then disconnectTracked(omniInputEnd);   omniInputEnd   = nil end
@@ -679,34 +658,29 @@ local function omniStart()
 
             if skyThreat then
                 -- MODO ALERTA: movimiento errático y veloz
-                omniApplyCloneColor(true)   -- clon en rojo (alerta)
+                omniApplyCloneColor(true)
 
-                -- Actualizar dirección y velocidad errática
                 erraticTimer = erraticTimer - dt
                 if erraticTimer <= 0 then
-                    erraticTimer = math.random() * 0.3 + 0.1   -- entre 0.1 y 0.4 segundos
+                    erraticTimer = math.random() * 0.3 + 0.1
                     local angle = math.rad(math.random() * 360)
                     erraticDir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-                    erraticSpeed = math.random() * 400 + 300   -- entre 300 y 700 studs/s
+                    erraticSpeed = math.random() * 400 + 300
                 end
 
-                -- Aplicar velocidad al cuerpo real
                 local vel = erraticDir * erraticSpeed
                 myHRP.AssemblyLinearVelocity = Vector3.new(vel.X, myHRP.AssemblyLinearVelocity.Y, vel.Z)
 
-                -- Actualizar groundPos para que el clon siga al personaje
                 omniGroundPos = Vector3.new(myHRP.Position.X, omniGroundPos.Y, myHRP.Position.Z)
 
-                -- Mantener BodyPosition en la altitud fija, pero en la XZ del personaje
                 if omniSkyBP2 then
                     omniSkyBP2.Position = Vector3.new(myHRP.Position.X, omniSkyWorldY, myHRP.Position.Z)
                 end
 
             else
-                -- COMPORTAMIENTO NORMAL (sin amenaza)
-                omniApplyCloneColor(omniOrbiting)   -- color según orbita o normal
+                -- COMPORTAMIENTO NORMAL: movimiento con WASD
+                omniApplyCloneColor(omniOrbiting)
 
-                -- Movimiento WASD
                 local prevGroundPos = omniGroundPos
                 local camLook  = camera.CFrame.LookVector
                 local camRight = camera.CFrame.RightVector
@@ -714,15 +688,17 @@ local function omniStart()
                 local right = Vector3.new(camRight.X, 0, camRight.Z)
                 if fwd.Magnitude   > 0 then fwd   = fwd.Unit   end
                 if right.Magnitude > 0 then right = right.Unit end
+
                 local move = Vector3.new()
                 if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + fwd   end
                 if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - fwd   end
                 if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right  end
                 if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right  end
+
                 if move.Magnitude > 0 then
                     local proposed = prevGroundPos + move.Unit * OCFG.DECOY_WALK_SPEED * dt
                     omniGroundPos = omniFollowGround(prevGroundPos,
-                        Vector3.new(proposed.X, prevGroundPos.Y, proposed.Z), dt)
+                        Vector3.new(proposed.X, prevGroundPos.Y, proposed.Z), dt, char)
                 end
 
                 -- Salto del clon
@@ -735,27 +711,15 @@ local function omniStart()
                     if omniCloneJumpOffset < 0 then omniCloneJumpOffset = 0; omniCloneJumpVel = 0 end
                 end
 
-                -- Actualizar posición del clon
-                if omniCloneModel then
-                    local cloneHRP = omniCloneModel:FindFirstChild("HumanoidRootPart")
-                                  or omniCloneModel:FindFirstChild("Torso")
-                    if cloneHRP then
-                        local flat = Vector3.new(camLook.X, 0, camLook.Z)
-                        local yaw  = flat.Magnitude > 0.01
-                            and math.atan2(-flat.X, -flat.Z)
-                            or  select(2, cloneHRP.CFrame:ToEulerAnglesYXZ())
-                        local clonePos  = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset, omniGroundPos.Z)
-                        local newRootCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
-                        local delta     = newRootCF * cloneHRP.CFrame:Inverse()
-                        for _, v in pairs(omniCloneModel:GetDescendants()) do
-                            if v:IsA("BasePart") then v.CFrame = delta * v.CFrame end
-                        end
-                    else
-                        pcall(function()
-                            omniCloneModel:MoveTo(Vector3.new(
-                                omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset, omniGroundPos.Z))
-                        end)
-                    end
+                -- Actualizar posición del clon usando PrimaryPart
+                if omniCloneModel and omniCloneModel.PrimaryPart then
+                    local flat = Vector3.new(camLook.X, 0, camLook.Z)
+                    local yaw  = flat.Magnitude > 0.01
+                        and math.atan2(-flat.X, -flat.Z)
+                        or  select(2, omniCloneModel.PrimaryPart.CFrame:ToEulerAnglesYXZ())
+                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset, omniGroundPos.Z)
+                    local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
+                    omniCloneModel:SetPrimaryPartCFrame(newCF)
                 end
 
                 -- Actualizar cámara
@@ -779,18 +743,16 @@ local function omniStart()
                 end
             end
 
-            -- Teleport en spam para corregir altitud
+            -- Teleport en spam para corregir altitud del personaje real
             if omniInSky and myHRP then
                 local desiredY = omniSkyWorldY
                 local currentY = myHRP.Position.Y
                 if math.abs(currentY - desiredY) > 5 then
-                    -- Corregir posición vertical
                     myHRP.CFrame = CFrame.new(myHRP.Position.X, desiredY, myHRP.Position.Z)
                                  * (myHRP.CFrame - myHRP.CFrame.Position)
                 end
             end
 
-            -- Actualizar ESP
             omniUpdateESP(omniGroundPos)
             return
         end
@@ -875,7 +837,6 @@ local function omniStart()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if hum then camera.CameraSubject = hum end
         omniDestroyDecoy(); omniDestroyCamSubject(); omniClearESP()
-        -- Se eliminó predDestroyAll
     end))
 end
 
