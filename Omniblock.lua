@@ -43,6 +43,8 @@ local OCFG = {
     ORBIT_SPEED      = 6,
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
+    CLONE_VISUAL_Y_OFFSET = 1.5, -- Elevación extra para evitar que las piernas atraviesen el suelo
+    
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
 
@@ -717,7 +719,7 @@ local function omniStart()
                     local yaw  = flat.Magnitude > 0.01
                         and math.atan2(-flat.X, -flat.Z)
                         or  select(2, omniCloneModel.PrimaryPart.CFrame:ToEulerAnglesYXZ())
-                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset, omniGroundPos.Z)
+                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0), omniGroundPos.Z)
                     local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
                     omniCloneModel:SetPrimaryPartCFrame(newCF)
                 end
