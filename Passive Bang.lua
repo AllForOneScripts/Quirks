@@ -3,7 +3,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
--- Variables de estado con prefijo '_'
 local _lplr = nil
 local _camera = workspace.CurrentCamera
 local _conns = {}
