@@ -1,1672 +1,1938 @@
-local Fluent = loadstring(game:HttpGet("https://github.com/StyearX/Fluent-modded/releases/download/1.5.1/FluentPro"))()
+--[[
+    QuirksUI  —  Custom PC-only UI library (Fluent-style API)
+    Repo target: AllForOneScripts/Quirks/UI.lua
+    Load with:
+        local Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/main/UI.lua"))()
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+    Notes:
+      - Mouse + keyboard only. No touch/mobile handling anywhere.
+      - API mirrors FluentPro naming (CreateWindow, AddTab, AddSection, AddToggle, ...)
+        so existing element-creation code written for FluentPro drops in with minimal changes.
+      - Single-file, returns the Library table.
+]]
+
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local TweenService      = game:GetService("TweenService")
+local Players            = game:GetService("Players")
+local RunService         = game:GetService("RunService")
+local HttpService        = game:GetService("HttpService")
+
 local LocalPlayer = Players.LocalPlayer
 
-local Tabs = {}
+--============================================================
+-- ROOT LIBRARY TABLE
+--============================================================
 
-local function Notify(title, content, ntype, icon, duration)
-    Fluent:Notify({Title=title, Content=content, Type=ntype or "Info", Icon=icon, Duration=duration or 3})
+local Library = {}
+Library.__index = Library
+
+Library.Version        = "1.0.0"
+Library.Windows         = {}
+Library.Themes          = {}
+Library.CurrentTheme    = "Obsidian"
+Library.ThemeTags       = {}   -- list of {Instance, Property, Key} kept alive while UI exists
+Library.Options         = {}   -- Flag -> element object (used by SaveManager)
+Library.Unloaded        = false
+Library.ErrorHandlerFn  = nil
+Library.RootGui         = nil
+
+local function protectedCall(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok and Library.ErrorHandlerFn then
+        pcall(Library.ErrorHandlerFn, err, err)
+    end
+    return ok, err
 end
 
-local function CreateButton(ButtonName, Name, Size1, Size2, ScriptLogic, CircleMode)
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = ButtonName
-    screenGui.Parent = LocalPlayer.PlayerGui
-    screenGui.ResetOnSpawn = false
-    screenGui.DisplayOrder = -2147483648
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.IgnoreGuiInset = false
-
-    local frame = Instance.new("Frame")
-    frame.Name = ButtonName
-    frame.Size = UDim2.new(Size1, 0, Size2, 0)
-    frame.Position = UDim2.new(0.5 - Size1 / 2, 0, 0.5 - Size2 / 2, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    frame.BackgroundTransparency = 0.7
-    frame.ZIndex = -10
-    frame.Parent = screenGui
-
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ButtonGradients.Background
-    gradient.Parent = frame
-    task.spawn(function()
-        while task.wait(0.03) do
-            if not frame.Parent then break end
-            gradient.Rotation = (gradient.Rotation + 1) % 360
-            gradient.Color = ButtonGradients.Background
-        end
-    end)
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 2
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Color = Color3.new(1, 1, 1)
-    stroke.Parent = frame
-    local gradientstroke = Instance.new("UIGradient")
-    gradientstroke.Color = ButtonGradients.Stroke
-    gradientstroke.Rotation = 0
-    gradientstroke.Parent = stroke
-    task.spawn(function()
-        while frame.Parent do
-            gradientstroke.Rotation = (gradientstroke.Rotation + 0.5) % 360
-            gradientstroke.Color = ButtonGradients.Stroke
-            task.wait()
-        end
-    end)
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 15)
-    corner.Parent = frame
-
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, 0, 1, 0)
-    button.BackgroundTransparency = 1
-    button.Text = Name
-    button.Font = Enum.Font.SourceSansBold
-    button.TextColor3 = Color3.fromRGB(255, 255, 255)
-    button.TextSize = 24
-    button.TextScaled = false
-    button.ZIndex = -9
-    button.Parent = frame
-
-    local toggle = Instance.new("TextButton")
-    toggle.Size = UDim2.new(0, 28, 0, 28)
-    toggle.Position = UDim2.new(1, 6, 0.5, -14)
-    toggle.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    toggle.Text = "○"
-    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggle.Visible = false
-    toggle.ZIndex = -8
-    toggle.Parent = frame
-    Instance.new("UICorner", toggle).CornerRadius = UDim.new(1, 0)
-
-    local originalSize = UDim2.new(Size1, 0, Size2, 0)
-    local holding, holdStart, hideAt = false, 0, 0
-
-    frame:SetAttribute("IsCircle", false)
-    local isCircle = CircleMode ~= nil and CircleMode or frame:GetAttribute("IsCircle")
-
-    local function ApplyShape(circle)
-        frame:SetAttribute("IsCircle", circle)
-        local s = math.min(frame.AbsoluteSize.X, frame.AbsoluteSize.Y)
-        if circle then
-            frame.Size = UDim2.new(0, s, 0, s)
-            button.TextWrapped = true
-            button.TextScaled = true
-            button.TextSize = math.floor(s * 0.45)
-            corner.CornerRadius = UDim.new(1, 0)
-            toggle.Text = "▢"
-        else
-            frame.Size = originalSize
-            button.TextWrapped = false
-            button.TextScaled = false
-            button.TextSize = 24
-            corner.CornerRadius = UDim.new(0, 15)
-            toggle.Text = "○"
-        end
-    end
-    ApplyShape(isCircle)
-
-    task.spawn(function()
-        while task.wait(0.25) do
-            if not frame.Parent then break end
-            if toggle.Visible and tick() - hideAt >= 10 then toggle.Visible = false end
-        end
-    end)
-
-    button.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            holding = true; holdStart = tick()
-        end
-    end)
-    button.InputEnded:Connect(function(i)
-        if holding and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
-            holding = false
-            if tick() - holdStart >= 0.6 then toggle.Visible = true; hideAt = tick() end
-        end
-    end)
-    toggle.MouseButton1Click:Connect(function()
-        hideAt = tick()
-        ApplyShape(not frame:GetAttribute("IsCircle"))
-    end)
-    button.Activated:Connect(function()
-        if ScriptLogic then ScriptLogic(button) end
-    end)
-
-    FloatingButtonManager:AddButton(ButtonName, frame, false)
-
-    local function MakeDraggable(topbarobject, object, locked)
-        local Dragging, DragInput, DragStart, StartPosition = false, nil, nil, nil
-        local Holding, HoldTime, MoveCancelThreshold, HoldToken = false, 1.0, 6, 0
-        object:SetAttribute("Locked", locked or false)
-        local function Update(input)
-            if object:GetAttribute("Locked") then return end
-            local delta = input.Position - DragStart
-            object.Position = UDim2.new(StartPosition.X.Scale, StartPosition.X.Offset + delta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + delta.Y)
-        end
-        local function ToggleLock()
-            local newState = not object:GetAttribute("Locked")
-            object:SetAttribute("Locked", newState)
-            Fluent:Notify({ Title = newState and "Button Locked" or "Button Unlocked", Content = newState and "Locked in place." or "Can now be moved.", Duration = 2 })
-        end
-        topbarobject.InputBegan:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-            Dragging = not object:GetAttribute("Locked"); Holding = true; DragStart = input.Position; StartPosition = object.Position
-            HoldToken += 1; local token = HoldToken
-            task.delay(HoldTime, function() if Holding and token == HoldToken then ToggleLock() end end)
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then Dragging = false; Holding = false end
-            end)
-        end)
-        topbarobject.InputChanged:Connect(function(input)
-            if not DragStart then return end
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                if (input.Position - DragStart).Magnitude > MoveCancelThreshold then Holding = false end
-                DragInput = input
-            end
-        end)
-        UserInputService.InputChanged:Connect(function(input) if input == DragInput and Dragging then Update(input) end end)
-    end
-    MakeDraggable(button, frame, false)
-
-    return frame, button, ApplyShape
+function Library:SetErrorHandler(fn)
+    self.ErrorHandlerFn = fn
 end
 
-local floatingGui = nil
+--============================================================
+-- SMALL UTILITIES
+--============================================================
 
-Fluent:RegisterCustomTheme("NeonBlue", {
-    Accent = Color3.fromRGB(0, 180, 255),
-    AcrylicMain = Color3.fromRGB(10, 14, 28),
-    AcrylicBorder = Color3.fromRGB(0, 100, 180),
-    AcrylicGradient = ColorSequence.new(Color3.fromRGB(10, 14, 28), Color3.fromRGB(5, 8, 20)),
-    AcrylicNoise = 0.75,
-    TitleBarLine = Color3.fromRGB(0, 100, 180),
-    Tab = Color3.fromRGB(15, 22, 48),
-    Element = Color3.fromRGB(12, 18, 40),
-    ElementBorder = Color3.fromRGB(0, 80, 160),
-    InElementBorder = Color3.fromRGB(0, 120, 220),
-    ElementTransparency = 0.82,
-    ToggleSlider = Color3.fromRGB(20, 30, 70),
-    ToggleToggled = Color3.fromRGB(0, 180, 255),
-    SliderRail = Color3.fromRGB(20, 30, 70),
-    DropdownFrame = Color3.fromRGB(10, 16, 36),
-    DropdownHolder = Color3.fromRGB(6, 10, 24),
-    DropdownBorder = Color3.fromRGB(0, 80, 160),
-    DropdownOption = Color3.fromRGB(14, 22, 50),
-    Keybind = Color3.fromRGB(14, 22, 50),
-    Input = Color3.fromRGB(8, 14, 32),
-    InputFocused = Color3.fromRGB(4, 8, 20),
-    InputIndicator = Color3.fromRGB(0, 120, 220),
-    Dialog = Color3.fromRGB(6, 10, 24),
-    DialogHolder = Color3.fromRGB(4, 8, 20),
-    DialogHolderLine = Color3.fromRGB(0, 70, 140),
-    DialogButton = Color3.fromRGB(10, 16, 38),
-    DialogButtonBorder = Color3.fromRGB(0, 80, 160),
-    DialogBorder = Color3.fromRGB(0, 80, 160),
-    DialogInput = Color3.fromRGB(8, 14, 32),
-    DialogInputLine = Color3.fromRGB(0, 120, 220),
-    Text = Color3.fromRGB(230, 245, 255),
-    SubText = Color3.fromRGB(120, 170, 220),
-    Hover = Color3.fromRGB(20, 36, 80),
-    HoverChange = 0.05,
-    ShineEnabled = true,
-    Shine = {
-        Speed = 0.5,
-        RotationSpeed = 25,
-        ColorSequence = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 60, 130)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 60, 130)),
-        }),
-    },
-    StrokeShine = true,
-    StrokeDark = Color3.fromRGB(0, 60, 130),
-    ButtonGradient = {
-        Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 30, 80)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 10, 40)),
-        }),
-        Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 120, 220)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 120, 220)),
-        }),
-    },
-})
+local function New(class, props, children)
+    local inst = Instance.new(class)
+    if props then
+        for k, v in pairs(props) do
+            inst[k] = v
+        end
+    end
+    if children then
+        for _, c in ipairs(children) do
+            c.Parent = inst
+        end
+    end
+    return inst
+end
 
-Fluent:RegisterCustomTheme("EmeraldDark", {
-    Accent = Color3.fromRGB(0, 220, 120),
-    AcrylicMain = Color3.fromRGB(8, 20, 14),
-    AcrylicBorder = Color3.fromRGB(0, 140, 70),
-    AcrylicGradient = ColorSequence.new(Color3.fromRGB(8, 20, 14), Color3.fromRGB(4, 12, 8)),
-    AcrylicNoise = 0.7,
-    TitleBarLine = Color3.fromRGB(0, 140, 70),
-    Tab = Color3.fromRGB(10, 28, 18),
-    Element = Color3.fromRGB(8, 22, 14),
-    ElementBorder = Color3.fromRGB(0, 110, 55),
-    InElementBorder = Color3.fromRGB(0, 180, 90),
-    ElementTransparency = 0.84,
-    ToggleSlider = Color3.fromRGB(14, 40, 24),
-    ToggleToggled = Color3.fromRGB(0, 220, 120),
-    SliderRail = Color3.fromRGB(14, 40, 24),
-    DropdownFrame = Color3.fromRGB(6, 18, 12),
-    DropdownHolder = Color3.fromRGB(4, 12, 8),
-    DropdownBorder = Color3.fromRGB(0, 110, 55),
-    DropdownOption = Color3.fromRGB(10, 28, 18),
-    Keybind = Color3.fromRGB(10, 28, 18),
-    Input = Color3.fromRGB(6, 18, 12),
-    InputFocused = Color3.fromRGB(3, 10, 7),
-    InputIndicator = Color3.fromRGB(0, 170, 85),
-    Dialog = Color3.fromRGB(4, 14, 9),
-    DialogHolder = Color3.fromRGB(3, 10, 6),
-    DialogHolderLine = Color3.fromRGB(0, 90, 45),
-    DialogButton = Color3.fromRGB(8, 20, 13),
-    DialogButtonBorder = Color3.fromRGB(0, 110, 55),
-    DialogBorder = Color3.fromRGB(0, 110, 55),
-    DialogInput = Color3.fromRGB(6, 18, 12),
-    DialogInputLine = Color3.fromRGB(0, 170, 85),
-    Text = Color3.fromRGB(220, 255, 235),
-    SubText = Color3.fromRGB(120, 200, 155),
-    Hover = Color3.fromRGB(14, 42, 26),
-    HoverChange = 0.05,
-    ShineEnabled = true,
-    Shine = {
-        Speed = 0.5,
-        RotationSpeed = 25,
-        ColorSequence = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 80, 40)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 220, 120)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 80, 40)),
-        }),
-    },
-    StrokeShine = false,
-    StrokeDark = Color3.fromRGB(0, 80, 40),
-    ButtonGradient = {
-        Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 50, 25)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 20, 10)),
-        }),
-        Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 150, 75)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 220, 120)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 150, 75)),
-        }),
-    },
-})
+local function Round(inst, radius)
+    return New("UICorner", { CornerRadius = UDim.new(0, radius or 8), Parent = inst })
+end
 
-Fluent:RegisterCustomTheme("Sunset", {
-    Accent = Color3.fromRGB(255, 110, 50),
-    AcrylicMain = Color3.fromRGB(28, 16, 12),
-    AcrylicBorder = Color3.fromRGB(180, 80, 30),
-    AcrylicGradient = ColorSequence.new(Color3.fromRGB(28, 16, 12), Color3.fromRGB(14, 8, 6)),
-    AcrylicNoise = 0.7,
-    TitleBarLine = Color3.fromRGB(180, 80, 30),
-    Tab = Color3.fromRGB(36, 22, 16),
-    Element = Color3.fromRGB(30, 18, 13),
-    ElementBorder = Color3.fromRGB(160, 70, 25),
-    InElementBorder = Color3.fromRGB(220, 100, 45),
-    ElementTransparency = 0.82,
-    ToggleSlider = Color3.fromRGB(50, 30, 20),
-    ToggleToggled = Color3.fromRGB(255, 110, 50),
-    SliderRail = Color3.fromRGB(50, 30, 20),
-    DropdownFrame = Color3.fromRGB(24, 14, 10),
-    DropdownHolder = Color3.fromRGB(14, 8, 6),
-    DropdownBorder = Color3.fromRGB(160, 70, 25),
-    DropdownOption = Color3.fromRGB(36, 22, 16),
-    Keybind = Color3.fromRGB(36, 22, 16),
-    Input = Color3.fromRGB(24, 14, 10),
-    InputFocused = Color3.fromRGB(12, 7, 5),
-    InputIndicator = Color3.fromRGB(220, 100, 45),
-    Dialog = Color3.fromRGB(14, 8, 6),
-    DialogHolder = Color3.fromRGB(12, 7, 5),
-    DialogHolderLine = Color3.fromRGB(120, 55, 20),
-    DialogButton = Color3.fromRGB(28, 17, 12),
-    DialogButtonBorder = Color3.fromRGB(160, 70, 25),
-    DialogBorder = Color3.fromRGB(160, 70, 25),
-    DialogInput = Color3.fromRGB(24, 14, 10),
-    DialogInputLine = Color3.fromRGB(220, 100, 45),
-    Text = Color3.fromRGB(255, 240, 230),
-    SubText = Color3.fromRGB(220, 170, 145),
-    Hover = Color3.fromRGB(56, 34, 24),
-    HoverChange = 0.05,
-    ShineEnabled = true,
-    Shine = {
-        Speed = 0.5,
-        RotationSpeed = 25,
-        ColorSequence = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 50, 15)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 150, 80)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 50, 15)),
-        }),
-    },
-    StrokeShine = true,
-    StrokeDark = Color3.fromRGB(120, 50, 15),
-    ButtonGradient = {
-        Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 50, 15)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 25, 8)),
-        }),
-        Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 100, 45)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 150, 80)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 100, 45)),
-        }),
-    },
-})
+local function Pad(inst, l, t, r, b)
+    return New("UIPadding", {
+        PaddingLeft = UDim.new(0, l or 0),
+        PaddingTop = UDim.new(0, t or l or 0),
+        PaddingRight = UDim.new(0, r or l or 0),
+        PaddingBottom = UDim.new(0, b or t or l or 0),
+        Parent = inst,
+    })
+end
 
-Fluent:RegisterCustomTheme("SlateStatic", {
-    Accent = Color3.fromRGB(140, 150, 165),
-    AcrylicMain = Color3.fromRGB(22, 24, 28),
-    AcrylicBorder = Color3.fromRGB(70, 75, 85),
-    AcrylicGradient = ColorSequence.new(Color3.fromRGB(22, 24, 28), Color3.fromRGB(14, 15, 18)),
-    AcrylicNoise = 0.6,
-    TitleBarLine = Color3.fromRGB(70, 75, 85),
-    Tab = Color3.fromRGB(28, 30, 35),
-    Element = Color3.fromRGB(24, 26, 30),
-    ElementBorder = Color3.fromRGB(60, 64, 72),
-    InElementBorder = Color3.fromRGB(90, 96, 108),
-    ElementTransparency = 0.82,
-    ToggleSlider = Color3.fromRGB(40, 43, 48),
-    ToggleToggled = Color3.fromRGB(140, 150, 165),
-    SliderRail = Color3.fromRGB(40, 43, 48),
-    DropdownFrame = Color3.fromRGB(20, 22, 26),
-    DropdownHolder = Color3.fromRGB(14, 15, 18),
-    DropdownBorder = Color3.fromRGB(60, 64, 72),
-    DropdownOption = Color3.fromRGB(28, 30, 35),
-    Keybind = Color3.fromRGB(28, 30, 35),
-    Input = Color3.fromRGB(20, 22, 26),
-    InputFocused = Color3.fromRGB(12, 13, 16),
-    InputIndicator = Color3.fromRGB(90, 96, 108),
-    Dialog = Color3.fromRGB(14, 15, 18),
-    DialogHolder = Color3.fromRGB(12, 13, 16),
-    DialogHolderLine = Color3.fromRGB(50, 54, 62),
-    DialogButton = Color3.fromRGB(26, 28, 33),
-    DialogButtonBorder = Color3.fromRGB(60, 64, 72),
-    DialogBorder = Color3.fromRGB(60, 64, 72),
-    DialogInput = Color3.fromRGB(20, 22, 26),
-    DialogInputLine = Color3.fromRGB(90, 96, 108),
-    Text = Color3.fromRGB(235, 237, 240),
-    SubText = Color3.fromRGB(150, 155, 165),
-    Hover = Color3.fromRGB(34, 37, 42),
-    HoverChange = 0.04,
-    ButtonGradient = {
-        Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 43, 48)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 26, 30)),
-        }),
-        Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 96, 108)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(140, 150, 165)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 96, 108)),
-        }),
-    },
-})
+local function Tween(inst, props, dur, style, dir)
+    local info = TweenInfo.new(dur or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
+    local tw = TweenService:Create(inst, info, props)
+    tw:Play()
+    return tw
+end
 
-Fluent:RegisterCustomTheme("SlateAnimated", {
-    Accent = Color3.fromRGB(140, 150, 165),
-    AcrylicMain = Color3.fromRGB(22, 24, 28),
-    AcrylicBorder = Color3.fromRGB(70, 75, 85),
-    AcrylicGradient = ColorSequence.new(Color3.fromRGB(22, 24, 28), Color3.fromRGB(14, 15, 18)),
-    AcrylicNoise = 0.6,
-    TitleBarLine = Color3.fromRGB(70, 75, 85),
-    Tab = Color3.fromRGB(28, 30, 35),
-    Element = Color3.fromRGB(24, 26, 30),
-    ElementBorder = Color3.fromRGB(60, 64, 72),
-    InElementBorder = Color3.fromRGB(90, 96, 108),
-    ElementTransparency = 0.82,
-    ToggleSlider = Color3.fromRGB(40, 43, 48),
-    ToggleToggled = Color3.fromRGB(140, 150, 165),
-    SliderRail = Color3.fromRGB(40, 43, 48),
-    DropdownFrame = Color3.fromRGB(20, 22, 26),
-    DropdownHolder = Color3.fromRGB(14, 15, 18),
-    DropdownBorder = Color3.fromRGB(60, 64, 72),
-    DropdownOption = Color3.fromRGB(28, 30, 35),
-    Keybind = Color3.fromRGB(28, 30, 35),
-    Input = Color3.fromRGB(20, 22, 26),
-    InputFocused = Color3.fromRGB(12, 13, 16),
-    InputIndicator = Color3.fromRGB(90, 96, 108),
-    Dialog = Color3.fromRGB(14, 15, 18),
-    DialogHolder = Color3.fromRGB(12, 13, 16),
-    DialogHolderLine = Color3.fromRGB(50, 54, 62),
-    DialogButton = Color3.fromRGB(26, 28, 33),
-    DialogButtonBorder = Color3.fromRGB(60, 64, 72),
-    DialogBorder = Color3.fromRGB(60, 64, 72),
-    DialogInput = Color3.fromRGB(20, 22, 26),
-    DialogInputLine = Color3.fromRGB(90, 96, 108),
-    Text = Color3.fromRGB(235, 237, 240),
-    SubText = Color3.fromRGB(150, 155, 165),
-    Hover = Color3.fromRGB(34, 37, 42),
-    HoverChange = 0.04,
-    ShineEnabled = true,
-    Shine = {
-        Speed = 0.5,
-        RotationSpeed = 25,
-        ColorSequence = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 54, 62)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(140, 150, 165)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 54, 62)),
-        }),
-    },
-    StrokeShine = true,
-    StrokeDark = Color3.fromRGB(50, 54, 62),
-    ButtonGradient = {
-        Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 43, 48)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 26, 30)),
-        }),
-        Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 96, 108)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(140, 150, 165)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 96, 108)),
-        }),
-    },
-})
+-- Tags an instance/property pair to a theme color key so it updates on SetTheme
+local function Tag(inst, prop, key)
+    table.insert(Library.ThemeTags, { Instance = inst, Property = prop, Key = key })
+    local theme = Library.Themes[Library.CurrentTheme]
+    if theme and theme[key] ~= nil then
+        inst[prop] = theme[key]
+    end
+    return inst
+end
 
-local Window = Fluent:CreateWindow({
-    Title = "FluentPro",
-    SubTitle = "Full docs",
-    Version = "release 1.5.1",
-    TabWidth = 130,
-    Size = UDim2.fromOffset(480, 460),
-    Acrylic = true,
-    Theme = "Blood Red",
-    MinimizeKey = Enum.KeyCode.LeftControl,
-    Search = true,
-    Icons = "solar/planet-bold",
-    UserInfoTop = true,
-    UserInfoTitle = "Welcome",
-    UserInfoSubtitle = LocalPlayer.DisplayName,
-    UserInfoColor = Color3.fromRGB(180, 10, 20),
-})
+--============================================================
+-- THEME SYSTEM
+--============================================================
 
-Fluent:SetErrorHandler(function(msg, fullErr)
-    pcall(function()
-        Notify("Error", tostring(msg), "Error", nil, 5)
-    end)
-end)
-
-Tabs = {
-    Elements = Window:AddTab({ Title = "Elements", Icon = "solar/layers-bold" }),
-    Components = Window:AddTab({ Title = "Components", Icon = "solar/widget-bold" }),
-    Icons = Window:AddTab({ Title = "Icons", Icon = "solar/star-bold" }),
-    Floating = Window:AddTab({ Title = "Floating", Icon = "solar/widget-2-bold" }),
-    Settings = Window:AddTab({ Title = "Settings", Icon = "solar/settings-bold" }),
-    EmptyTab2 = Window:AddTab({ Title = "Empty Tab 2", Icon = "solar/star-bold" }),
-    EmptyTab3 = Window:AddTab({ Title = "Empty Tab 3", Icon = "solar/settings-bold" }),
-    EmptyTab4 = Window:AddTab({ Title = "Empty Tab 4", Icon = "solar/widget-bold" }),
-    EmptyTab5 = Window:AddTab({ Title = "Empty Tab 5", Icon = "solar/layers-bold" }),
-    EmptyTab6 = Window:AddTab({ Title = "Empty Tab 6", Icon = "solar/server-bold" }),
+-- Minimal but complete color slot set. Any custom theme can override any subset;
+-- missing keys fall back to Obsidian's values at registration time.
+local BaseThemeKeys = {
+    "Accent", "Background", "BackgroundGradientTop", "BackgroundGradientBottom",
+    "Border", "TitleBarLine", "Tab", "TabActive", "Element", "ElementBorder",
+    "ToggleOff", "ToggleOn", "SliderRail", "SliderFill", "DropdownFrame",
+    "DropdownOption", "DropdownBorder", "Input", "InputFocused", "InputIndicator",
+    "Dialog", "DialogButton", "DialogBorder", "Text", "SubText", "Hover", "Error",
+    "Success", "Warning", "Info",
 }
 
-local secChangelog = Tabs.Elements:AddSection("Changelog", "solar/history-bold")
+Library.Themes["Obsidian"] = {
+    Accent                   = Color3.fromRGB(114, 137, 255),
+    Background               = Color3.fromRGB(18, 19, 23),
+    BackgroundGradientTop    = Color3.fromRGB(24, 25, 30),
+    BackgroundGradientBottom = Color3.fromRGB(14, 15, 18),
+    Border                   = Color3.fromRGB(40, 42, 50),
+    TitleBarLine             = Color3.fromRGB(40, 42, 50),
+    Tab                      = Color3.fromRGB(22, 23, 28),
+    TabActive                = Color3.fromRGB(30, 31, 38),
+    Element                  = Color3.fromRGB(26, 27, 33),
+    ElementBorder            = Color3.fromRGB(42, 44, 52),
+    ToggleOff                = Color3.fromRGB(40, 42, 50),
+    ToggleOn                 = Color3.fromRGB(114, 137, 255),
+    SliderRail                = Color3.fromRGB(40, 42, 50),
+    SliderFill                = Color3.fromRGB(114, 137, 255),
+    DropdownFrame            = Color3.fromRGB(24, 25, 30),
+    DropdownOption           = Color3.fromRGB(28, 29, 35),
+    DropdownBorder           = Color3.fromRGB(42, 44, 52),
+    Input                    = Color3.fromRGB(24, 25, 30),
+    InputFocused             = Color3.fromRGB(20, 21, 26),
+    InputIndicator           = Color3.fromRGB(114, 137, 255),
+    Dialog                   = Color3.fromRGB(22, 23, 28),
+    DialogButton             = Color3.fromRGB(28, 29, 35),
+    DialogBorder             = Color3.fromRGB(42, 44, 52),
+    Text                     = Color3.fromRGB(235, 236, 240),
+    SubText                  = Color3.fromRGB(150, 153, 165),
+    Hover                    = Color3.fromRGB(34, 36, 44),
+    Error                    = Color3.fromRGB(255, 90, 90),
+    Success                  = Color3.fromRGB(90, 220, 140),
+    Warning                  = Color3.fromRGB(255, 190, 80),
+    Info                     = Color3.fromRGB(114, 170, 255),
+}
 
-secChangelog:AddParagraph({
-    Title = "Latest Update",
-    Content = "• Add 2 New Element (Checkbox And Progress Bar\n• Fix CanvasGroup Scrollbar\n• Fix Input dialog\n• Fix collision between a window and another window",
-})
-
-local secToggle = Tabs.Elements:AddSection("Toggle", "solar/toggle-on-circle-bold")
-
-secToggle:AddToggle("SpeedBoost", {
-    Title = "Speed Boost",
-    Icon = "solar/running-bold",
-    Default = false,
-    Description = "Multiplies walk speed when on",
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then
-            chr.Humanoid.WalkSpeed = v and 60 or 16
+function Library:RegisterCustomTheme(name, colors)
+    local base = self.Themes["Obsidian"]
+    local merged = {}
+    for _, key in ipairs(BaseThemeKeys) do
+        merged[key] = (colors and colors[key] ~= nil) and colors[key] or base[key]
+    end
+    -- keep any extra custom keys the caller passed (e.g. future extensions)
+    if colors then
+        for k, v in pairs(colors) do
+            if merged[k] == nil then merged[k] = v end
         end
-        Notify("Speed Boost", v and "Enabled" or "Disabled", v and "Success" or "Info", "solar/running-bold")
-    end,
-})
+    end
+    self.Themes[name] = merged
+    return merged
+end
 
-secToggle:AddToggle("HighJump", {
-    Title = "High Jump",
-    Icon = "solar/arrow-up-bold",
-    Default = false,
-    Description = "Increases jump power when on",
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then
-            chr.Humanoid.JumpPower = v and 120 or 50
+function Library:SetTheme(name)
+    local theme = self.Themes[name]
+    if not theme then return false end
+    self.CurrentTheme = name
+    for i = #self.ThemeTags, 1, -1 do
+        local tag = self.ThemeTags[i]
+        if not tag.Instance or not tag.Instance.Parent then
+            table.remove(self.ThemeTags, i)
+        else
+            local val = theme[tag.Key]
+            if val ~= nil then
+                tag.Instance[tag.Property] = val
+            end
         end
-        Notify("High Jump", v and "Enabled" or "Disabled", v and "Success" or "Info", "solar/arrow-up-bold")
-    end,
-})
-
-secToggle:AddDivider()
-
-local secCheckbox = Tabs.Elements:AddSection("Checkbox", "solar/check-square-bold")
-
-secCheckbox:AddCheckbox("AutoFarm", {
-    Title = "Auto Farm",
-    Icon = "solar/leaf-bold",
-    Default = false,
-    Description = "Simple on/off checkbox, saveable just like Toggle",
-    Callback = function(v)
-        Notify("Auto Farm", v and "Enabled" or "Disabled", v and "Success" or "Info", "solar/leaf-bold")
-    end,
-})
-
-secCheckbox:AddCheckbox("GodMode", {
-    Title = "God Mode",
-    Icon = "solar/shield-star-bold",
-    Default = false,
-    Description = "Another checkbox example",
-    Callback = function(v)
-        Notify("God Mode", v and "Enabled" or "Disabled", v and "Success" or "Info", "solar/shield-star-bold")
-    end,
-})
-
-secCheckbox:AddDivider()
-
-local secSlider = Tabs.Elements:AddSection("Slider", "solar/slider-horizontal-bold")
-
-secSlider:AddSlider("WalkSpeed", {
-    Title = "Walk Speed",
-    Icon = "solar/running-bold",
-    Min = 1, Max = 200, Default = 16, Rounding = 0,
-    Description = "Adjust player walk speed",
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then chr.Humanoid.WalkSpeed = v end
-    end,
-})
-
-secSlider:AddSlider("JumpPower", {
-    Title = "Jump Power",
-    Icon = "solar/arrow-up-bold",
-    Min = 10, Max = 500, Default = 50, Rounding = 0,
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then chr.Humanoid.JumpPower = v end
-    end,
-})
-
-secSlider:AddSlider("Volume", {
-    Title = "Volume",
-    Icon = "solar/volume-loud-bold",
-    Min = 0, Max = 10, Default = 5, Rounding = 1,
-    Description = "Decimal slider rounding equals 1",
-    Callback = function(v)
-        Notify("Volume", tostring(v / 10), "Info", nil, 1)
-    end,
-})
-
-secSlider:AddDivider()
-
-local secProgress = Tabs.Elements:AddSection("Progress Bar", "solar/graph-new-bold")
-
-local xpBar = secProgress:AddProgressBar("XPBar", {
-    Title = "XP Progress",
-    Min = 0, Max = 100, Default = 35,
-})
-
-secProgress:AddButton({
-    Title = "Simulate +15 XP",
-    Icon = "solar/graph-new-bold",
-    Callback = function()
-        xpBar:SetValue(math.min(xpBar.Value + 15, xpBar.Max))
-        Notify("XP Progress", string.format("Now at %d / %d", xpBar.Value, xpBar.Max), "Success", nil, 3)
-    end,
-})
-
-secProgress:AddButton({
-    Title = "Reset",
-    Icon = "solar/restart-bold",
-    Callback = function()
-        xpBar:SetValue(0)
-    end,
-})
-
-secProgress:AddDivider()
-
-local secButton = Tabs.Elements:AddSection("Button", "solar/cursor-bold")
-
-secButton:AddButton({
-    Title = "Reset Character",
-    Icon = "solar/restart-bold",
-    Description = "Destroys humanoid root part to respawn",
-    Callback = function()
-        if LocalPlayer.Character then
-            local hr = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hr then hr:Destroy() end
-        end
-        Notify("Reset", "Character reset", "Warning", "solar/restart-bold")
-    end,
-})
-
-secButton:AddButton({
-    Title = "Yellow Bell With Icon Color",
-    Icon = "solar/bell-bold",
-    IconColor = Color3.fromRGB(255, 210, 0),
-    Description = "Demonstrates icon color override on a button icon",
-    Callback = function()
-        Notify("Hello", "Button was pressed", "Success", "solar/bell-bold")
-    end,
-})
-
-secButton:AddButton({
-    Title = "Copy Place Id",
-    Icon = "solar/copy-bold",
-    IconColor = Color3.fromRGB(100, 200, 255),
-    Callback = function()
-        pcall(function() setclipboard(tostring(game.PlaceId)) end)
-        Notify("Copied", "Place id copied to clipboard", "Info")
-    end,
-})
-
-secButton:AddDivider()
-
-Tabs.Elements:AddDivider()
-
-Tabs.Elements:AddParagraph({
-    Title = "Direct Tab Add",
-    Content = "Methods like AddParagraph, AddButton, AddDivider can be called directly on any Tab object, for example Tabs.Elements:AddParagraph(...). Use it for elements that don't need to live inside a section. The two items below were added directly on this tab and follow the same insertion order as everything else.",
-})
-
-Tabs.Elements:AddButton({
-    Title = "Direct Tab Button",
-    Icon = "solar/cursor-bold",
-    Description = "Added via Tabs.Elements:AddButton, works the same on any tab and respects insertion order",
-    Callback = function()
-        Notify("Direct Add", "Tabs.Elements:AddButton works on any tab", "Success")
-    end,
-})
-
-local secInput = Tabs.Elements:AddSection("Input", "solar/pen-bold")
-
-secInput:AddInput("DisplayName", {
-    Title = "Display Name",
-    Icon = "solar/user-bold",
-    Placeholder = "Enter a name",
-    Default = "",
-    Description = "Text echoed back via notification",
-    Callback = function(v)
-        Notify("Input", "Value " .. tostring(v))
-    end,
-})
-
-secInput:AddDivider()
-
-local secColor = Tabs.Elements:AddSection("Colorpicker", "solar/palette-bold")
-
-secColor:AddColorpicker("AccentColor", {
-    Title = "Accent Preview",
-    Icon = "solar/palette-bold",
-    Default = Color3.fromRGB(255, 80, 80),
-    Transparency = 0,
-    Description = "Left slot is current color right slot shows previous color for comparison read only",
-    Callback = function(c)
-        Notify("Color", tostring(c), "Info", nil, 2)
-    end,
-})
-
-secColor:AddDivider()
-
-local secKeybind = Tabs.Elements:AddSection("Keybind", "solar/keyboard-bold")
-
-secKeybind:AddKeybind("ToggleUi", {
-    Title = "Toggle Ui",
-    Icon = "solar/keyboard-bold",
-    Default = "RightAlt",
-    Mode = "Toggle",
-    Description = "Toggle mode fires true or false each press",
-    Callback = function(state)
-        if state then Window:Show() else Window:Hide() end
-        Notify("Keybind", state and "Ui Shown" or "Ui Hidden", "Info")
-    end,
-})
-
-secKeybind:AddKeybind("AlwaysKeybind", {
-    Title = "Always Keybind",
-    Icon = "solar/keyboard-bold",
-    Default = "F",
-    Mode = "Always",
-    Description = "Always mode fires every press regardless of toggle state",
-    Callback = function()
-        Notify("Always Keybind", "F pressed", "Info", nil, 1)
-    end,
-})
-
-secKeybind:AddDivider()
-
-local secDd = Tabs.Elements:AddSection("Dropdown", "solar/list-bold")
-
-secDd:AddParagraph({
-    Title = "Dropdown Variants",
-    Content = "All combinations of: single/multi, animated, OutsideWindow, BackgroundTransparency, BackgroundImages are shown below. Open two OutsideWindow dropdowns at the same time (for example Outside + Animated and Outside + Multi) and they will automatically split to opposite sides of the window, left and right, instead of overlapping.",
-})
-
-secDd:AddDropdown("Dd_Normal", {
-    Title = "Normal Dropdown",
-    Icon = "solar/list-bold",
-    Values = { "Alpha", "Beta", "Gamma", "Delta", "Epsilon" },
-    Default = "Alpha",
-    Description = "Standard single select",
-    Callback = function(v) Notify("Dropdown", tostring(v), "Info", nil, 2) end,
-})
-
-secDd:AddDropdown("Dd_NormalAnimated", {
-    Title = "Normal + Animated",
-    Icon = "solar/list-bold",
-    Values = { "Alpha", "Beta", "Gamma", "Delta", "Epsilon" },
-    Default = "Beta",
-    Description = "Single select with animated border/gradient",
-    Animated = true,
-    Callback = function(v) Notify("Dropdown", tostring(v), "Info", nil, 2) end,
-})
-
-secDd:AddDropdown("Dd_NormalAnimatedMulti", {
-    Title = "Normal + Animated + Multi",
-    Icon = "solar/layers-bold",
-    Multi = true,
-    Values = { "Alpha", "Beta", "Gamma", "Delta", "Epsilon" },
-    Default = { Alpha = true, Beta = true },
-    Description = "Multi select with animated border",
-    Animated = true,
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("Multi", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDropdown("Dd_NormalMulti", {
-    Title = "Normal + Multi",
-    Icon = "solar/layers-bold",
-    Multi = true,
-    Values = { "Alpha", "Beta", "Gamma", "Delta", "Epsilon" },
-    Default = { Gamma = true },
-    Description = "Multi select no animation",
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("Multi", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDropdown("Dd_Outside", {
-    Title = "Outside Window",
-    Icon = "solar/export-bold",
-    Values = { "Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Mango", "Nectarine" },
-    Default = "Apple",
-    Description = "Opens as side panel next to window (many items)",
-    DropdownOutsideWindow = true,
-    Callback = function(v) Notify("Outside", tostring(v), "Info", nil, 2) end,
-})
-
-secDd:AddDropdown("Dd_OutsideAnimated", {
-    Title = "Outside + Animated",
-    Icon = "solar/export-bold",
-    Values = { "Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Mango", "Nectarine" },
-    Default = "Banana",
-    Description = "Outside window with animated acrylic border",
-    DropdownOutsideWindow = true,
-    Animated = true,
-    Callback = function(v) Notify("Outside+Animated", tostring(v), "Info", nil, 2) end,
-})
-
-secDd:AddDropdown("Dd_OutsideAnimatedMulti", {
-    Title = "Outside + Animated + Multi",
-    Icon = "solar/export-bold",
-    Multi = true,
-    Values = { "Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Mango", "Nectarine" },
-    Default = { Apple = true, Cherry = true },
-    Description = "Outside window, animated, multi select",
-    DropdownOutsideWindow = true,
-    Animated = true,
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("Outside+Animated+Multi", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDropdown("Dd_OutsideMulti", {
-    Title = "Outside + Multi",
-    Icon = "solar/export-bold",
-    Multi = true,
-    Values = { "Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Mango", "Nectarine" },
-    Default = { Date = true },
-    Description = "Outside window, multi select, no animation",
-    DropdownOutsideWindow = true,
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("Outside+Multi", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDropdown("Dd_AllFlags", {
-    Title = "Normal + Animated + Multi + BG",
-    Icon = "solar/list-bold",
-    Multi = true,
-    Values = { "Alpha", "Beta", "Gamma", "Delta", "Epsilon" },
-    Default = { Alpha = true },
-    Description = "Animated + multi + custom background transparency + bg image asset",
-    Animated = true,
-    DropdownBackgroundTransparency = 0.3,
-    DropdownBackgroundImages = "rbxassetid://5554236805",
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("All Flags", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDropdown("Dd_OutsideAllFlags", {
-    Title = "Outside + Animated + Multi + BG",
-    Icon = "solar/export-bold",
-    Multi = true,
-    Values = { "Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Mango", "Nectarine" },
-    Default = { Apple = true },
-    Description = "OutsideWindow + animated + multi + custom bg transparency + bg image asset",
-    DropdownOutsideWindow = true,
-    Animated = true,
-    DropdownBackgroundTransparency = 0.3,
-    DropdownBackgroundImages = "rbxassetid://5554236805",
-    Callback = function(v)
-        local parts = {}; for k in next, v do table.insert(parts, k) end
-        Notify("Outside+All", table.concat(parts, ", "), "Info", nil, 3)
-    end,
-})
-
-secDd:AddDivider()
-
-local secCode = Tabs.Elements:AddSection("Code", "solar/code-bold")
-
-secCode:AddCode({
-    Title = "Load FluentPro",
-    Code = 'local Fluent = loadstring(game:HttpGet("https://github.com/StyearX/Fluent-modded/releases/download/1.4.6/FluentPro"))()',
-    OnCopy = function() Notify("Code", "Copied", "Info", nil, 2) end,
-})
-
-secCode:AddDivider()
-
-local secMisc = Tabs.Elements:AddSection("Divider And Space", "solar/ruler-cross-pen-bold")
-
-secMisc:AddDivider()
-secMisc:AddButton({ Title = "Button Above", Icon = "solar/star-bold", Callback = function() end })
-secMisc:AddSpace({ Height = 20 })
-secMisc:AddButton({ Title = "Button Below After Space", Icon = "solar/star-bold", Callback = function() end })
-secMisc:AddDivider()
-
-local secImg = Tabs.Elements:AddSection("Image", "solar/gallery-bold")
-
-local imgEl = secImg:AddImage({ Image = "rbxassetid://7733960981", AspectRatio = "16:9", Radius = 10 })
-secImg:AddImage({ Image = "https://od.lk/d/NTNfNTA0MjA5Nzlf/Fluent.png", AspectRatio = "1:1", Radius = 10 })
-secImg:AddButton({
-    Title = "Toggle 4:3 / 16:9 Aspect",
-    Icon = "solar/crop-minimalistic-bold",
-    Callback = function()
-        if imgEl then
-            imgEl:SetAspectRatio("4:3")
-            Notify("Image", "AspectRatio set to 4:3", "Info", nil, 2)
-        end
-    end,
-})
-
-secImg:AddDivider()
-
-local secVid = Tabs.Elements:AddSection("Video", "solar/videocamera-record-bold")
-
-local vidEl = secVid:AddVideo({
-    Video = "rbxassetid://5670802294",
-    AspectRatio = "16:9",
-    Radius = 8,
-    AutoPlay = false,
-    Looped = true,
-    Volume = 0.5,
-})
-
-secVid:AddButton({
-    Title = "Set 4:3 Aspect Ratio",
-    Icon = "solar/crop-minimalistic-bold",
-    Callback = function()
-        if vidEl then vidEl:SetAspectRatio("4:3") end
-        Notify("Video", "AspectRatio 4:3", "Info", nil, 2)
-    end,
-})
-
-secVid:AddButton({
-    Title = "Set 16:9 Aspect Ratio",
-    Icon = "solar/crop-minimalistic-bold",
-    Callback = function()
-        if vidEl then vidEl:SetAspectRatio("16:9") end
-        Notify("Video", "AspectRatio 16:9", "Info", nil, 2)
-    end,
-})
-
-secVid:AddParagraph({
-    Title = "How Controls Work",
-    Content = "Click anywhere on the video to reveal play pause stop and a seek bar at the bottom of the frame the controls auto hide after a few seconds of inactivity",
-})
-
-secVid:AddDivider()
-
-local secAudio = Tabs.Elements:AddSection("Audio", "solar/volume-loud-bold")
-
-secAudio:AddAudio({
-    Audio = "rbxassetid://142376088",
-    Volume = 0.5,
-    Looped = true,
-    AutoPlay = false,
-    AudioTitle = "Roblox Classic Bgm",
-    AudioSubtitle = "By Roblox",
-    PlayOutsideWindow = false,
-})
-
-secAudio:AddAudio({
-    Audio = "https://od.lk/d/NTNfNTA0MjEwNDFf/.mp3",
-    Volume = 0.5,
-    Looped = true,
-    AutoPlay = false,
-    AudioTitle = "Unknown",
-    AudioSubtitle = "By unknown",
-    PlayOutsideWindow = false,
-})
-
-secAudio:AddAudio({
-    Audio = "https://od.lk/d/NjNfODkwMDU1MDJf/hkmori%20-%20anybody%20can%20find%20love%20%28except%20you.%29%20%281%29.mp3",
-    Volume = 0.4,
-    Looped = true,
-    AutoPlay = false,
-    AudioTitle = "Anybody Can Find Love (Except You)",
-    AudioSubtitle = "By hkmori",
-    PlayOutsideWindow = true,
-})
-
-secAudio:AddAudio({
-    Audio = "https://od.lk/d/NjNfOTg1Mjc4ODhf/TARISHKA_-_Transformation_breakcore_%28SkySound.cc%29.mp3",
-    AudioTitle = "Transformation (Breakcore)",
-    AudioSubtitle = "By TARISHKAu",
-    Volume = 0.5,
-    Looped = true,
-    AutoPlay = false,
-    PlayOutsideWindow = true,
-})
-
-secAudio:AddAudio({
-    Audio = "https://od.lk/d/NjNfOTg1Mjc4Nzdf/Removeface_Kyszenn_-_ON_THE_FLOOR_%28SkySound.cc%29%20%281%29.mp3",
-    AudioTitle = "ON THE FLOOR!",
-    AudioSubtitle = "",
-    Volume = 0.5,
-    Looped = true,
-    AutoPlay = false,
-    PlayOutsideWindow = true,
-})
-
-secAudio:AddDivider()
-
-local secVp = Tabs.Elements:AddSection("Viewport", "solar/camera-bold")
-
-local demoModel = Instance.new("Part")
-demoModel.Shape = Enum.PartType.Ball
-demoModel.Size = Vector3.new(4, 4, 4)
-demoModel.BrickColor = BrickColor.new("Bright blue")
-demoModel.Material = Enum.Material.Neon
-demoModel.CFrame = CFrame.new(0, 0, 0)
-demoModel.Anchored = true
-
-local vpCamera = Instance.new("Camera")
-vpCamera.CFrame = CFrame.new(Vector3.new(0, 3, 10), Vector3.new(0, 0, 0))
-
-local vp = secVp:AddViewport({ Height = 200, AspectRatio = "16:9", Object = demoModel, Camera = vpCamera, Focused = true, Interactive = true })
-
-secVp:AddButton({
-    Title = "Set 1:1 Aspect Ratio",
-    Icon = "solar/crop-minimalistic-bold",
-    Callback = function()
-        vp:SetAspectRatio("1:1")
-        Notify("Viewport", "AspectRatio set to 1:1", "Info", nil, 2)
-    end,
-})
-
-secVp:AddButton({
-    Title = "Set 16:9 Aspect Ratio",
-    Icon = "solar/crop-minimalistic-bold",
-    Callback = function()
-        vp:SetAspectRatio("16:9")
-        Notify("Viewport", "AspectRatio set to 16:9", "Info", nil, 2)
-    end,
-})
-
-secVp:AddButton({
-    Title = "Swap To Red Cylinder",
-    Icon = "solar/refresh-bold",
-    Callback = function()
-        local np = Instance.new("Part")
-        np.Shape = Enum.PartType.Cylinder
-        np.Size = Vector3.new(6, 3, 3)
-        np.BrickColor = BrickColor.new("Bright red")
-        np.Material = Enum.Material.SmoothPlastic
-        np.Anchored = true
-        vp:SetObject(np, false)
-        vp:Focus()
-        Notify("Viewport", "Object swapped", "Info", "solar/refresh-bold")
-    end,
-})
-
-secVp:AddDivider()
-
-local secDiscord = Tabs.Elements:AddSection("Discord", "solar/chat-round-bold")
-
-secDiscord:AddDiscord({
-    InviteCode = "scriptblox-954089188825894943",
-})
-
-secDiscord:AddDivider()
-
-local secSocial = Tabs.Elements:AddSection("Social", "solar/user-heart-bold")
-
-secSocial:AddParagraph({
-    Title = "AddSocial",
-    Content = "Shows a developer's social profile card. Avatar is fetched through Unavatar (or LinkPreview) and cached via the MediaManager. Click the display name or username to copy it.",
-})
-
-secSocial:AddSocial({
-    Username = "StyearX",
-    DisplayName = "StyearX",
-    Platform = "GitHub",
-    ProfileUrl = "https://github.com/StyearX",
-})
-
-secSocial:AddSocial({
-    ProfileUrl = "https://www.tiktok.com/@styearx",
-})
-
-secSocial:AddDivider()
-
-local secCollapsible = Tabs.Elements:AddSection("Collapsible Section", "lucide/chevrons-down-up")
-
-secCollapsible:AddParagraph({
-    Title = "How Collapsible Sections Work",
-    Content = "Call Tabs.Elements:AddCollapsibleSection(Title, Icon) exactly like Tabs.Elements:AddSection. The returned object exposes the same Add methods as a normal section but it lives at the tab level and can be opened or closed by clicking the header. Pass Open=false as a third positional arg to start collapsed.",
-})
-
-secCollapsible:AddCode({
-    Title = "Basic Usage",
-    Code = 'local col = Tabs.Elements:AddCollapsibleSection("Advanced", "lucide/settings")\ncol:AddToggle("MyToggle", { Title = "Feature", Callback = function(v) end })\ncol:AddSlider("MySlider", { Title = "Value", Min = 0, Max = 100, Default = 50 })',
-    OnCopy = function() Notify("Code", "Copied", "Info", nil, 2) end,
-})
-
-secCollapsible:AddDivider()
-
-local colA = Tabs.Elements:AddCollapsibleSection("Player Settings", "solar/user-bold")
-
-colA:AddToggle("ColSpeedBoost", {
-    Title = "Speed Boost",
-    Icon = "solar/running-bold",
-    Default = false,
-    Description = "Multiplies walk speed",
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then
-            chr.Humanoid.WalkSpeed = v and 60 or 16
-        end
-        Notify("Speed Boost", v and "On" or "Off", v and "Success" or "Info", nil, 2)
-    end,
-})
-
-colA:AddSlider("ColJumpPow", {
-    Title = "Jump Power",
-    Icon = "solar/arrow-up-bold",
-    Min = 10, Max = 300, Default = 50, Rounding = 0,
-    Callback = function(v)
-        local chr = LocalPlayer.Character
-        if chr and chr:FindFirstChild("Humanoid") then chr.Humanoid.JumpPower = v end
-    end,
-})
-
-colA:AddButton({
-    Title = "Reset Character",
-    Icon = "solar/restart-bold",
-    Callback = function()
-        local chr = LocalPlayer.Character
-        if chr then
-            local hr = chr:FindFirstChild("HumanoidRootPart")
-            if hr then hr:Destroy() end
-        end
-        Notify("Reset", "Character reset", "Warning", nil, 2)
-    end,
-})
-
-local colB = Tabs.Elements:AddCollapsibleSection("Debug Info", "lucide/bug", false)
-
-colB:AddParagraph({
-    Title = "Place Info",
-    Content = "PlaceId: " .. tostring(game.PlaceId) .. "\nJobId: " .. tostring(game.JobId):sub(1, 18) .. "...",
-})
-
-colB:AddButton({
-    Title = "Copy Place Id",
-    Icon = "solar/copy-bold",
-    Callback = function()
-        pcall(function() setclipboard(tostring(game.PlaceId)) end)
-        Notify("Copied", "Place Id copied", "Info", nil, 2)
-    end,
-})
-
-local colC = Tabs.Elements:AddCollapsibleSection("Notifications", "solar/bell-bold", false)
-
-colC:AddButton({ Title = "Info",    Icon = "solar/info-circle-bold",     Callback = function() Notify("Info",    "Inside collapsible", "Info",    nil, 3) end })
-colC:AddButton({ Title = "Success", Icon = "solar/check-circle-bold",    Callback = function() Notify("Success", "It worked",          "Success", nil, 3) end })
-colC:AddButton({ Title = "Warning", Icon = "solar/danger-triangle-bold", Callback = function() Notify("Warning", "Be careful",         "Warning", nil, 3) end })
-
-local secGrp = Tabs.Elements:AddSection("Group", "solar/squares-bold")
-
-local grp2 = secGrp:AddGroup({ Columns = 2, Gap = 6 })
-local col2A = grp2:AddElement()
-local col2B = grp2:AddElement()
-
-col2A:AddButton({ Title = "Left", Icon = "solar/arrow-left-bold", Callback = function() Notify("Group", "Left", "Info", nil, 2) end })
-col2B:AddButton({ Title = "Right", Icon = "solar/arrow-right-bold", Callback = function() Notify("Group", "Right", "Success", nil, 2) end })
-col2A:AddToggle("GrpTglA", { Title = "Toggle A", Default = false, Callback = function(v) Notify("A", tostring(v), nil, nil, 2) end })
-col2B:AddToggle("GrpTglB", { Title = "Toggle B", Default = false, Callback = function(v) Notify("B", tostring(v), nil, nil, 2) end })
-
-secGrp:AddDivider()
-
-local secNotify = Tabs.Components:AddSection("Notifications", "solar/bell-bold")
-
-secNotify:AddButton({ Title = "Info", Icon = "solar/info-circle-bold", Callback = function() Notify("Info", "Informational", "Info", "solar/info-circle-bold", 4) end })
-secNotify:AddButton({ Title = "Success", Icon = "solar/check-circle-bold", Callback = function() Notify("Success", "Operation completed", "Success", "solar/check-circle-bold", 4) end })
-secNotify:AddButton({ Title = "Warning", Icon = "solar/danger-triangle-bold", Callback = function() Notify("Warning", "Something might go wrong", "Warning", "solar/danger-triangle-bold", 4) end })
-secNotify:AddButton({ Title = "Error", Icon = "solar/close-circle-bold", Callback = function() Notify("Error", "An error occurred", "Error", "solar/close-circle-bold", 4) end })
-
-secNotify:AddButton({
-    Title = "With Subcontent",
-    Icon = "solar/document-bold",
-    Callback = function()
-        Fluent:Notify({ Title = "Subcontent Demo", Content = "Main message line", SubContent = "Secondary detail below", Icon = "solar/document-bold", Type = "Info", Duration = 5 })
-    end,
-})
-
-secNotify:AddDivider()
-
-local secDialog = Tabs.Components:AddSection("Dialogs", "solar/chat-round-bold")
-
-secDialog:AddButton({
-    Title = "Two Button Confirm",
-    Icon = "solar/chat-round-bold",
-    Callback = function()
-        Window:Dialog({
-            Title = "Confirm Action", Content = "Are you sure you want to proceed",
-            Buttons = {
-                { Title = "Yes", Callback = function() Notify("Dialog", "Confirmed", "Success", nil, 3) end },
-                { Title = "No", Callback = function() Notify("Dialog", "Cancelled", "Info", nil, 3) end },
-            },
+    end
+    return true
+end
+
+--============================================================
+-- DRAG HELPER  (mouse only — no touch)
+--============================================================
+
+local function MakeDraggable(handle, target)
+    local dragging, dragStart, startPos = false, nil, nil
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        dragging = true
+        dragStart = input.Position
+        startPos = target.Position
+        local conn
+        conn = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+                conn:Disconnect()
+            end
+        end)
+    end)
+
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        if not dragging then return end
+        local delta = input.Position - dragStart
+        target.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end)
+end
+
+--============================================================
+-- ROOT SCREENGUI
+--============================================================
+
+local function GetRootGui()
+    if Library.RootGui and Library.RootGui.Parent then
+        return Library.RootGui
+    end
+    local gui = New("ScreenGui", {
+        Name = "QuirksUI",
+        ResetOnSpawn = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 999,
+    })
+    local ok = pcall(function()
+        gui.Parent = gethui and gethui() or game:GetService("CoreGui")
+    end)
+    if not ok then
+        gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+    Library.RootGui = gui
+    return gui
+end
+
+--============================================================
+-- NOTIFY
+--============================================================
+
+local NotifyHolder = nil
+
+local function GetNotifyHolder()
+    if NotifyHolder and NotifyHolder.Parent then return NotifyHolder end
+    NotifyHolder = New("Frame", {
+        Name = "Notifications",
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, -16, 1, -16),
+        Size = UDim2.new(0, 300, 1, -32),
+        Parent = GetRootGui(),
+    })
+    New("UIListLayout", {
+        Parent = NotifyHolder,
+        VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+    return NotifyHolder
+end
+
+local TYPE_KEY = { Info = "Info", Success = "Success", Warning = "Warning", Error = "Error" }
+
+function Library:Notify(opts)
+    opts = opts or {}
+    local holder = GetNotifyHolder()
+    local key = TYPE_KEY[opts.Type] or "Info"
+
+    local card = New("Frame", {
+        BackgroundTransparency = 0,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ClipsDescendants = true,
+        Parent = holder,
+    })
+    Tag(card, "BackgroundColor3", "Element")
+    Round(card, 10)
+    local stroke = New("UIStroke", { Thickness = 1, Parent = card })
+    Tag(stroke, "Color", "ElementBorder")
+    local bar = New("Frame", {
+        Size = UDim2.new(0, 4, 1, 0),
+        BorderSizePixel = 0,
+        Parent = card,
+    })
+    Tag(bar, "BackgroundColor3", key)
+    Round(bar, 10)
+    Pad(card, 12, 10, 10, 10)
+
+    New("UIListLayout", {
+        Parent = card,
+        Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local title = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 18),
+        Font = Enum.Font.GothamBold,
+        Text = opts.Title or "",
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        RichText = true,
+        Parent = card,
+    })
+    Tag(title, "TextColor3", "Text")
+
+    if opts.Content then
+        local content = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Font = Enum.Font.Gotham,
+            Text = opts.Content,
+            TextSize = 13,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            RichText = true,
+            Parent = card,
         })
-    end,
-})
+        Tag(content, "TextColor3", "SubText")
+    end
 
-secDialog:AddButton({
-    Title = "Three Button Save",
-    Icon = "solar/diskette-bold",
-    Callback = function()
-        Window:Dialog({
-            Title = "Save Changes", Content = "Do you want to save your current settings before exiting",
-            Buttons = {
-                { Title = "Save", Callback = function() Notify("Saved", "Settings saved", "Success", nil, 3) end },
-                { Title = "Discard", Callback = function() Notify("Discarded", "Changes discarded", "Warning", nil, 3) end },
-                { Title = "Cancel" },
-            },
+    if opts.SubContent then
+        local sub = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Font = Enum.Font.Gotham,
+            Text = opts.SubContent,
+            TextSize = 11,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            RichText = true,
+            Parent = card,
         })
-    end,
-})
+        Tag(sub, "TextColor3", "SubText")
+        sub.TextTransparency = 0.25
+    end
 
-secDialog:AddButton({
-    Title = "Input Dialog",
-    Icon = "solar/pen-bold",
-    Callback = function()
-        Window:Dialog({
-            Title = "Enter Value", Content = "Type something in the field below",
-            Input = { Placeholder = "Your input here" },
-            Buttons = {
-                { Title = "Submit", Callback = function(v) Notify("Submitted", tostring(v), "Success", nil, 4) end },
-                { Title = "Cancel" },
-            },
+    card.Size = UDim2.new(1, 0, 0, 0)
+    task.delay(opts.Duration or 3, function()
+        if card and card.Parent then
+            Tween(card, { Size = UDim2.new(1, 0, 0, 0) }, 0.2)
+            task.wait(0.2)
+            card:Destroy()
+        end
+    end)
+
+    return card
+end
+
+--============================================================
+-- WINDOW
+--============================================================
+
+local Window = {}
+Window.__index = Window
+
+function Library:CreateWindow(opts)
+    opts = opts or {}
+    local gui = GetRootGui()
+
+    local size = opts.Size or UDim2.fromOffset(560, 420)
+    local tabWidth = opts.TabWidth or 150
+
+    local root = New("Frame", {
+        Name = "Window",
+        Size = size,
+        Position = UDim2.new(0.5, -size.X.Offset / 2, 0.5, -size.Y.Offset / 2),
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Parent = gui,
+    })
+    Tag(root, "BackgroundColor3", "Background")
+    Round(root, 12)
+    local rootStroke = New("UIStroke", { Thickness = 1, Parent = root })
+    Tag(rootStroke, "Color", "Border")
+
+    -- Title bar
+    local titleBar = New("Frame", {
+        Name = "TitleBar",
+        Size = UDim2.new(1, 0, 0, 44),
+        BackgroundTransparency = 1,
+        Parent = root,
+    })
+    local titleLine = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        BorderSizePixel = 0,
+        Parent = titleBar,
+    })
+    Tag(titleLine, "BackgroundColor3", "TitleBarLine")
+
+    local titleText = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 16, 0, 0),
+        Size = UDim2.new(1, -100, 1, 0),
+        Font = Enum.Font.GothamBold,
+        TextSize = 16,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        RichText = true,
+        Text = (opts.Title or "Window") ..
+            (opts.SubTitle and ("  <font size=\"12\" transparency=\"0.4\">" .. opts.SubTitle .. "</font>") or ""),
+        Parent = titleBar,
+    })
+    Tag(titleText, "TextColor3", "Text")
+
+    if opts.Version then
+        local ver = New("TextLabel", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -16, 0.5, 0),
+            Size = UDim2.new(0, 100, 0, 20),
+            Font = Enum.Font.Gotham,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            Text = opts.Version,
+            Parent = titleBar,
         })
-    end,
-})
+        Tag(ver, "TextColor3", "SubText")
+    end
 
-secDialog:AddButton({
-    Title = "Key System Example",
-    Icon = "solar/key-bold",
-    Description = "Real-world pattern: gate access behind a key using Dialog + Input",
-    Callback = function()
-        local VALID_KEY = "FLUENTPRO-2026"
-        local function askForKey()
-            Window:Dialog({
-                Title = "Key Required",
-                Content = "Enter your key to unlock this script. Get a key from the Discord.",
-                Input = { Placeholder = "Paste your key here..." },
-                Buttons = {
-                    { Title = "Submit", Callback = function(key)
-                        key = tostring(key or ""):gsub("^%s+", ""):gsub("%s+$", "")
-                        if key == VALID_KEY then
-                            Notify("Key System", "Key accepted, unlocked!", "Success", "solar/lock-keyhole-unlocked-bold", 4)
-                        else
-                            Notify("Key System", "Invalid key, try again", "Error", "solar/lock-keyhole-bold", 4)
-                            askForKey()
-                        end
-                    end },
-                    { Title = "Cancel" },
-                },
+    MakeDraggable(titleBar, root)
+
+    -- Sidebar
+    local sidebar = New("Frame", {
+        Name = "Sidebar",
+        Position = UDim2.new(0, 0, 0, 44),
+        Size = UDim2.new(0, tabWidth, 1, -44),
+        BackgroundTransparency = 1,
+        Parent = root,
+    })
+    local sidebarLine = New("Frame", {
+        Size = UDim2.new(0, 1, 1, 0),
+        Position = UDim2.new(1, -1, 0, 0),
+        BorderSizePixel = 0,
+        Parent = sidebar,
+    })
+    Tag(sidebarLine, "BackgroundColor3", "Border")
+
+    if opts.UserInfoTop then
+        local infoCard = New("Frame", {
+            Size = UDim2.new(1, -16, 0, 46),
+            Position = UDim2.new(0, 8, 0, 8),
+            Parent = sidebar,
+        })
+        Tag(infoCard, "BackgroundColor3", "Tab")
+        Round(infoCard, 8)
+        Pad(infoCard, 10, 6, 10, 6)
+        local infoTitle = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.UserInfoTitle or "Welcome",
+            Parent = infoCard,
+        })
+        Tag(infoTitle, "TextColor3", "Text")
+        local infoSub = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, 0, 0, 18),
+            Size = UDim2.new(1, 0, 0, 14),
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.UserInfoSubtitle or "",
+            Parent = infoCard,
+        })
+        infoSub.TextColor3 = opts.UserInfoColor or (Library.Themes[Library.CurrentTheme].SubText)
+    end
+
+    local tabList = New("ScrollingFrame", {
+        Name = "TabList",
+        Position = UDim2.new(0, 6, 0, opts.UserInfoTop and 62 or 8),
+        Size = UDim2.new(1, -12, 1, (opts.UserInfoTop and -70 or -16)),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Parent = sidebar,
+    })
+    New("UIListLayout", {
+        Parent = tabList,
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    -- Page container
+    local pages = New("Frame", {
+        Name = "Pages",
+        Position = UDim2.new(0, tabWidth, 0, 44),
+        Size = UDim2.new(1, -tabWidth, 1, -44),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        Parent = root,
+    })
+
+    local self = setmetatable({
+        Root = root,
+        TabList = tabList,
+        Pages = pages,
+        Tabs = {},
+        TabOrder = {},
+        ActiveTab = nil,
+        MinimizeKey = opts.MinimizeKey,
+        Visible = true,
+    }, Window)
+
+    if opts.MinimizeKey then
+        UserInputService.InputBegan:Connect(function(input, processed)
+            if processed then return end
+            if input.KeyCode == opts.MinimizeKey then
+                if self.Visible then self:Hide() else self:Show() end
+            end
+        end)
+    end
+
+    table.insert(Library.Windows, self)
+    return self
+end
+
+function Window:Show()
+    self.Root.Visible = true
+    self.Visible = true
+end
+
+function Window:Hide()
+    self.Root.Visible = false
+    self.Visible = false
+end
+
+function Window:SelectTab(indexOrTab)
+    local tab = type(indexOrTab) == "table" and indexOrTab or self.TabOrder[indexOrTab]
+    if not tab then return end
+    for _, t in ipairs(self.TabOrder) do
+        t.Page.Visible = (t == tab)
+        Tween(t.Button, { BackgroundTransparency = (t == tab) and 0 or 1 }, 0.12)
+    end
+    self.ActiveTab = tab
+end
+
+-- Simple confirmation / input dialog
+function Window:Dialog(opts)
+    opts = opts or {}
+    local overlay = New("Frame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0.45,
+        ZIndex = 50,
+        Parent = self.Root,
+    })
+
+    local card = New("Frame", {
+        Size = UDim2.new(0, 300, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        ZIndex = 51,
+        Parent = overlay,
+    })
+    Tag(card, "BackgroundColor3", "Dialog")
+    Round(card, 10)
+    local stroke = New("UIStroke", { Thickness = 1, Parent = card })
+    Tag(stroke, "Color", "DialogBorder")
+    Pad(card, 16, 14, 16, 14)
+    New("UIListLayout", { Parent = card, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    local title = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 18),
+        Font = Enum.Font.GothamBold,
+        TextSize = 15,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Title or "",
+        Parent = card,
+    })
+    Tag(title, "TextColor3", "Text")
+
+    if opts.Content then
+        local content = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.Content,
+            Parent = card,
+        })
+        Tag(content, "TextColor3", "SubText")
+    end
+
+    local inputBox = nil
+    if opts.Input then
+        local box = New("Frame", { Size = UDim2.new(1, 0, 0, 32), Parent = card })
+        Tag(box, "BackgroundColor3", "Input")
+        Round(box, 6)
+        Pad(box, 8)
+        inputBox = New("TextBox", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 1, 0),
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            PlaceholderText = opts.Input.Placeholder or "",
+            Text = "",
+            ClearTextOnFocus = false,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = box,
+        })
+        Tag(inputBox, "TextColor3", "Text")
+    end
+
+    local btnRow = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundTransparency = 1,
+        Parent = card,
+    })
+    New("UIListLayout", {
+        Parent = btnRow,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    for _, b in ipairs(opts.Buttons or {}) do
+        local btn = New("TextButton", {
+            Size = UDim2.new(0, 88, 1, 0),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            AutoButtonColor = false,
+            Text = b.Title or "OK",
+            Parent = btnRow,
+        })
+        Tag(btn, "BackgroundColor3", "DialogButton")
+        Tag(btn, "TextColor3", "Text")
+        Round(btn, 6)
+        local bstroke = New("UIStroke", { Thickness = 1, Parent = btn })
+        Tag(bstroke, "Color", "DialogBorder")
+
+        btn.MouseButton1Click:Connect(function()
+            overlay:Destroy()
+            if b.Callback then
+                protectedCall(b.Callback, inputBox and inputBox.Text or nil)
+            end
+        end)
+    end
+
+    return overlay
+end
+
+--============================================================
+-- ELEMENT CONTAINER (shared Add* methods for Section / CollapsibleSection / Tab)
+--============================================================
+
+local Container = {}
+Container.__index = Container
+
+local function NewContainer(holder)
+    return setmetatable({ Holder = holder, Order = 0 }, Container)
+end
+
+local function NextOrder(self)
+    self.Order = self.Order + 1
+    return self.Order
+end
+
+-- Shared card layout used by interactive elements (title/description left, control right)
+local function BuildElementBase(holder, order, opts, height)
+    local frame = New("Frame", {
+        Size = UDim2.new(1, 0, 0, height or 40),
+        LayoutOrder = order,
+        Parent = holder,
+    })
+    Tag(frame, "BackgroundColor3", "Element")
+    Round(frame, 8)
+    local stroke = New("UIStroke", { Thickness = 1, Parent = frame })
+    Tag(stroke, "Color", "ElementBorder")
+    Pad(frame, 10)
+
+    local textHolder = New("Frame", {
+        Size = UDim2.new(1, -130, 1, 0),
+        BackgroundTransparency = 1,
+        Parent = frame,
+    })
+    New("UIListLayout", { Parent = textHolder, SortOrder = Enum.SortOrder.LayoutOrder })
+
+    local title = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, opts.Description and 16 or 0),
+        AutomaticSize = (not opts.Description) and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = opts.Title or "",
+        Parent = textHolder,
+    })
+    Tag(title, "TextColor3", "Text")
+
+    if opts.Description then
+        local desc = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 14),
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.Description,
+            Parent = textHolder,
+        })
+        Tag(desc, "TextColor3", "SubText")
+    end
+
+    local right = New("Frame", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.new(0, 110, 0, 26),
+        BackgroundTransparency = 1,
+        Parent = frame,
+    })
+
+    return frame, right
+end
+
+-- ---- Paragraph ----
+function Container:AddParagraph(opts)
+    opts = opts or {}
+    local frame = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder(self),
+        Parent = self.Holder,
+    })
+    New("UIListLayout", { Parent = frame, Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    if opts.Title then
+        local t = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 18),
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            RichText = true,
+            Text = opts.Title,
+            Parent = frame,
+        })
+        Tag(t, "TextColor3", "Text")
+    end
+    if opts.Content then
+        local c = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextWrapped = true,
+            RichText = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.Content,
+            Parent = frame,
+        })
+        Tag(c, "TextColor3", "SubText")
+    end
+    return frame
+end
+
+-- ---- Divider / Space ----
+function Container:AddDivider()
+    local line = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 1),
+        BorderSizePixel = 0,
+        LayoutOrder = NextOrder(self),
+        Parent = self.Holder,
+    })
+    Tag(line, "BackgroundColor3", "Border")
+    return line
+end
+
+function Container:AddSpace(opts)
+    opts = opts or {}
+    return New("Frame", {
+        Size = UDim2.new(1, 0, 0, opts.Height or 12),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder(self),
+        Parent = self.Holder,
+    })
+end
+
+-- ---- Button ----
+function Container:AddButton(opts)
+    opts = opts or {}
+    local frame = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 38)
+
+    local chevron = New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.new(0, 16, 0, 16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 16,
+        Text = ">",
+        Parent = frame,
+    })
+    Tag(chevron, "TextColor3", "SubText")
+
+    local btn = New("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+        Parent = frame,
+    })
+    btn.MouseEnter:Connect(function() Tween(frame, { BackgroundColor3 = Library.Themes[Library.CurrentTheme].Hover }, 0.1) end)
+    btn.MouseLeave:Connect(function() Tween(frame, { BackgroundColor3 = Library.Themes[Library.CurrentTheme].Element }, 0.1) end)
+    btn.MouseButton1Click:Connect(function()
+        if opts.Callback then protectedCall(opts.Callback, btn) end
+    end)
+
+    return { Instance = frame }
+end
+
+-- ---- Toggle ----
+function Container:AddToggle(flag, opts)
+    opts = opts or {}
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    local state = opts.Default and true or false
+
+    local switch = New("Frame", { Size = UDim2.new(0, 40, 0, 22), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Parent = right })
+    Round(switch, 11)
+    local knob = New("Frame", { Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 2, 0.5, -9), BackgroundColor3 = Color3.new(1, 1, 1), Parent = switch })
+    Round(knob, 9)
+
+    local function Render(v, instant)
+        local theme = Library.Themes[Library.CurrentTheme]
+        local goalColor = v and theme.ToggleOn or theme.ToggleOff
+        local goalPos = v and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+        if instant then
+            switch.BackgroundColor3 = goalColor
+            knob.Position = goalPos
+        else
+            Tween(switch, { BackgroundColor3 = goalColor }, 0.15)
+            Tween(knob, { Position = goalPos }, 0.15)
+        end
+    end
+    Render(state, true)
+
+    local click = New("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = frame })
+
+    local obj = { Value = state, Flag = flag, Type = "Toggle" }
+    function obj:SetValue(v)
+        state = v and true or false
+        self.Value = state
+        Render(state)
+    end
+
+    click.MouseButton1Click:Connect(function()
+        obj:SetValue(not state)
+        if opts.Callback then protectedCall(opts.Callback, state) end
+    end)
+
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Checkbox (visually distinct from Toggle, same semantics) ----
+function Container:AddCheckbox(flag, opts)
+    opts = opts or {}
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    local state = opts.Default and true or false
+
+    local box = New("Frame", { Size = UDim2.new(0, 20, 0, 20), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Parent = right })
+    Round(box, 5)
+    Tag(box, "BackgroundColor3", "ToggleOff")
+    local bstroke = New("UIStroke", { Thickness = 1, Parent = box })
+    Tag(bstroke, "Color", "ElementBorder")
+    local check = New("TextLabel", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Color3.new(1, 1, 1),
+        Text = "v",
+        TextTransparency = 1,
+        Parent = box,
+    })
+
+    local function Render(v, instant)
+        local theme = Library.Themes[Library.CurrentTheme]
+        local goal = v and theme.ToggleOn or theme.ToggleOff
+        if instant then
+            box.BackgroundColor3 = goal
+            check.TextTransparency = v and 0 or 1
+        else
+            Tween(box, { BackgroundColor3 = goal }, 0.12)
+            Tween(check, { TextTransparency = v and 0 or 1 }, 0.12)
+        end
+    end
+    Render(state, true)
+
+    local click = New("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = frame })
+
+    local obj = { Value = state, Flag = flag, Type = "Checkbox" }
+    function obj:SetValue(v)
+        state = v and true or false
+        self.Value = state
+        Render(state)
+    end
+
+    click.MouseButton1Click:Connect(function()
+        obj:SetValue(not state)
+        if opts.Callback then protectedCall(opts.Callback, state) end
+    end)
+
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Slider ----
+function Container:AddSlider(flag, opts)
+    opts = opts or {}
+    local min, max = opts.Min or 0, opts.Max or 100
+    local rounding = opts.Rounding or 0
+    local value = math.clamp(opts.Default or min, min, max)
+
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 52 or 46)
+
+    local rail = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 6),
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, 0, 1, -2),
+        Parent = right,
+    })
+    Round(rail, 3)
+    Tag(rail, "BackgroundColor3", "SliderRail")
+
+    local fill = New("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0, Parent = rail })
+    Round(fill, 3)
+    Tag(fill, "BackgroundColor3", "SliderFill")
+
+    local valueLabel = New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, -18),
+        Size = UDim2.new(0, 60, 0, 14),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Parent = right,
+    })
+    Tag(valueLabel, "TextColor3", "SubText")
+
+    local function fmt(v)
+        if rounding <= 0 then return tostring(math.floor(v + 0.5)) end
+        return string.format("%." .. rounding .. "f", v)
+    end
+
+    local function Render(v)
+        local alpha = (max > min) and ((v - min) / (max - min)) or 0
+        fill.Size = UDim2.new(alpha, 0, 1, 0)
+        valueLabel.Text = fmt(v)
+    end
+    Render(value)
+
+    local dragging = false
+    local hit = New("TextButton", { Size = UDim2.new(1, 0, 1, 20), Position = UDim2.new(0,0,0,-14), BackgroundTransparency = 1, Text = "", Parent = right })
+
+    local function SetFromX(x)
+        local absPos, absSize = rail.AbsolutePosition.X, rail.AbsoluteSize.X
+        local alpha = math.clamp((x - absPos) / math.max(absSize, 1), 0, 1)
+        local raw = min + (max - min) * alpha
+        if rounding <= 0 then
+            raw = math.floor(raw + 0.5)
+        else
+            local mult = 10 ^ rounding
+            raw = math.floor(raw * mult + 0.5) / mult
+        end
+        raw = math.clamp(raw, min, max)
+        value = raw
+        Render(value)
+        return raw
+    end
+
+    hit.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        dragging = true
+        local v = SetFromX(input.Position.X)
+        if opts.Callback then protectedCall(opts.Callback, v) end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        local v = SetFromX(input.Position.X)
+        if opts.Callback then protectedCall(opts.Callback, v) end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+
+    local obj = { Value = value, Flag = flag, Type = "Slider" }
+    function obj:SetValue(v)
+        value = math.clamp(v, min, max)
+        self.Value = value
+        Render(value)
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Progress Bar (not fed by user input, controlled via :SetValue) ----
+function Container:AddProgressBar(flag, opts)
+    opts = opts or {}
+    local min, max = opts.Min or 0, opts.Max or 100
+    local value = math.clamp(opts.Default or min, min, max)
+
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, 40)
+    right.Size = UDim2.new(0, 110, 0, 8)
+
+    local rail = New("Frame", { Size = UDim2.new(1, 0, 1, 0), Parent = right })
+    Round(rail, 4)
+    Tag(rail, "BackgroundColor3", "SliderRail")
+    local fill = New("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0, Parent = rail })
+    Round(fill, 4)
+    Tag(fill, "BackgroundColor3", "SliderFill")
+
+    local function Render(v)
+        local alpha = (max > min) and ((v - min) / (max - min)) or 0
+        Tween(fill, { Size = UDim2.new(alpha, 0, 1, 0) }, 0.15)
+    end
+    Render(value)
+
+    local obj = { Value = value, Min = min, Max = max, Flag = flag, Type = "ProgressBar" }
+    function obj:SetValue(v)
+        value = math.clamp(v, min, max)
+        self.Value = value
+        Render(value)
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Input ----
+function Container:AddInput(flag, opts)
+    opts = opts or {}
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    right.Size = UDim2.new(0, 130, 0, 28)
+
+    local box = New("Frame", { Size = UDim2.new(1, 0, 1, 0), Parent = right })
+    Tag(box, "BackgroundColor3", "Input")
+    Round(box, 6)
+    local bstroke = New("UIStroke", { Thickness = 1, Parent = box })
+    Tag(bstroke, "Color", "ElementBorder")
+    Pad(box, 8, 0, 8, 0)
+
+    local textbox = New("TextBox", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        ClearTextOnFocus = false,
+        Text = opts.Default or "",
+        PlaceholderText = opts.Placeholder or "",
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = box,
+    })
+    Tag(textbox, "TextColor3", "Text")
+
+    textbox.Focused:Connect(function()
+        Tag(box, "BackgroundColor3", "InputFocused")
+    end)
+    textbox.FocusLost:Connect(function(enterPressed)
+        Tag(box, "BackgroundColor3", "Input")
+        if opts.Callback then protectedCall(opts.Callback, textbox.Text) end
+    end)
+
+    local obj = { Value = textbox.Text, Flag = flag, Type = "Input" }
+    function obj:SetValue(v)
+        textbox.Text = v
+        self.Value = v
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Keybind (Toggle / Always, keyboard + mouse buttons only) ----
+function Container:AddKeybind(flag, opts)
+    opts = opts or {}
+    local mode = opts.Mode or "Toggle"
+    local currentKey = opts.Default or "None"
+    local listening = false
+    local toggledState = false
+
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    right.Size = UDim2.new(0, 90, 0, 26)
+
+    local keyBtn = New("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        AutoButtonColor = false,
+        Text = currentKey,
+        Parent = right,
+    })
+    Tag(keyBtn, "BackgroundColor3", "Input")
+    Tag(keyBtn, "TextColor3", "Text")
+    Round(keyBtn, 6)
+    local kstroke = New("UIStroke", { Thickness = 1, Parent = keyBtn })
+    Tag(kstroke, "Color", "ElementBorder")
+
+    keyBtn.MouseButton1Click:Connect(function()
+        listening = true
+        keyBtn.Text = "..."
+    end)
+
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if listening then
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                currentKey = input.KeyCode.Name
+                keyBtn.Text = currentKey
+                listening = false
+            elseif input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.MouseButton2
+                or input.UserInputType == Enum.UserInputType.MouseButton3 then
+                currentKey = input.UserInputType.Name
+                keyBtn.Text = currentKey
+                listening = false
+            end
+            return
+        end
+
+        if processed then return end
+        local matches = (input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name == currentKey)
+            or (input.UserInputType.Name == currentKey)
+        if not matches then return end
+
+        if mode == "Always" then
+            if opts.Callback then protectedCall(opts.Callback) end
+        else
+            toggledState = not toggledState
+            if opts.Callback then protectedCall(opts.Callback, toggledState) end
+        end
+    end)
+
+    local obj = { Value = currentKey, Flag = flag, Type = "Keybind" }
+    function obj:SetValue(v)
+        currentKey = v
+        keyBtn.Text = v
+        self.Value = v
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Dropdown ----
+function Container:AddDropdown(flag, opts)
+    opts = opts or {}
+    local values = opts.Values or {}
+    local multi = opts.Multi or false
+    local selected = {} -- set of chosen strings
+
+    if multi then
+        if type(opts.Default) == "table" then
+            for k, v in pairs(opts.Default) do if v then selected[k] = true end end
+        end
+    else
+        if type(opts.Default) == "string" then selected[opts.Default] = true end
+    end
+
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    right.Size = UDim2.new(0, 130, 0, 26)
+
+    local head = New("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        AutoButtonColor = false,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        Text = "",
+        Parent = right,
+    })
+    Tag(head, "BackgroundColor3", "DropdownFrame")
+    Round(head, 6)
+    local hstroke = New("UIStroke", { Thickness = 1, Parent = head })
+    Tag(hstroke, "Color", opts.Animated and "Accent" or "DropdownBorder")
+
+    if opts.Animated then
+        task.spawn(function()
+            local hue = 0
+            while head.Parent do
+                hue = (hue + 0.15) % 1
+                hstroke.Color = Color3.fromHSV(hue, 0.65, 1)
+                task.wait(0.05)
+            end
+        end)
+    end
+
+    local label = New("TextLabel", {
+        Size = UDim2.new(1, -22, 1, 0),
+        Position = UDim2.new(0, 8, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = head,
+    })
+    Tag(label, "TextColor3", "Text")
+
+    local arrow = New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -6, 0.5, 0),
+        Size = UDim2.new(0, 14, 0, 14),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        Text = "v",
+        Parent = head,
+    })
+    Tag(arrow, "TextColor3", "SubText")
+
+    local function summary()
+        local list = {}
+        for _, v in ipairs(values) do if selected[v] then table.insert(list, v) end end
+        return (#list > 0) and table.concat(list, ", ") or "Select..."
+    end
+    label.Text = summary()
+
+    local panel, panelStroke
+    local open = false
+    local obj = { Value = multi and selected or next(selected), Flag = flag, Type = "Dropdown" }
+
+    local function fireCallback()
+        if not opts.Callback then return end
+        if multi then
+            protectedCall(opts.Callback, selected)
+        else
+            local pick
+            for _, v in ipairs(values) do if selected[v] then pick = v break end end
+            protectedCall(opts.Callback, pick)
+        end
+    end
+
+    local function ClosePanel()
+        if panel then panel:Destroy() panel = nil end
+        open = false
+    end
+
+    local function OpenPanel()
+        if open then return end
+        open = true
+        local rootGui = GetRootGui()
+        local outside = opts.DropdownOutsideWindow
+
+        panel = New("Frame", {
+            Size = UDim2.new(0, 180, 0, math.min(#values * 28 + 8, 220)),
+            ZIndex = 60,
+            ClipsDescendants = true,
+            Parent = rootGui,
+        })
+        Tag(panel, "BackgroundColor3", "DropdownFrame")
+        Round(panel, 8)
+        panelStroke = New("UIStroke", { Thickness = 1, Parent = panel, ZIndex = 60 })
+        Tag(panelStroke, "Color", "DropdownBorder")
+
+        if outside then
+            local abs = head.AbsolutePosition
+            local absSize = head.AbsoluteSize
+            local screenW = rootGui.AbsoluteSize.X
+            local goLeft = (abs.X + absSize.X + 190) > screenW
+            panel.Position = UDim2.fromOffset(
+                goLeft and (abs.X - 188) or (abs.X + absSize.X + 8),
+                abs.Y
+            )
+        else
+            panel.Position = UDim2.fromOffset(head.AbsolutePosition.X, head.AbsolutePosition.Y + head.AbsoluteSize.Y + 4)
+        end
+
+        local list = New("ScrollingFrame", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ScrollBarThickness = 3,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ZIndex = 61,
+            Parent = panel,
+        })
+        New("UIListLayout", { Parent = list, SortOrder = Enum.SortOrder.LayoutOrder })
+        Pad(list, 4)
+
+        for _, v in ipairs(values) do
+            local opt = New("TextButton", {
+                Size = UDim2.new(1, 0, 0, 26),
+                AutoButtonColor = false,
+                Font = Enum.Font.Gotham,
+                TextSize = 12,
+                Text = "  " .. v,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 61,
+                Parent = list,
             })
+            Tag(opt, "BackgroundColor3", selected[v] and "Hover" or "DropdownOption")
+            Tag(opt, "TextColor3", "Text")
+            Round(opt, 5)
+
+            opt.MouseButton1Click:Connect(function()
+                if multi then
+                    selected[v] = not selected[v] or nil
+                    opt.BackgroundColor3 = selected[v] and Library.Themes[Library.CurrentTheme].Hover or Library.Themes[Library.CurrentTheme].DropdownOption
+                    label.Text = summary()
+                    obj.Value = selected
+                    fireCallback()
+                else
+                    selected = { [v] = true }
+                    label.Text = summary()
+                    obj.Value = next(selected)
+                    fireCallback()
+                    ClosePanel()
+                end
+            end)
         end
-        askForKey()
-    end,
-})
+    end
 
-secDialog:AddDivider()
+    head.MouseButton1Click:Connect(function()
+        if open then ClosePanel() else OpenPanel() end
+    end)
 
-local secTheme = Tabs.Components:AddSection("Builtin Themes", "solar/palette-bold")
+    function obj:SetValue(v)
+        if multi and type(v) == "table" then
+            selected = v
+        elseif not multi and type(v) == "string" then
+            selected = { [v] = true }
+        end
+        label.Text = summary()
+        self.Value = multi and selected or next(selected)
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
 
-for _, name in ipairs({
-    "Amoled","Ash Gray","Blood Red","Cyanic","Amber Glow","Deep Violet",
-    "Neon Cyber","Neon Purple","Royal Blue","Deep Ocean","Rgb","Orange",
-    "Charcoal","Pearl White","Midnight","Galaxy Purple","Cosmic Violet",
-    "Cotton Candy","Arctic Frost",
-}) do
-    local n = name
-    secTheme:AddButton({
-        Title = n, Icon = "solar/palette-bold",
+-- ---- Colorpicker (RGB sliders in a popover; simplified, no touch) ----
+function Container:AddColorpicker(flag, opts)
+    opts = opts or {}
+    local color = opts.Default or Color3.fromRGB(255, 255, 255)
+
+    local frame, right = BuildElementBase(self.Holder, NextOrder(self), opts, opts.Description and 46 or 40)
+    right.Size = UDim2.new(0, 40, 0, 24)
+
+    local swatch = New("TextButton", { Size = UDim2.new(1, 0, 1, 0), AutoButtonColor = false, Text = "", BackgroundColor3 = color, Parent = right })
+    Round(swatch, 6)
+    local sstroke = New("UIStroke", { Thickness = 1, Parent = swatch })
+    Tag(sstroke, "Color", "ElementBorder")
+
+    local obj = { Value = color, Flag = flag, Type = "Colorpicker" }
+
+    swatch.MouseButton1Click:Connect(function()
+        local win = self.Window
+        if not win then return end
+        local overlay = win:Dialog({
+            Title = opts.Title or "Color",
+            Content = "Adjust RGB values",
+            Buttons = { { Title = "Close" } },
+        })
+        -- inject RGB sliders into the dialog card (first child Frame)
+        local card = overlay:FindFirstChildOfClass("Frame")
+        if not card then return end
+        local r, g, b = color.R * 255, color.G * 255, color.B * 255
+
+        local function miniSlider(labelText, initial, onChange)
+            local row = New("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Parent = card })
+            New("TextLabel", { Size = UDim2.new(0, 16, 1, 0), BackgroundTransparency = 1, Text = labelText, TextColor3 = Color3.fromRGB(200,200,200), Font = Enum.Font.GothamBold, TextSize = 12, Parent = row })
+            local rail = New("Frame", { Size = UDim2.new(1, -24, 0, 6), Position = UDim2.new(0, 20, 0.5, -3), BackgroundColor3 = Color3.fromRGB(50,50,55), Parent = row })
+            Round(rail, 3)
+            local fill = New("Frame", { Size = UDim2.new(initial / 255, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(200,200,200), Parent = rail })
+            Round(fill, 3)
+            local hit = New("TextButton", { Size = UDim2.new(1, 0, 1, 16), Position = UDim2.new(0,0,0,-8), BackgroundTransparency = 1, Text = "", Parent = rail })
+            local dragging = false
+            local function setFromX(x)
+                local a = math.clamp((x - rail.AbsolutePosition.X) / math.max(rail.AbsoluteSize.X, 1), 0, 1)
+                fill.Size = UDim2.new(a, 0, 1, 0)
+                onChange(a * 255)
+            end
+            hit.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+                dragging = true
+                setFromX(input.Position.X)
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                    setFromX(input.Position.X)
+                end
+            end)
+            UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+            end)
+        end
+
+        miniSlider("R", r, function(v) r = v; swatch.BackgroundColor3 = Color3.fromRGB(r, g, b) end)
+        miniSlider("G", g, function(v) g = v; swatch.BackgroundColor3 = Color3.fromRGB(r, g, b) end)
+        miniSlider("B", b, function(v) b = v; swatch.BackgroundColor3 = Color3.fromRGB(r, g, b) end)
+
+        local applyBtn = New("TextButton", {
+            Size = UDim2.new(1, 0, 0, 28),
+            Text = "Apply",
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Color3.new(1,1,1),
+            BackgroundColor3 = Library.Themes[Library.CurrentTheme].Accent,
+            Parent = card,
+        })
+        Round(applyBtn, 6)
+        applyBtn.MouseButton1Click:Connect(function()
+            color = Color3.fromRGB(r, g, b)
+            obj.Value = color
+            if opts.Callback then protectedCall(opts.Callback, color) end
+            overlay:Destroy()
+        end)
+    end)
+
+    function obj:SetValue(v)
+        color = v
+        self.Value = v
+        swatch.BackgroundColor3 = v
+    end
+    if flag then Library.Options[flag] = obj end
+    return obj
+end
+
+-- ---- Code block ----
+function Container:AddCode(opts)
+    opts = opts or {}
+    local frame = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        LayoutOrder = NextOrder(self),
+        Parent = self.Holder,
+    })
+    Tag(frame, "BackgroundColor3", "Element")
+    Round(frame, 8)
+    local stroke = New("UIStroke", { Thickness = 1, Parent = frame })
+    Tag(stroke, "Color", "ElementBorder")
+    Pad(frame, 10)
+    New("UIListLayout", { Parent = frame, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    if opts.Title then
+        local t = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = opts.Title,
+            Parent = frame,
+        })
+        Tag(t, "TextColor3", "Text")
+    end
+
+    local codeBox = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Font = Enum.Font.Code,
+        TextSize = 12,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Text = opts.Code or "",
+        Parent = frame,
+    })
+    Tag(codeBox, "TextColor3", "SubText")
+
+    local copyBtn = New("TextButton", {
+        Size = UDim2.new(0, 70, 0, 22),
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        Text = "Copy",
+        Parent = frame,
+    })
+    Tag(copyBtn, "BackgroundColor3", "DropdownFrame")
+    Tag(copyBtn, "TextColor3", "Text")
+    Round(copyBtn, 5)
+    copyBtn.MouseButton1Click:Connect(function()
+        pcall(function() setclipboard(opts.Code or "") end)
+        if opts.OnCopy then protectedCall(opts.OnCopy) end
+    end)
+
+    return { Instance = frame }
+end
+
+-- ---- Group (side-by-side columns) ----
+function Container:AddGroup(opts)
+    opts = opts or {}
+    local columns = opts.Columns or 2
+    local gap = opts.Gap or 6
+    local outerWindow = self.Window
+
+    local frame = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder(self),
+        Parent = self.Holder,
+    })
+    New("UIListLayout", {
+        Parent = frame,
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, gap),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local group = {}
+    function group:AddElement()
+        local colFrame = New("Frame", {
+            Size = UDim2.new(1 / columns, -gap * (columns - 1) / columns, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Parent = frame,
+        })
+        New("UIListLayout", { Parent = colFrame, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+        local c = NewContainer(colFrame)
+        c.Window = outerWindow
+        return c
+    end
+
+    return group
+end
+
+--============================================================
+-- SECTION / COLLAPSIBLE SECTION
+--============================================================
+
+local function AttachContainerMethods(target, holder, window)
+    local c = NewContainer(holder)
+    c.Window = window
+    for name, fn in pairs(Container) do
+        if name ~= "__index" then
+            target[name] = function(_, ...) return fn(c, ...) end
+        end
+    end
+    target._Container = c
+    return target
+end
+
+local function BuildSectionShell(parentHolder, title, icon, order)
+    local card = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = order,
+        Parent = parentHolder,
+    })
+    New("UIListLayout", { Parent = card, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    local header = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 16),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = title or "",
+        Parent = card,
+    })
+    Tag(header, "TextColor3", "SubText")
+
+    local body = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        Parent = card,
+    })
+    New("UIListLayout", { Parent = body, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    return card, header, body
+end
+
+-- Regular Section
+local function NewSection(parentHolder, title, icon, order, window)
+    local card, header, body = BuildSectionShell(parentHolder, title, icon, order)
+    local section = {}
+    AttachContainerMethods(section, body, window)
+    return section
+end
+
+-- Collapsible Section (lives at Tab level, toggled open/closed)
+local function NewCollapsibleSection(parentHolder, title, icon, open, order, window)
+    if open == nil then open = true end
+    local card = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        LayoutOrder = order,
+        Parent = parentHolder,
+    })
+    Tag(card, "BackgroundColor3", "Element")
+    Round(card, 8)
+    local cstroke = New("UIStroke", { Thickness = 1, Parent = card })
+    Tag(cstroke, "Color", "ElementBorder")
+
+    local headerBtn = New("TextButton", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundTransparency = 1,
+        AutoButtonColor = false,
+        Text = "",
+        Parent = card,
+    })
+    local headerLabel = New("TextLabel", {
+        Size = UDim2.new(1, -30, 1, 0),
+        Position = UDim2.new(0, 10, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = title or "",
+        Parent = headerBtn,
+    })
+    Tag(headerLabel, "TextColor3", "Text")
+    local chevron = New("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.new(0, 14, 0, 14),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        Text = open and "^" or "v",
+        Parent = headerBtn,
+    })
+    Tag(chevron, "TextColor3", "SubText")
+
+    local body = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        Visible = open,
+        Parent = card,
+    })
+    Pad(body, 10, 0, 10, 10)
+    New("UIListLayout", { Parent = body, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    headerBtn.MouseButton1Click:Connect(function()
+        open = not open
+        body.Visible = open
+        chevron.Text = open and "^" or "v"
+    end)
+
+    local section = {}
+    AttachContainerMethods(section, body, window)
+    return section
+end
+
+--============================================================
+-- TAB
+--============================================================
+
+local Tab = {}
+Tab.__index = Tab
+
+function Window:AddTab(opts)
+    opts = opts or {}
+    local order = #self.TabOrder + 1
+
+    local button = New("TextButton", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundTransparency = 1,
+        AutoButtonColor = false,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 13,
+        Text = "  " .. (opts.Title or ("Tab " .. order)),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = order,
+        Parent = self.TabList,
+    })
+    Tag(button, "TextColor3", "Text")
+    Tag(button, "BackgroundColor3", "TabActive")
+    Round(button, 6)
+
+    local page = New("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+        Parent = self.Pages,
+    })
+    Pad(page, 12)
+    New("UIListLayout", { Parent = page, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder })
+
+    local tabObj = setmetatable({
+        Button = button,
+        Page = page,
+        Window = self,
+        SectionOrder = 0,
+    }, Tab)
+
+    -- Direct Add* methods on the tab itself (no section wrapper)
+    AttachContainerMethods(tabObj, page, self)
+
+    function tabObj:AddSection(title, icon)
+        self.SectionOrder = self.SectionOrder + 1
+        return NewSection(self.Page, title, icon, self.SectionOrder, self.Window)
+    end
+
+    function tabObj:AddCollapsibleSection(title, icon, open)
+        self.SectionOrder = self.SectionOrder + 1
+        return NewCollapsibleSection(self.Page, title, icon, open, self.SectionOrder, self.Window)
+    end
+
+    button.MouseButton1Click:Connect(function()
+        self:SelectTab(tabObj)
+    end)
+
+    table.insert(self.TabOrder, tabObj)
+    self.Tabs[opts.Title or ("Tab" .. order)] = tabObj
+
+    if #self.TabOrder == 1 then
+        self:SelectTab(tabObj)
+    end
+
+    return tabObj
+end
+
+--============================================================
+-- SAVEMANAGER  (config persistence via executor file API, all pcall-guarded)
+--============================================================
+
+local SaveManager = { Folder = "QuirksUI/Config", Lib = nil, IgnoreTheme = false }
+
+function SaveManager:SetLibrary(lib) self.Lib = lib end
+function SaveManager:SetFolder(path) self.Folder = path end
+function SaveManager:IgnoreThemeSettings() self.IgnoreTheme = true end
+
+local function fileApiAvailable()
+    return typeof(writefile) == "function" and typeof(readfile) == "function"
+        and typeof(isfile) == "function" and typeof(makefolder) == "function"
+end
+
+local function ensureFolder(path)
+    if not fileApiAvailable() then return end
+    pcall(function()
+        if not isfolder(path) then makefolder(path) end
+    end)
+end
+
+function SaveManager:Save(name)
+    if not fileApiAvailable() then return false, "file API unavailable" end
+    ensureFolder(self.Folder)
+    local data = {}
+    for flag, obj in pairs(Library.Options) do
+        if obj and obj.Value ~= nil and typeof(obj.Value) ~= "Instance" then
+            local v = obj.Value
+            if typeof(v) == "Color3" then
+                v = { __color3 = true, R = v.R, G = v.G, B = v.B }
+            end
+            data[flag] = v
+        end
+    end
+    if not self.IgnoreTheme then
+        data.__theme = Library.CurrentTheme
+    end
+    local ok = pcall(function()
+        writefile(self.Folder .. "/" .. name .. ".json", HttpService:JSONEncode(data))
+    end)
+    return ok
+end
+
+function SaveManager:Load(name)
+    if not fileApiAvailable() then return false, "file API unavailable" end
+    local path = self.Folder .. "/" .. name .. ".json"
+    if not isfile(path) then return false, "not found" end
+    local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+    if not ok then return false, "corrupt config" end
+    for flag, v in pairs(decoded) do
+        if flag == "__theme" then
+            if not self.IgnoreTheme then Library:SetTheme(v) end
+        else
+            local obj = Library.Options[flag]
+            if obj and obj.SetValue then
+                if typeof(v) == "table" and v.__color3 then
+                    obj:SetValue(Color3.new(v.R, v.G, v.B))
+                else
+                    obj:SetValue(v)
+                end
+            end
+        end
+    end
+    return true
+end
+
+function SaveManager:ListConfigs()
+    if not fileApiAvailable() or typeof(listfiles) ~= "function" then return {} end
+    ensureFolder(self.Folder)
+    local list = {}
+    pcall(function()
+        for _, f in ipairs(listfiles(self.Folder)) do
+            local name = f:match("([^/\\]+)%.json$")
+            if name then table.insert(list, name) end
+        end
+    end)
+    return list
+end
+
+function SaveManager:LoadAutoloadConfig()
+    if not fileApiAvailable() then return end
+    local path = self.Folder .. "/autoload.txt"
+    if isfile(path) then
+        local ok, name = pcall(readfile, path)
+        if ok and name and name ~= "" then
+            self:Load(name)
+        end
+    end
+end
+
+function SaveManager:BuildConfigSection(tab)
+    if not tab then return end
+    local sec = tab:AddSection("Config", "solar/diskette-bold")
+    if not fileApiAvailable() then
+        sec:AddParagraph({
+            Title = "File API unavailable",
+            Content = "Your executor does not expose writefile/readfile, so configs can't be saved here.",
+        })
+        return
+    end
+
+    local nameInput = sec:AddInput("__cfg_name", { Title = "Config Name", Placeholder = "my-config" })
+    local dropdownValues = self:ListConfigs()
+    local dd = sec:AddDropdown("__cfg_select", { Title = "Saved Configs", Values = dropdownValues, Default = dropdownValues[1] })
+
+    sec:AddButton({
+        Title = "Save",
+        Icon = "solar/diskette-bold",
         Callback = function()
-            Fluent:SetTheme(n)
-            Notify("Theme", n .. " applied", "Info", nil, 2)
+            local name = nameInput.Value ~= "" and nameInput.Value or "default"
+            local ok = self:Save(name)
+            Library:Notify({ Title = "Config", Content = ok and ("Saved as " .. name) or "Save failed", Type = ok and "Success" or "Error", Duration = 3 })
+        end,
+    })
+
+    sec:AddButton({
+        Title = "Load Selected",
+        Icon = "solar/upload-minimalistic-bold",
+        Callback = function()
+            local pick = next(type(dd.Value) == "table" and dd.Value or {}) or dd.Value
+            if not pick then
+                Library:Notify({ Title = "Config", Content = "No config selected", Type = "Warning" })
+                return
+            end
+            local ok = self:Load(pick)
+            Library:Notify({ Title = "Config", Content = ok and ("Loaded " .. pick) or "Load failed", Type = ok and "Success" or "Error", Duration = 3 })
+        end,
+    })
+
+    sec:AddButton({
+        Title = "Set As Autoload",
+        Icon = "solar/star-bold",
+        Callback = function()
+            local pick = next(type(dd.Value) == "table" and dd.Value or {}) or dd.Value
+            if pick then
+                pcall(writefile, self.Folder .. "/autoload.txt", pick)
+                Library:Notify({ Title = "Config", Content = pick .. " set to autoload", Type = "Success" })
+            end
         end,
     })
 end
 
-local secCustomTheme = Tabs.Components:AddSection("Custom Themes", "solar/star-bold")
+--============================================================
+-- INTERFACEMANAGER (theme picker section)
+--============================================================
 
-secCustomTheme:AddButton({
-    Title = "Apply Neonblue", Icon = "solar/star-bold",
-    Callback = function()
-        Fluent:SetTheme("NeonBlue")
-        Notify("Theme", "NeonBlue applied", "Success", nil, 2)
-    end,
-})
+local InterfaceManager = { Folder = "QuirksUI/Interface", Lib = nil }
 
-secCustomTheme:AddButton({
-    Title = "Apply Emeralddark", Icon = "solar/leaf-bold",
-    Callback = function()
-        Fluent:SetTheme("EmeraldDark")
-        Notify("Theme", "EmeraldDark applied", "Success", nil, 2)
-    end,
-})
+function InterfaceManager:SetLibrary(lib) self.Lib = lib end
+function InterfaceManager:SetFolder(path) self.Folder = path end
 
-secCustomTheme:AddButton({
-    Title = "Apply Sunset", Icon = "solar/sun-bold",
-    Callback = function()
-        Fluent:SetTheme("Sunset")
-        Notify("Theme", "Sunset applied", "Success", nil, 2)
-    end,
-})
+function InterfaceManager:BuildInterfaceSection(tab)
+    if not tab then return end
+    local sec = tab:AddSection("Interface", "solar/palette-bold")
 
-secCustomTheme:AddParagraph({
-    Title = "Animated vs Static Comparison",
-    Content = "SlateStatic and SlateAnimated share the exact same color palette. SlateStatic never animates regardless of the Animated Window toggle, because it has no ShineEnabled key at all. SlateAnimated sets ShineEnabled = true and follows the Animated Window toggle normally. Try opening a DropdownOutsideWindow on each to see the difference.",
-})
+    local names = {}
+    for name in pairs(Library.Themes) do table.insert(names, name) end
+    table.sort(names)
 
-secCustomTheme:AddButton({
-    Title = "Apply SlateStatic (no animation support)", Icon = "solar/pause-circle-bold",
-    Callback = function()
-        Fluent:SetTheme("SlateStatic")
-        Notify("Theme", "SlateStatic applied — this theme never animates", "Info", nil, 3)
-    end,
-})
-
-secCustomTheme:AddButton({
-    Title = "Apply SlateAnimated (animation supported)", Icon = "solar/play-circle-bold",
-    Callback = function()
-        Fluent:SetTheme("SlateAnimated")
-        Notify("Theme", "SlateAnimated applied — try toggling Animated Window", "Info", nil, 3)
-    end,
-})
-
-secCustomTheme:AddDivider()
-
-local secFont = Tabs.Components:AddSection("Custom Font", "solar/text-bold")
-
-secFont:AddParagraph({
-    Title = "Apply A Custom Font To The Whole Ui",
-    Content = "Buttons below call interface manager apply custom font with different source formats rbxasset path rbxassetid and a named builtin font",
-})
-
-secFont:AddButton({
-    Title = "Rbxasset BuilderSans",
-    Icon = "solar/text-bold",
-    Callback = function()
-        InterfaceManager:ApplyCustomFont("rbxasset://fonts/families/BuilderSans.json", Enum.FontWeight.Medium)
-        Notify("Font", "Applied BuilderSans via rbxasset", "Success", nil, 3)
-    end,
-})
-
-secFont:AddButton({
-    Title = "Rbxassetid Custom Upload",
-    Icon = "solar/upload-minimalistic-bold",
-    Callback = function()
-        InterfaceManager:ApplyCustomFont("rbxassetid://12187365364", Enum.FontWeight.Regular)
-        Notify("Font", "Applied custom rbxassetid font", "Success", nil, 3)
-    end,
-})
-
-secFont:AddButton({
-    Title = "Named Font GothamSsm",
-    Icon = "solar/restart-bold",
-    Callback = function()
-        InterfaceManager:ApplyCustomFont("GothamSSm")
-        Notify("Font", "Reverted to GothamSSm", "Info", nil, 3)
-    end,
-})
-
-secFont:AddDivider()
-
-local secRichText = Tabs.Components:AddSection("Rich Text", "solar/text-bold")
-
-secRichText:AddParagraph({
-    Title = "Rich Text Is On By Default",
-    Content = "Every text label in FluentPro renders <b>Roblox rich text</b> tags automatically no setup needed. That means <i>italics</i>, <u>underline</u>, <s>strikethrough</s>, and even nested combos like <b><i>bold italic</i></b> just work in any Title, Description, or Paragraph Content.",
-})
-
-secRichText:AddParagraph({
-    Title = "<font color=\"rgb(255,120,120)\">Colored</font> <font color=\"rgb(120,200,255)\">Titles</font>",
-    Content = "You can color individual words with <font color=\"rgb(255,200,90)\">&lt;font color=\"rgb(r,g,b)\"&gt;</font> tags, mix sizes with <font size=\"22\">size=\"22\"</font>, or point at a custom font family with <font face=\"rbxasset://fonts/families/GothamSSm.json\">face=\"...\"</font>.",
-})
-
-secRichText:AddCode({
-    Title = "Example",
-    Code = 'sec:AddParagraph({\n    Title = "<b>Loot Drop</b>",\n    Content = "You found a <font color=\\"rgb(255,200,90)\\">Legendary</font> item!",\n})',
-})
-
-secRichText:AddDivider()
-
-local secIconInfo = Tabs.Icons:AddSection("Icon System", "solar/info-circle-bold")
-
-secIconInfo:AddCode({
-    Title = "Section With Icon",
-    Code = 'local sec = Tabs.Elements:AddSection("Main Features", "solar/home-bold")',
-    OnCopy = function() Notify("Code", "Copied", "Info", nil, 2) end,
-})
-
-secIconInfo:AddCode({
-    Title = "Notify With Icon",
-    Code = 'Fluent:Notify({ Title = "Hi", Content = "msg", Icon = "solar/bell-bold" })',
-    OnCopy = function() Notify("Code", "Copied", "Info", nil, 2) end,
-})
-
-secIconInfo:AddCode({
-    Title = "Element Icon Color Override",
-    Code = 'sec:AddButton({ Title="X", Icon="solar/bell-bold", IconColor=Color3.fromRGB(255,210,0) })',
-    OnCopy = function() Notify("Code", "Copied", "Info", nil, 2) end,
-})
-
-secIconInfo:AddDivider()
-
-local secSolar = Tabs.Icons:AddSection("Solar", "solar/star-bold")
-
-for _, icon in ipairs({
-    "solar/home-bold","solar/star-bold","solar/settings-bold","solar/bell-bold",
-    "solar/palette-bold","solar/layers-bold","solar/widget-bold","solar/list-bold",
-    "solar/gallery-bold","solar/chat-round-bold","solar/user-bold","solar/planet-bold",
-    "solar/keyboard-bold","solar/eye-bold","solar/running-bold","solar/arrow-up-bold",
-    "solar/restart-bold","solar/refresh-bold","solar/export-bold","solar/import-bold",
-    "solar/volume-loud-bold","solar/cursor-bold","solar/camera-bold","solar/pen-bold",
-    "solar/diskette-bold","solar/upload-minimalistic-bold","solar/info-circle-bold",
-    "solar/check-circle-bold","solar/danger-triangle-bold","solar/close-circle-bold",
-    "solar/stars-bold","solar/document-bold","solar/code-bold","solar/server-bold",
-    "solar/widget-2-bold","solar/copy-bold","solar/text-bold","solar/leaf-bold","solar/sun-bold",
-}) do
-    secSolar:AddButton({
-        Title = icon:gsub("solar/",""):gsub("-bold",""),
-        Icon = icon,
-        Description = '"' .. icon .. '"',
-        Callback = function() Notify("Icon", icon, "Info", icon, 3) end,
+    sec:AddDropdown("__theme_select", {
+        Title = "Theme",
+        Values = names,
+        Default = Library.CurrentTheme,
+        Callback = function(v)
+            Library:SetTheme(v)
+            if fileApiAvailable() then
+                ensureFolder(self.Folder)
+                pcall(writefile, self.Folder .. "/theme.txt", v)
+            end
+        end,
     })
 end
 
-secSolar:AddDivider()
-
-local secLucide = Tabs.Icons:AddSection("Lucide", "lucide/star")
-
-for _, icon in ipairs({
-    "lucide/home","lucide/star","lucide/settings","lucide/bell",
-    "lucide/layers","lucide/user","lucide/eye","lucide/camera",
-    "lucide/refresh-cw","lucide/download","lucide/upload","lucide/search",
-    "lucide/check","lucide/x","lucide/alert-triangle","lucide/info",
-    "lucide/music","lucide/image","lucide/video","lucide/code",
-    "lucide/monitor","lucide/smartphone","lucide/laptop","lucide/gamepad-2",
-    "lucide/tv-minimal","lucide/file-text","lucide/file-type-corner","lucide/tablet",
-    "lucide/bookmark","lucide/bookmark-check",
-}) do
-    secLucide:AddButton({
-        Title = icon:gsub("lucide/",""),
-        Icon = icon,
-        Description = '"' .. icon .. '"',
-        Callback = function() Notify("Icon", icon, "Info", nil, 3) end,
-    })
+function InterfaceManager:ApplyCustomFont(source, weight)
+    -- Applies a global font override to all text created going forward.
+    -- (Existing labels keep their font; call this before building the window for full effect.)
+    Library.CustomFont = { Source = source, Weight = weight }
 end
 
-secLucide:AddDivider()
-
-local secFavInfo = Tabs.Icons:AddSection("Favorites Tab Bookmark", "lucide/bookmark-check")
-
-secFavInfo:AddParagraph({
-    Title = "How Tab Favorites Work",
-    Content = "Hover a tab on the left sidebar and click the bookmark icon the bookmark turns into bookmark check yellow and the tab jumps to the top the most recently bookmarked tab stays above older bookmarks unbookmarking returns the tab to its original position favorites are saved to options json automatically",
-})
-
-secFavInfo:AddDivider()
-
-local secFloatInfo = Tabs.Floating:AddSection("Floating Buttons", "solar/widget-2-bold")
-
-secFloatInfo:AddParagraph({
-    Title = "About Floating Buttons",
-    Content = "Floating buttons are draggable on screen widgets that persist outside the main window hold a button for 1 second to lock or unlock its position layouts can be saved or loaded via the settings tab",
-})
-
-secFloatInfo:AddToggle("EnableFloating1", {
-    Title = "Enable Floating Button Number One",
-    Icon = "solar/widget-bold",
-    Default = false,
-    Description = "Square draggable overlay button",
-    Callback = function(v)
-        if v then
-            if floatingGui then
-                floatingGui.Enabled = true
-            else
-                local floatingFrame, floatingButton, floatingApplyShape = CreateButton(
-                    "FloatingOverlay", "tap", 0.16, 0.12,
-                    function()
-                        Notify("Floating Button", "Pressed", "Info", "solar/widget-bold")
-                    end,
-                    false
-                )
-                floatingGui = floatingFrame.Parent
-                FloatingButtonManager:AddButton("FloatingOverlay", floatingButton, false, false, floatingApplyShape, floatingFrame)
-            end
-        else
-            if floatingGui then floatingGui.Enabled = false end
+function InterfaceManager:LoadSettings()
+    if not fileApiAvailable() then return end
+    local path = self.Folder .. "/theme.txt"
+    if isfile(path) then
+        local ok, theme = pcall(readfile, path)
+        if ok and theme and Library.Themes[theme] then
+            Library:SetTheme(theme)
         end
-    end,
-})
-
-secFloatInfo:AddDivider()
-
-local secFloatTips = Tabs.Floating:AddSection("Tips", "solar/info-circle-bold")
-
-secFloatTips:AddParagraph({
-    Title = "Circle Mode",
-    Content = "Tap the small circular toggle that appears after holding a floating button to switch between square and circular shapes",
-})
-
-secFloatTips:AddDivider()
-
-MediaManager:SetFolder("FluentShowcase/MediaCache")
-
-InterfaceManager:SetLibrary(Fluent)
-InterfaceManager:SetFolder("FluentShowcase")
-InterfaceManager:BuildInterfaceSection(Tabs.Settings)
-InterfaceManager:LoadSettings()
-
-SaveManager:SetLibrary(Fluent)
-SaveManager:SetFolder("FluentShowcase/Config")
-SaveManager:IgnoreThemeSettings()
-SaveManager:BuildConfigSection(Tabs.Settings)
-SaveManager:LoadAutoloadConfig()
-
-FloatingButtonManager:SetLibrary(Fluent)
-FloatingButtonManager:SetFolder("FluentShowcase/Floating")
-FloatingButtonManager:BuildConfigSection(Tabs.Settings)
-FloatingButtonManager:LoadAutoloadConfig()
-
-local toggleGui = Instance.new("ScreenGui")
-toggleGui.Name = "OpenUi"
-toggleGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-toggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-toggleGui.ResetOnSpawn = false
-
-local mainBtn = Instance.new("TextButton")
-mainBtn.Name = "OpenButton"
-mainBtn.Parent = toggleGui
-mainBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-mainBtn.BackgroundTransparency = 1
-mainBtn.Position = UDim2.new(0.101969875, 0, 0.110441767, 0)
-mainBtn.Size = UDim2.new(0, 64, 0, 42)
-mainBtn.Text = ""
-mainBtn.Visible = true
-Instance.new("UICorner", mainBtn)
-
-local sizeBackMulti = 0.3
-
-local backgroundImage = Instance.new("ImageLabel")
-backgroundImage.Name = "RotatingBackground"
-backgroundImage.Parent = mainBtn
-backgroundImage.Size = UDim2.new(2.3 + sizeBackMulti, 0, 2.3 + sizeBackMulti, 0)
-backgroundImage.Position = UDim2.new(0.5, 0, 0.5, 0)
-backgroundImage.AnchorPoint = Vector2.new(0.5, 0.5)
-backgroundImage.BackgroundTransparency = 1
-backgroundImage.Image = "rbxassetid://109694296016043"
-backgroundImage.SizeConstraint = Enum.SizeConstraint.RelativeXX
-
-local frontImage = Instance.new("ImageLabel")
-frontImage.Name = "StaticIcon"
-frontImage.Parent = mainBtn
-frontImage.Size = UDim2.fromOffset(55, 55)
-frontImage.Position = UDim2.new(0.5, 0, 0.5, 0)
-frontImage.AnchorPoint = Vector2.new(0.5, 0.5)
-frontImage.BackgroundTransparency = 1
-frontImage.Image = "rbxassetid://84435108807782"
-frontImage.ZIndex = 1
-Instance.new("UICorner", frontImage).CornerRadius = UDim.new(0.2, 0)
-
-local rotation = 0
-local rotSpeed = 90
-local lastTime = tick()
-
-task.spawn(function()
-    while true do
-        local now = tick()
-        local delta = now - lastTime
-        lastTime = now
-        rotation = (rotation + rotSpeed * delta) % 360
-        backgroundImage.Rotation = rotation
-        task.wait()
     end
-end)
-
-local function MakeDraggableOpenUi(topbar, obj)
-    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-    local holdingDrag, holdToken = false, 0
-    obj:SetAttribute("Locked", false)
-
-    local function Update(input)
-        if obj:GetAttribute("Locked") then return end
-        local delta = input.Position - dragStart
-        obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-
-    local function ToggleLock()
-        local newState = not obj:GetAttribute("Locked")
-        obj:SetAttribute("Locked", newState)
-        Notify(newState and "Locked" or "Unlocked", newState and "Locked in place" or "Can be moved", "Info", nil, 2)
-    end
-
-    topbar.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        dragging = not obj:GetAttribute("Locked")
-        holdingDrag = true
-        dragStart = input.Position
-        startPos = obj.Position
-        holdToken = holdToken + 1
-        local token = holdToken
-        task.delay(1.0, function()
-            if holdingDrag and token == holdToken then ToggleLock() end
-        end)
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-                holdingDrag = false
-            end
-        end)
-    end)
-
-    topbar.InputChanged:Connect(function(input)
-        if not dragStart then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            if (input.Position - dragStart).Magnitude > 6 then holdingDrag = false end
-            dragInput = input
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then Update(input) end
-    end)
 end
 
-MakeDraggableOpenUi(mainBtn, mainBtn)
+--============================================================
+-- WINDOW: apply initial theme now that SetTheme exists
+--============================================================
+-- (CreateWindow above already tags instances; if opts.Theme was supplied we honor it here.)
 
-local uiOpen = true
-
-local function PlaySound(soundId)
-    local sound = Instance.new("Sound")
-    pcall(function() sound.SoundId = "rbxassetid://" .. soundId end)
-    sound.Parent = game:GetService("SoundService")
-    pcall(function() sound:Play() end)
-    sound.Ended:Connect(function() sound:Destroy() end)
+local _origCreateWindow = Library.CreateWindow
+function Library:CreateWindow(opts)
+    local win = _origCreateWindow(self, opts)
+    if opts and opts.Theme and self.Themes[opts.Theme] then
+        self:SetTheme(opts.Theme)
+    end
+    return win
 end
 
-mainBtn.MouseButton1Click:Connect(function()
-    local sounds = { "7127123605", "438666542" }
-    PlaySound(sounds[math.random(#sounds)])
-    uiOpen = not uiOpen
-    if uiOpen then Window:Show() else Window:Hide() end
+--============================================================
+-- EXPORTS
+--============================================================
 
-    local function SmoothSpeed(target, dur)
-        local start = rotSpeed
-        local steps = 30
-        for i = 1, steps do
-            rotSpeed = start + (target - start) * (i / steps)
-            task.wait(dur / steps)
-        end
-        rotSpeed = target
-    end
+Library.SaveManager = SaveManager
+Library.InterfaceManager = InterfaceManager
 
-    task.spawn(function()
-        SmoothSpeed(360, 0.4)
-        task.wait(0.5)
-        SmoothSpeed(180, 0.4)
-        task.wait(0.3)
-        SmoothSpeed(90, 0.4)
-    end)
-end)
-
-FloatingButtonManager:AddButton("OpenUiBtn", mainBtn, false, false, nil, mainBtn)
-
-Notify("FluentPro", "All tabs loaded successfully", "Success", "solar/planet-bold", 4)
-
-task.delay(0.5, function()
-    Window:SelectTab(1)
-end)
+return Library
