@@ -1,264 +1,247 @@
 local M = {}
 
+-- ──────────────────────────────────────────────────────────────────
+-- SERVICIOS Y VARIABLES LOCALES
+-- ──────────────────────────────────────────────────────────────────
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
 
-local _isEnabled = false
-local _speed = 50
-local _maxSpeed = 120
-local _acceleration = 2
-local _bodyVelocity = nil
-local _runServiceConnection = nil
-local _keyPressed = {}
-local _connections = {}
+local _lplr = nil
+local _camera = workspace.CurrentCamera
+local _conns = {}
 
-local _controls = {
-    forward = Enum.KeyCode.W,
-    backward = Enum.KeyCode.S,
-    left = Enum.KeyCode.A,
-    right = Enum.KeyCode.D,
-    up = Enum.KeyCode.Space,
-    down = Enum.KeyCode.LeftControl,
+-- Teclas por defecto
+local _flyKey = Enum.KeyCode.C
+local _lockKey = Enum.KeyCode.Z
+
+-- Estados internos
+local _isActive = false
+local _maxHeight = 99999
+local _bg = nil
+local _bv = nil
+local _flightLoopConn = nil
+
+-- Controles de movimiento
+local _ctrl = {f = 0, b = 0, l = 0, r = 0, u = 0, d = 0}
+
+-- Configuración interna del Gravattack
+local GA = {
+    BASE_SPEED = 60,
+    FAST_SPEED = 150,
+    SMOOTHNESS = 0.15,
 }
 
--- ───────────────────────────────────────────────────────────────────────────
---  UTILIDADES LOCALES
--- ───────────────────────────────────────────────────────────────────────────
-local function getRootPart(player)
-    local lplr = player or Players.LocalPlayer
-    if lplr and lplr.Character then
-        return lplr.Character:FindFirstChild("HumanoidRootPart")
-    end
-    return nil
-end
+local _currentSpeed = GA.BASE_SPEED
 
-local function createBodyVelocity(player)
-    local rootPart = getRootPart(player)
-    if not rootPart then return nil end
+-- ──────────────────────────────────────────────────────────────────
+-- FUNCIONES INTERNAS DE VUELO
+-- ──────────────────────────────────────────────────────────────────
+local function enableFlight()
+    local char = _lplr.Character
+    if not char then return end
     
-    if rootPart:FindFirstChild("ClusterVelocity") then
-        rootPart:FindFirstChild("ClusterVelocity"):Destroy()
-    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
     
-    local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Name = "ClusterVelocity"
-    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-    bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bodyVelocity.D = 500
-    bodyVelocity.P = 10000
-    bodyVelocity.Parent = rootPart
+    _isActive = true
+    getgenv().AFO_GRAVATTACKSTATE = true -- Variable global esperada por otros módulos
     
-    return bodyVelocity
-end
-
-local function removeBodyVelocity(player)
-    local rootPart = getRootPart(player)
-    if rootPart then
-        local bv = rootPart:FindFirstChild("ClusterVelocity")
-        if bv then bv:Destroy() end
-    end
-end
-
--- ───────────────────────────────────────────────────────────────────────────
---  LÓGICA DE MOVIMIENTO
--- ───────────────────────────────────────────────────────────────────────────
-local function getMovementDirection()
-    local camera = workspace.CurrentCamera
-    local direction = Vector3.new(0, 0, 0)
+    hum.PlatformStand = true
     
-    if _keyPressed[_controls.forward] then
-        direction = direction + camera.CFrame.LookVector * Vector3.new(1, 0, 1)
-    end
-    if _keyPressed[_controls.backward] then
-        direction = direction - camera.CFrame.LookVector * Vector3.new(1, 0, 1)
-    end
-    if _keyPressed[_controls.right] then
-        direction = direction + camera.CFrame.RightVector * Vector3.new(1, 0, 1)
-    end
-    if _keyPressed[_controls.left] then
-        direction = direction - camera.CFrame.RightVector * Vector3.new(1, 0, 1)
-    end
+    -- Inicializamos físicas
+    _bg = Instance.new("BodyGyro")
+    _bg.P = 9e4
+    _bg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+    _bg.cframe = hrp.CFrame
+    _bg.Parent = hrp
     
-    if _keyPressed[_controls.up] then
-        direction = direction + Vector3.new(0, 1, 0)
-    end
-    if _keyPressed[_controls.down] then
-        direction = direction - Vector3.new(0, 1, 0)
-    end
+    _bv = Instance.new("BodyVelocity")
+    _bv.velocity = Vector3.new(0, 0, 0)
+    _bv.maxForce = Vector3.new(9e9, 9e9, 9e9)
+    _bv.Parent = hrp
     
-    if direction.Magnitude > 0 then
-        direction = direction.Unit
-    end
-    
-    return direction
-end
-
-local function updateMovement(player)
-    if not _isEnabled then return end
-    
-    local rootPart = getRootPart(player)
-    if not rootPart or not _bodyVelocity then return end
-    
-    local moveDir = getMovementDirection()
-    
-    if moveDir.Magnitude > 0 then
-        _speed = math.min(_speed + _acceleration, _maxSpeed)
-    else
-        _speed = math.max(_speed - _acceleration * 0.5, 0)
-    end
-    
-    local velocity = moveDir * _speed
-    local currentVel = _bodyVelocity.Velocity
-    local smoothVel = currentVel:Lerp(velocity, 0.15)
-    
-    _bodyVelocity.Velocity = smoothVel
-end
-
--- ───────────────────────────────────────────────────────────────────────────
---  MANEJO DE ENTRADAS (INPUTS)
--- ───────────────────────────────────────────────────────────────────────────
-local function setupInputHandling()
-    table.insert(_connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
+    -- Bucle de vuelo
+    if _flightLoopConn then _flightLoopConn:Disconnect() end
+    _flightLoopConn = RunService.RenderStepped:Connect(function()
+        if not _isActive or not hrp or not hrp.Parent or not hum or hum.Health <= 0 then
+            M.Toggle(false)
+            return
+        end
         
-        if input.KeyCode == _controls.forward then _keyPressed[_controls.forward] = true end
-        if input.KeyCode == _controls.backward then _keyPressed[_controls.backward] = true end
-        if input.KeyCode == _controls.left then _keyPressed[_controls.left] = true end
-        if input.KeyCode == _controls.right then _keyPressed[_controls.right] = true end
-        if input.KeyCode == _controls.up then _keyPressed[_controls.up] = true end
-        if input.KeyCode == _controls.down then _keyPressed[_controls.down] = true end
-    end))
-    
-    table.insert(_connections, UserInputService.InputEnded:Connect(function(input)
-        if input.KeyCode == _controls.forward then _keyPressed[_controls.forward] = false end
-        if input.KeyCode == _controls.backward then _keyPressed[_controls.backward] = false end
-        if input.KeyCode == _controls.left then _keyPressed[_controls.left] = false end
-        if input.KeyCode == _controls.right then _keyPressed[_controls.right] = false end
-        if input.KeyCode == _controls.up then _keyPressed[_controls.up] = false end
-        if input.KeyCode == _controls.down then _keyPressed[_controls.down] = false end
-    end))
-end
-
--- ───────────────────────────────────────────────────────────────────────────
---  API PÚBLICA
--- ───────────────────────────────────────────────────────────────────────────
-
-function M.Start(player, activationKey)
-    if _isEnabled then return end
-    _isEnabled = true
-    
-    local targetPlayer = player or Players.LocalPlayer
-    setupInputHandling()
-    
-    _bodyVelocity = createBodyVelocity(targetPlayer)
-    
-    _runServiceConnection = RunService.RenderStepped:Connect(function()
-        updateMovement(targetPlayer)
+        local camCF = _camera.CFrame
+        local moveDir = Vector3.new()
+        
+        -- Cálculo de dirección en base a los inputs
+        moveDir = moveDir + camCF.LookVector * (_ctrl.f + _ctrl.b)
+        moveDir = moveDir + camCF.RightVector * (_ctrl.r + _ctrl.l)
+        moveDir = moveDir + camCF.UpVector * (_ctrl.u + _ctrl.d)
+        
+        if moveDir.Magnitude > 0 then
+            moveDir = moveDir.Unit
+        end
+        
+        local targetVel = moveDir * _currentSpeed
+        
+        -- Límite de altura impuesto por el Lock o configuraciones
+        if hrp.Position.Y >= _maxHeight and targetVel.Y > 0 then
+            targetVel = Vector3.new(targetVel.X, 0, targetVel.Z)
+        end
+        
+        _bv.velocity = _bv.velocity:Lerp(targetVel, GA.SMOOTHNESS)
+        _bg.cframe = camCF
     end)
-    table.insert(_connections, _runServiceConnection)
-    
-    if activationKey then
-        table.insert(_connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if gameProcessed then return end
-            if input.KeyCode == activationKey then
-                M.Toggle(not _isEnabled, targetPlayer)
-            end
-        end))
-    end
 end
 
-function M.Stop(player)
-    _isEnabled = false
+local function disableFlight()
+    _isActive = false
+    getgenv().AFO_GRAVATTACKSTATE = false
     
-    -- Limpiar física
-    removeBodyVelocity(player or Players.LocalPlayer)
-    
-    -- Limpiar todas las conexiones
-    for _, connection in ipairs(_connections) do
-        if connection.Connected then
-            connection:Disconnect()
-        end
+    if _flightLoopConn then 
+        _flightLoopConn:Disconnect()
+        _flightLoopConn = nil 
     end
     
-    table.clear(_connections)
-    table.clear(_keyPressed)
+    if _bg then _bg:Destroy(); _bg = nil end
+    if _bv then _bv:Destroy(); _bv = nil end
     
-    _runServiceConnection = nil
-    _bodyVelocity = nil
-    _speed = 50
+    local char = _lplr.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then hum.PlatformStand = false end
+    end
+    
+    -- Resetear controles para evitar movimiento fantasma al reactivar
+    _ctrl = {f = 0, b = 0, l = 0, r = 0, u = 0, d = 0}
 end
 
-function M.Toggle(state, player)
-    local targetPlayer = player or Players.LocalPlayer
+-- ──────────────────────────────────────────────────────────────────
+-- API PRINCIPAL (Conecta con All For One Hub)
+-- ──────────────────────────────────────────────────────────────────
+
+function M.Start(lplr, keyCode)
+    _lplr = lplr or Players.LocalPlayer
+    if keyCode then _flyKey = keyCode end
     
-    if state == nil then
-        state = not _isEnabled
+    if #_conns > 0 then M.Stop() end
+    
+    -- Captura de controles
+    local c1 = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe or not _isActive then return end
+        if input.KeyCode == Enum.KeyCode.W then _ctrl.f = 1
+        elseif input.KeyCode == Enum.KeyCode.S then _ctrl.b = -1
+        elseif input.KeyCode == Enum.KeyCode.A then _ctrl.l = -1
+        elseif input.KeyCode == Enum.KeyCode.D then _ctrl.r = 1
+        elseif input.KeyCode == Enum.KeyCode.Space then _ctrl.u = 1
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then _ctrl.d = -1
+        elseif input.KeyCode == Enum.KeyCode.LeftShift then _currentSpeed = GA.FAST_SPEED end
+    end)
+    
+    local c2 = UserInputService.InputEnded:Connect(function(input, gpe)
+        if gpe or not _isActive then return end
+        if input.KeyCode == Enum.KeyCode.W then _ctrl.f = 0
+        elseif input.KeyCode == Enum.KeyCode.S then _ctrl.b = 0
+        elseif input.KeyCode == Enum.KeyCode.A then _ctrl.l = 0
+        elseif input.KeyCode == Enum.KeyCode.D then _ctrl.r = 0
+        elseif input.KeyCode == Enum.KeyCode.Space then _ctrl.u = 0
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then _ctrl.d = 0
+        elseif input.KeyCode == Enum.KeyCode.LeftShift then _currentSpeed = GA.BASE_SPEED end
+    end)
+    
+    table.insert(_conns, c1)
+    table.insert(_conns, c2)
+end
+
+function M.Stop()
+    M.Toggle(false)
+    for _, c in ipairs(_conns) do
+        if c.Disconnect then c:Disconnect() end
     end
-    
-    _isEnabled = state
-    
+    table.clear(_conns)
+end
+
+function M.Toggle(state)
+    if state == _isActive then return end
     if state then
-        if not _bodyVelocity then
-            _bodyVelocity = createBodyVelocity(targetPlayer)
-        end
+        enableFlight()
     else
-        removeBodyVelocity(targetPlayer)
-        _bodyVelocity = nil
+        disableFlight()
     end
-    
-    return state
+end
+
+-- ──────────────────────────────────────────────────────────────────
+-- MÉTODOS DE CONFIGURACIÓN Y HUD
+-- ──────────────────────────────────────────────────────────────────
+
+function M.SetKey(keyCode)
+    _flyKey = keyCode
+end
+
+function M.SetLockKey(keyCode)
+    _lockKey = keyCode
+end
+
+function M.UpdateMaxHeight(height)
+    _maxHeight = height or 99999
 end
 
 function M.IsEnabled()
-    return _isEnabled
+    return _isActive
 end
 
-function M.SetSpeed(speed)
-    _speed = math.clamp(speed, 0, _maxSpeed)
-end
+function M.BuildHUD(parentFrame)
+    -- Contenedor principal
+    local uiStroke = Instance.new("UIStroke", parentFrame)
+    uiStroke.Color = Color3.fromRGB(150, 0, 255)
+    uiStroke.Thickness = 2
+    
+    local bg = Instance.new("Frame", parentFrame)
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    bg.BackgroundTransparency = 0.4
+    
+    local corner = Instance.new("UICorner", bg)
+    corner.CornerRadius = UDim.new(0, 8)
 
-function M.GetSpeed()
-    return _speed
-end
+    local title = Instance.new("TextLabel", bg)
+    title.Size = UDim2.new(1, 0, 0.4, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "GRAVATTACK SYSTEM"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    
+    local status = Instance.new("TextLabel", bg)
+    status.Size = UDim2.new(1, 0, 0.6, 0)
+    status.Position = UDim2.new(0, 0, 0.4, 0)
+    status.BackgroundTransparency = 1
+    status.Text = "STANDBY"
+    status.TextColor3 = Color3.fromRGB(150, 150, 150)
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 12
 
-function M.SetMaxSpeed(maxSpeed)
-    _maxSpeed = maxSpeed
-end
-
-function M.SetAcceleration(accel)
-    _acceleration = accel
-end
-
-function M.SetControls(newControls)
-    if newControls.forward then _controls.forward = newControls.forward end
-    if newControls.backward then _controls.backward = newControls.backward end
-    if newControls.left then _controls.left = newControls.left end
-    if newControls.right then _controls.right = newControls.right end
-    if newControls.up then _controls.up = newControls.up end
-    if newControls.down then _controls.down = newControls.down end
-end
-
-function M.GetControls()
-    return table.clone(_controls)
-end
-
-function M.GetState()
-    return {
-        enabled = _isEnabled,
-        speed = _speed,
-        maxSpeed = _maxSpeed,
-        acceleration = _acceleration,
-        bodyVelocity = _bodyVelocity,
-        keyPressed = table.clone(_keyPressed)
-    }
-end
-
-function M.GetVelocity()
-    if _bodyVelocity then
-        return _bodyVelocity.Velocity
+    local function setExpanded(state)
+        parentFrame.Visible = state
     end
-    return Vector3.new(0, 0, 0)
+    
+    -- Actualizar HUD en tiempo real
+    task.spawn(function()
+        while task.wait(0.1) do
+            if not parentFrame or not parentFrame.Parent then break end
+            if _isActive then
+                status.Text = "ACTIVE | SPEED: " .. (_currentSpeed == GA.FAST_SPEED and "FAST" or "NORMAL")
+                status.TextColor3 = Color3.fromRGB(0, 255, 100)
+                uiStroke.Color = Color3.fromRGB(0, 255, 100)
+            else
+                status.Text = "STANDBY"
+                status.TextColor3 = Color3.fromRGB(150, 150, 150)
+                uiStroke.Color = Color3.fromRGB(150, 0, 255)
+            end
+        end
+    end)
+    
+    return parentFrame, setExpanded
 end
 
 return M
