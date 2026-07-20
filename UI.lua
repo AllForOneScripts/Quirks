@@ -7708,7 +7708,7 @@ local aa = {
                 af:Create(
                     l,
                     TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                    {BackgroundTransparency = h.Value and 0 or 1}
+                    {BackgroundTransparency = h.Value and 0 or 0.82}
                 ):Play()
                 j.ImageTransparency = h.Value and 0 or 0.5
                 g:SafeCallback(h.Callback, h.Value)
