@@ -29,7 +29,7 @@ Library.__index = Library
 Library.Version        = "1.0.0"
 Library.Windows         = {}
 Library.Themes          = {}
-Library.CurrentTheme    = "Obsidian"
+Library.CurrentTheme    = "Teto"
 Library.ThemeTags       = {}   -- list of {Instance, Property, Key} kept alive while UI exists
 Library.Options         = {}   -- Flag -> element object (used by SaveManager)
 Library.Unloaded        = false
@@ -144,6 +144,43 @@ Library.Themes["Obsidian"] = {
     Success                  = Color3.fromRGB(90, 220, 140),
     Warning                  = Color3.fromRGB(255, 190, 80),
     Info                     = Color3.fromRGB(114, 170, 255),
+}
+
+-- "Teto" — palette inspired by Kasane Teto's signature red/pink hair and eyes.
+-- This is the theme your hub currently boots into; registered here so it's the
+-- default out of the box. Add more with RegisterCustomTheme and switch the
+-- default any time with SetTheme (or InterfaceManager, which persists the choice).
+Library.Themes["Teto"] = {
+    Accent                   = Color3.fromRGB(255, 66, 112),
+    Background               = Color3.fromRGB(20, 14, 17),
+    BackgroundGradientTop    = Color3.fromRGB(27, 18, 22),
+    BackgroundGradientBottom = Color3.fromRGB(15, 10, 12),
+    Border                   = Color3.fromRGB(48, 33, 39),
+    TitleBarLine             = Color3.fromRGB(48, 33, 39),
+    Tab                      = Color3.fromRGB(25, 17, 20),
+    TabActive                = Color3.fromRGB(34, 22, 27),
+    Element                  = Color3.fromRGB(29, 19, 23),
+    ElementBorder            = Color3.fromRGB(50, 34, 40),
+    ToggleOff                = Color3.fromRGB(48, 33, 39),
+    ToggleOn                 = Color3.fromRGB(255, 66, 112),
+    SliderRail                = Color3.fromRGB(48, 33, 39),
+    SliderFill                = Color3.fromRGB(255, 66, 112),
+    DropdownFrame            = Color3.fromRGB(25, 17, 20),
+    DropdownOption           = Color3.fromRGB(33, 22, 26),
+    DropdownBorder           = Color3.fromRGB(50, 34, 40),
+    Input                    = Color3.fromRGB(25, 17, 20),
+    InputFocused             = Color3.fromRGB(20, 13, 16),
+    InputIndicator           = Color3.fromRGB(255, 66, 112),
+    Dialog                   = Color3.fromRGB(25, 17, 20),
+    DialogButton             = Color3.fromRGB(33, 22, 26),
+    DialogBorder             = Color3.fromRGB(50, 34, 40),
+    Text                     = Color3.fromRGB(248, 240, 242),
+    SubText                  = Color3.fromRGB(180, 152, 160),
+    Hover                    = Color3.fromRGB(42, 27, 32),
+    Error                    = Color3.fromRGB(255, 90, 90),
+    Success                  = Color3.fromRGB(120, 220, 150),
+    Warning                  = Color3.fromRGB(255, 190, 90),
+    Info                     = Color3.fromRGB(237, 167, 186),
 }
 
 function Library:RegisterCustomTheme(name, colors)
