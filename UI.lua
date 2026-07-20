@@ -16,6 +16,7 @@ local TweenService      = game:GetService("TweenService")
 local Players            = game:GetService("Players")
 local RunService         = game:GetService("RunService")
 local HttpService        = game:GetService("HttpService")
+local Lighting           = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -189,6 +190,17 @@ function Library:RegisterCustomTheme(name, colors)
     for _, key in ipairs(BaseThemeKeys) do
         merged[key] = (colors and colors[key] ~= nil) and colors[key] or base[key]
     end
+    -- Accent is the one color most custom themes only bother to set. Cascade it
+    -- into the interactive-element colors unless those were given explicitly,
+    -- so "just set Accent" themes actually look different from one another.
+    if colors and colors.Accent ~= nil then
+        local accentDerived = { "ToggleOn", "SliderFill", "InputIndicator" }
+        for _, key in ipairs(accentDerived) do
+            if colors[key] == nil then
+                merged[key] = colors.Accent
+            end
+        end
+    end
     -- keep any extra custom keys the caller passed (e.g. future extensions)
     if colors then
         for k, v in pairs(colors) do
@@ -307,7 +319,7 @@ function Library:Notify(opts)
     local key = TYPE_KEY[opts.Type] or "Info"
 
     local card = New("Frame", {
-        BackgroundTransparency = 0,
+        BackgroundTransparency = 0.05,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         ClipsDescendants = true,
@@ -412,14 +424,23 @@ function Library:CreateWindow(opts)
         Parent = gui,
     })
     Tag(root, "BackgroundColor3", "Background")
+    root.BackgroundTransparency = opts.Acrylic and 0.08 or 0
     Round(root, 12)
     local rootStroke = New("UIStroke", { Thickness = 1, Parent = root })
     Tag(rootStroke, "Color", "Border")
 
+    local blur = nil
+    if opts.Acrylic then
+        blur = Lighting:FindFirstChild("QuirksUIBlur")
+        if not blur then
+            blur = New("BlurEffect", { Name = "QuirksUIBlur", Size = 0, Parent = Lighting })
+        end
+    end
+
     -- Title bar
     local titleBar = New("Frame", {
         Name = "TitleBar",
-        Size = UDim2.new(1, 0, 0, 44),
+        Size = UDim2.new(1, 0, 0, 48),
         BackgroundTransparency = 1,
         Parent = root,
     })
@@ -431,10 +452,50 @@ function Library:CreateWindow(opts)
     })
     Tag(titleLine, "BackgroundColor3", "TitleBarLine")
 
+    -- Window controls (minimize / maximize / close) — top right corner
+    local controls = New("Frame", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.new(0, 90, 0, 26),
+        BackgroundTransparency = 1,
+        Parent = titleBar,
+    })
+    New("UIListLayout", {
+        Parent = controls,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local function controlButton(glyph, order)
+        local b = New("TextButton", {
+            Size = UDim2.new(0, 26, 0, 26),
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            Text = glyph,
+            LayoutOrder = order,
+            Parent = controls,
+        })
+        Tag(b, "TextColor3", "SubText")
+        Round(b, 6)
+        b.MouseEnter:Connect(function() Tween(b, { BackgroundTransparency = 0, BackgroundColor3 = Library.Themes[Library.CurrentTheme].Hover }, 0.1) end)
+        b.MouseLeave:Connect(function() Tween(b, { BackgroundTransparency = 1 }, 0.1) end)
+        return b
+    end
+
+    local minimizeBtn = controlButton("-", 1)
+    local maximizeBtn = controlButton("[]", 2)
+    local closeBtn = controlButton("x", 3)
+
+    -- Title + optional version pill
     local titleText = New("TextLabel", {
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 16, 0, 0),
-        Size = UDim2.new(1, -100, 1, 0),
+        Size = UDim2.new(1, -190, 1, 0),
         Font = Enum.Font.GothamBold,
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -446,18 +507,26 @@ function Library:CreateWindow(opts)
     Tag(titleText, "TextColor3", "Text")
 
     if opts.Version then
-        local ver = New("TextLabel", {
-            BackgroundTransparency = 1,
+        local pill = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -16, 0.5, 0),
-            Size = UDim2.new(0, 100, 0, 20),
-            Font = Enum.Font.Gotham,
-            TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Right,
-            Text = opts.Version,
+            Position = UDim2.new(1, -100, 0.5, 0),
+            Size = UDim2.new(0, 0, 0, 20),
+            AutomaticSize = Enum.AutomaticSize.X,
             Parent = titleBar,
         })
-        Tag(ver, "TextColor3", "SubText")
+        Tag(pill, "BackgroundColor3", "Accent")
+        Round(pill, 10)
+        Pad(pill, 10, 0, 10, 0)
+        local pillText = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 0, 1, 0),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Font = Enum.Font.GothamBold,
+            TextSize = 11,
+            TextColor3 = Color3.new(1, 1, 1),
+            Text = opts.Version,
+            Parent = pill,
+        })
     end
 
     MakeDraggable(titleBar, root)
@@ -465,8 +534,8 @@ function Library:CreateWindow(opts)
     -- Sidebar
     local sidebar = New("Frame", {
         Name = "Sidebar",
-        Position = UDim2.new(0, 0, 0, 44),
-        Size = UDim2.new(0, tabWidth, 1, -44),
+        Position = UDim2.new(0, 0, 0, 48),
+        Size = UDim2.new(0, tabWidth, 1, -48),
         BackgroundTransparency = 1,
         Parent = root,
     })
@@ -478,42 +547,112 @@ function Library:CreateWindow(opts)
     })
     Tag(sidebarLine, "BackgroundColor3", "Border")
 
+    local sidebarTop = 8
+
     if opts.UserInfoTop then
         local infoCard = New("Frame", {
             Size = UDim2.new(1, -16, 0, 46),
-            Position = UDim2.new(0, 8, 0, 8),
+            Position = UDim2.new(0, 8, 0, sidebarTop),
             Parent = sidebar,
         })
         Tag(infoCard, "BackgroundColor3", "Tab")
         Round(infoCard, 8)
-        Pad(infoCard, 10, 6, 10, 6)
+
+        -- Avatar: uses opts.UserInfoIcon (rbxassetid://... or image URL) if given,
+        -- otherwise falls back to a plain initial-letter badge (no external asset needed).
+        local avatarSize = 32
+        local avatar = New("Frame", {
+            Position = UDim2.new(0, 8, 0.5, -avatarSize / 2),
+            Size = UDim2.new(0, avatarSize, 0, avatarSize),
+            Parent = infoCard,
+        })
+        Tag(avatar, "BackgroundColor3", "Accent")
+        Round(avatar, 8)
+        if opts.UserInfoIcon then
+            New("ImageLabel", {
+                Size = UDim2.new(1, 0, 1, 0),
+                BackgroundTransparency = 1,
+                Image = opts.UserInfoIcon,
+                Parent = avatar,
+            })
+        else
+            local initial = (opts.UserInfoTitle or "?"):sub(1, 1):upper()
+            New("TextLabel", {
+                Size = UDim2.new(1, 0, 1, 0),
+                BackgroundTransparency = 1,
+                Font = Enum.Font.GothamBold,
+                TextSize = 15,
+                TextColor3 = Color3.new(1, 1, 1),
+                Text = initial,
+                Parent = avatar,
+            })
+        end
+
+        local textBlock = New("Frame", {
+            Position = UDim2.new(0, 8 + avatarSize + 8, 0, 0),
+            Size = UDim2.new(1, -(8 + avatarSize + 8 + 8), 1, 0),
+            BackgroundTransparency = 1,
+            Parent = infoCard,
+        })
         local infoTitle = New("TextLabel", {
             BackgroundTransparency = 1,
+            Position = UDim2.new(0, 0, 0, 6),
             Size = UDim2.new(1, 0, 0, 16),
             Font = Enum.Font.GothamBold,
             TextSize = 13,
             TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
             Text = opts.UserInfoTitle or "Welcome",
-            Parent = infoCard,
+            Parent = textBlock,
         })
         Tag(infoTitle, "TextColor3", "Text")
         local infoSub = New("TextLabel", {
             BackgroundTransparency = 1,
-            Position = UDim2.new(0, 0, 0, 18),
+            Position = UDim2.new(0, 0, 0, 22),
             Size = UDim2.new(1, 0, 0, 14),
             Font = Enum.Font.Gotham,
             TextSize = 11,
             TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
             Text = opts.UserInfoSubtitle or "",
-            Parent = infoCard,
+            Parent = textBlock,
         })
         infoSub.TextColor3 = opts.UserInfoColor or (Library.Themes[Library.CurrentTheme].SubText)
+
+        sidebarTop = sidebarTop + 46 + 8
+    end
+
+    local searchBox = nil
+    if opts.Search then
+        local searchFrame = New("Frame", {
+            Position = UDim2.new(0, 8, 0, sidebarTop),
+            Size = UDim2.new(1, -16, 0, 28),
+            Parent = sidebar,
+        })
+        Tag(searchFrame, "BackgroundColor3", "Input")
+        Round(searchFrame, 6)
+        local sstroke = New("UIStroke", { Thickness = 1, Parent = searchFrame })
+        Tag(sstroke, "Color", "ElementBorder")
+        Pad(searchFrame, 8, 0, 8, 0)
+        searchBox = New("TextBox", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham,
+            TextSize = 12,
+            ClearTextOnFocus = false,
+            PlaceholderText = "Search...",
+            Text = "",
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = searchFrame,
+        })
+        Tag(searchBox, "TextColor3", "Text")
+        sidebarTop = sidebarTop + 28 + 8
     end
 
     local tabList = New("ScrollingFrame", {
         Name = "TabList",
-        Position = UDim2.new(0, 6, 0, opts.UserInfoTop and 62 or 8),
-        Size = UDim2.new(1, -12, 1, (opts.UserInfoTop and -70 or -16)),
+        Position = UDim2.new(0, 6, 0, sidebarTop),
+        Size = UDim2.new(1, -12, 1, -(sidebarTop + 8)),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ScrollBarThickness = 3,
@@ -530,8 +669,8 @@ function Library:CreateWindow(opts)
     -- Page container
     local pages = New("Frame", {
         Name = "Pages",
-        Position = UDim2.new(0, tabWidth, 0, 44),
-        Size = UDim2.new(1, -tabWidth, 1, -44),
+        Position = UDim2.new(0, tabWidth, 0, 48),
+        Size = UDim2.new(1, -tabWidth, 1, -48),
         BackgroundTransparency = 1,
         ClipsDescendants = true,
         Parent = root,
@@ -546,7 +685,35 @@ function Library:CreateWindow(opts)
         ActiveTab = nil,
         MinimizeKey = opts.MinimizeKey,
         Visible = true,
+        FavoriteCounter = 0,
+        BaseSize = size,
+        IsMaximized = false,
+        Blur = blur,
     }, Window)
+
+    if blur then
+        blur.Size = 18
+    end
+
+    if searchBox then
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local query = searchBox.Text:lower()
+            for _, t in ipairs(self.TabOrder) do
+                local matches = query == "" or t.Title:lower():find(query, 1, true) ~= nil
+                t.Button.Visible = matches
+            end
+        end)
+    end
+
+    minimizeBtn.MouseButton1Click:Connect(function() self:Hide() end)
+    closeBtn.MouseButton1Click:Connect(function() self:Hide() end) -- non-destructive by default; swap for self.Root:Destroy() if you want a hard close
+    maximizeBtn.MouseButton1Click:Connect(function()
+        self.IsMaximized = not self.IsMaximized
+        local target = self.IsMaximized
+            and UDim2.fromOffset(self.BaseSize.X.Offset * 1.3, self.BaseSize.Y.Offset * 1.3)
+            or self.BaseSize
+        Tween(root, { Size = target, Position = UDim2.new(0.5, -target.X.Offset / 2, 0.5, -target.Y.Offset / 2) }, 0.15)
+    end)
 
     if opts.MinimizeKey then
         UserInputService.InputBegan:Connect(function(input, processed)
@@ -564,11 +731,17 @@ end
 function Window:Show()
     self.Root.Visible = true
     self.Visible = true
+    if self.Blur then
+        Tween(self.Blur, { Size = 18 }, 0.2)
+    end
 end
 
 function Window:Hide()
     self.Root.Visible = false
     self.Visible = false
+    if self.Blur then
+        Tween(self.Blur, { Size = 0 }, 0.2)
+    end
 end
 
 function Window:SelectTab(indexOrTab)
@@ -597,6 +770,7 @@ function Window:Dialog(opts)
         AutomaticSize = Enum.AutomaticSize.Y,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, 0.5, 0),
+        BackgroundTransparency = 0.05,
         ZIndex = 51,
         Parent = overlay,
     })
@@ -712,6 +886,7 @@ end
 local function BuildElementBase(holder, order, opts, height)
     local frame = New("Frame", {
         Size = UDim2.new(1, 0, 0, height or 40),
+        BackgroundTransparency = 0.05,
         LayoutOrder = order,
         Parent = holder,
     })
@@ -1697,6 +1872,7 @@ Tab.__index = Tab
 function Window:AddTab(opts)
     opts = opts or {}
     local order = #self.TabOrder + 1
+    local title = opts.Title or ("Tab " .. order)
 
     local button = New("TextButton", {
         Size = UDim2.new(1, 0, 0, 32),
@@ -1704,14 +1880,30 @@ function Window:AddTab(opts)
         AutoButtonColor = false,
         Font = Enum.Font.GothamMedium,
         TextSize = 13,
-        Text = "  " .. (opts.Title or ("Tab " .. order)),
+        Text = "  " .. title,
         TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         LayoutOrder = order,
         Parent = self.TabList,
     })
     Tag(button, "TextColor3", "Text")
     Tag(button, "BackgroundColor3", "TabActive")
     Round(button, 6)
+    Pad(button, 0, 0, 26, 0)
+
+    -- Favorite/bookmark toggle — click pins the tab to the top of the sidebar.
+    local favorited = false
+    local favBtn = New("TextButton", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -6, 0.5, 0),
+        Size = UDim2.new(0, 20, 0, 20),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        Text = "\226\152\134", -- ☆
+        Parent = button,
+    })
+    Tag(favBtn, "TextColor3", "SubText")
 
     local page = New("ScrollingFrame", {
         Size = UDim2.new(1, 0, 1, 0),
@@ -1731,19 +1923,33 @@ function Window:AddTab(opts)
         Page = page,
         Window = self,
         SectionOrder = 0,
+        Title = title,
+        OriginalOrder = order,
     }, Tab)
+
+    favBtn.MouseButton1Click:Connect(function()
+        favorited = not favorited
+        favBtn.Text = favorited and "\226\152\133" or "\226\152\134" -- ★ / ☆
+        favBtn.TextColor3 = favorited and Library.Themes[Library.CurrentTheme].Accent or Library.Themes[Library.CurrentTheme].SubText
+        if favorited then
+            self.FavoriteCounter = self.FavoriteCounter + 1
+            button.LayoutOrder = -self.FavoriteCounter
+        else
+            button.LayoutOrder = tabObj.OriginalOrder
+        end
+    end)
 
     -- Direct Add* methods on the tab itself (no section wrapper)
     AttachContainerMethods(tabObj, page, self)
 
-    function tabObj:AddSection(title, icon)
+    function tabObj:AddSection(title2, icon)
         self.SectionOrder = self.SectionOrder + 1
-        return NewSection(self.Page, title, icon, self.SectionOrder, self.Window)
+        return NewSection(self.Page, title2, icon, self.SectionOrder, self.Window)
     end
 
-    function tabObj:AddCollapsibleSection(title, icon, open)
+    function tabObj:AddCollapsibleSection(title2, icon, open)
         self.SectionOrder = self.SectionOrder + 1
-        return NewCollapsibleSection(self.Page, title, icon, open, self.SectionOrder, self.Window)
+        return NewCollapsibleSection(self.Page, title2, icon, open, self.SectionOrder, self.Window)
     end
 
     button.MouseButton1Click:Connect(function()
@@ -1751,7 +1957,7 @@ function Window:AddTab(opts)
     end)
 
     table.insert(self.TabOrder, tabObj)
-    self.Tabs[opts.Title or ("Tab" .. order)] = tabObj
+    self.Tabs[title] = tabObj
 
     if #self.TabOrder == 1 then
         self:SelectTab(tabObj)
