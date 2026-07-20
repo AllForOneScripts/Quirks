@@ -39,14 +39,66 @@ Library.RootGui         = nil
 
 local function protectedCall(fn, ...)
     local ok, err = pcall(fn, ...)
-    if not ok and Library.ErrorHandlerFn then
-        pcall(Library.ErrorHandlerFn, err, err)
+    if not ok then
+        warn("[QuirksUI] Callback error: " .. tostring(err))
+        if Library.ErrorHandlerFn then
+            pcall(Library.ErrorHandlerFn, err, err)
+        end
     end
     return ok, err
 end
 
 function Library:SetErrorHandler(fn)
     self.ErrorHandlerFn = fn
+end
+
+-- Loads a remote script the way a normal loadstring(game:HttpGet(url))() call does,
+-- but retries on transient failures and always tells you what went wrong instead of
+-- failing silently. Use this for the *other* GitHub references in your hub:
+--
+--   local Module = Fluent:SafeLoadstring("https://raw.githubusercontent.com/.../File.lua")
+--
+-- Returns the loaded chunk's return value, or nil + an error string on failure.
+function Library:SafeLoadstring(url, opts)
+    opts = opts or {}
+    local maxRetries = opts.Retries or 2
+    local lastErr = "unknown error"
+
+    for attempt = 1, maxRetries + 1 do
+        local httpOk, content = pcall(game.HttpGet, game, url)
+        if httpOk and content and #content > 0 then
+            local chunk, compileErr = loadstring(content)
+            if chunk then
+                local runOk, result = pcall(chunk)
+                if runOk then
+                    return result
+                end
+                lastErr = "runtime error: " .. tostring(result)
+            else
+                lastErr = "compile error: " .. tostring(compileErr)
+            end
+        else
+            lastErr = "HttpGet failed: " .. tostring(content)
+        end
+
+        if attempt <= maxRetries then
+            task.wait(0.4 * attempt)
+        end
+    end
+
+    warn("[QuirksUI] SafeLoadstring failed for " .. url .. " -> " .. tostring(lastErr))
+    if opts.Notify ~= false then
+        pcall(function()
+            Library:Notify({
+                Title = "Load Failed",
+                Content = (url:match("[^/]+$") or url),
+                SubContent = tostring(lastErr),
+                Type = "Error",
+                Duration = 5,
+            })
+        end)
+    end
+    return nil, lastErr
 end
 
 --============================================================
