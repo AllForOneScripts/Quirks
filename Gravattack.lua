@@ -62,7 +62,7 @@ local function DetenerAnimacionesCustom(fadeTime)
 end
 
 -- ==========================================
--- BUCLE DE ANIMACIÓN DE PLATAFORMA (44% <-> 29%)
+-- BUCLE DE ANIMACIÓN DE PLATAFORMA (44% <-> 29%) - VERSIÓN LENTA (FLOTAR)
 -- ==========================================
 local function IniciarLoopAnimPlataforma()
     if not animPlataforma then return end
@@ -86,9 +86,12 @@ local function IniciarLoopAnimPlataforma()
         local maxTime = totalLength * 0.44
         local minTime = totalLength * 0.29
 
-        -- Iniciar en 44% e ir hacia atrás
+        -- VELOCIDAD DE FLOTACIÓN (0.2 es lento, 1 es normal)
+        local velocidadFlotar = 0.2 
+
+        -- Iniciar en 44% e ir hacia atrás lentamente
         animPlataforma.TimePosition = maxTime
-        animPlataforma:AdjustSpeed(-1)
+        animPlataforma:AdjustSpeed(-velocidadFlotar)
 
         local yendoHaciaAtras = true
 
@@ -106,13 +109,13 @@ local function IniciarLoopAnimPlataforma()
             if yendoHaciaAtras then
                 if currentTime <= minTime then
                     animPlataforma.TimePosition = minTime
-                    animPlataforma:AdjustSpeed(1) -- Avanza hacia adelante (hacia 44%)
+                    animPlataforma:AdjustSpeed(velocidadFlotar) -- Avanza lento hacia adelante (hacia 44%)
                     yendoHaciaAtras = false
                 end
             else
                 if currentTime >= maxTime then
                     animPlataforma.TimePosition = maxTime
-                    animPlataforma:AdjustSpeed(-1) -- Retrocede (hacia 29%)
+                    animPlataforma:AdjustSpeed(-velocidadFlotar) -- Retrocede lento (hacia 29%)
                     yendoHaciaAtras = true
                 end
             end
@@ -158,7 +161,7 @@ local function CrearPlataforma()
     plataformaActiva.CFrame = rootPart.CFrame * CFrame.new(0, -offset - 0.5, 0)
     plataformaActiva.Parent = workspace
     
-    -- Detener vuelo e iniciar el bucle de la animación especial
+    -- Detener vuelo e iniciar el bucle de la animación especial lenta
     if animVuelo and animVuelo.IsPlaying then animVuelo:Stop(0.2) end
     IniciarLoopAnimPlataforma()
     
