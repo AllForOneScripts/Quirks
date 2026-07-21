@@ -62,7 +62,8 @@ local function DetenerAnimacionesCustom(fadeTime)
 end
 
 -- ==========================================
--- BUCLE DE ANIMACIÓN DE PLATAFORMA (44% <-> 29%) - VERSIÓN LENTA (FLOTAR)
+-- BUCLE DE ANIMACIÓN DE PLATAFORMA - VERSIÓN MUY LENTA Y SUAVE
+-- Rango actualizado: 49% <-> 40%
 -- ==========================================
 local function IniciarLoopAnimPlataforma()
     if not animPlataforma then return end
@@ -83,13 +84,14 @@ local function IniciarLoopAnimPlataforma()
         if not animPlataforma or not plataformaActiva then return end
 
         local totalLength = animPlataforma.Length
-        local maxTime = totalLength * 0.44
-        local minTime = totalLength * 0.29
+        -- NUEVOS MARCADORES: 49% y 40%
+        local maxTime = totalLength * 0.49
+        local minTime = totalLength * 0.40
 
-        -- VELOCIDAD DE FLOTACIÓN (0.2 es lento, 1 es normal)
-        local velocidadFlotar = 0.2 
+        -- VELOCIDAD DE FLOTACIÓN (0.1 es extremadamente lento y suave)
+        local velocidadFlotar = 0.1 
 
-        -- Iniciar en 44% e ir hacia atrás lentamente
+        -- Iniciar en 49% e ir hacia atrás lentamente hacia el 40%
         animPlataforma.TimePosition = maxTime
         animPlataforma:AdjustSpeed(-velocidadFlotar)
 
@@ -107,15 +109,17 @@ local function IniciarLoopAnimPlataforma()
             local currentTime = animPlataforma.TimePosition
 
             if yendoHaciaAtras then
+                -- Si llega o sobrepasa el 40% yendo hacia atrás
                 if currentTime <= minTime then
                     animPlataforma.TimePosition = minTime
-                    animPlataforma:AdjustSpeed(velocidadFlotar) -- Avanza lento hacia adelante (hacia 44%)
+                    animPlataforma:AdjustSpeed(velocidadFlotar) -- Avanza muy lento hacia adelante (hacia 49%)
                     yendoHaciaAtras = false
                 end
             else
+                -- Si llega o sobrepasa el 49% yendo hacia adelante
                 if currentTime >= maxTime then
                     animPlataforma.TimePosition = maxTime
-                    animPlataforma:AdjustSpeed(-velocidadFlotar) -- Retrocede lento (hacia 29%)
+                    animPlataforma:AdjustSpeed(-velocidadFlotar) -- Retrocede muy lento (hacia 40%)
                     yendoHaciaAtras = true
                 end
             end
