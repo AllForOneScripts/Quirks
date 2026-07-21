@@ -9,33 +9,36 @@ local player = Players.LocalPlayer
 -- ==========================================
 -- PARÁMETROS DE DIOS DE LA GRAVEDAD
 -- ==========================================
-local GRAVEDAD_NORMAL = 196.2 -- Valor por defecto de Roblox, se actualizará al iniciar
+local GRAVEDAD_NORMAL = 196.2
 local GRAVEDAD_CERO = 0
 
-local VELOCIDAD_VUELO = 85        
-local IMPULSO_EXPLOSIVO_Y = 60    
-local IMPULSO_EXPLOSIVO_XZ = 120  
+local VELOCIDAD_VUELO = 85
+local IMPULSO_EXPLOSIVO_Y = 60
+local IMPULSO_EXPLOSIVO_XZ = 120
 
-local VELOCIDAD_CAIDA_LENTA = -15 
-local ACELERACION_CAIDA = 0.75    
+local VELOCIDAD_CAIDA_LENTA = -15
+local ACELERACION_CAIDA = 0.75
 
 -- ==========================================
 -- VARIABLES DE ESTADO Y REFERENCIAS
 -- ==========================================
 local _conns = {}
 local _isActive = false
-local _dropKey = Enum.KeyCode.C -- Keybind por defecto (antigua C)
+local _dropKey = Enum.KeyCode.C
 
 local isHoldingSpace = false
 local isHoldingDrop = false
 local isFloating = false
 local isSlamming = false
+local isPlatformActive = false
 local holdTimer = 0
 local lastDamageTime = 0
-local lastSlamEndTime = 0 
+local lastSlamEndTime = 0
 
 local character, humanoid, rootPart, animator
-local animVuelo, animReSalto, animImpacto, animDespertar
+local animVuelo, animReSalto, animImpacto, animDespertar, animPlataforma
+local platformPart = nil
+local platformY = 0
 
 -- ==========================================
 -- SISTEMA DE ANIMACIONES
@@ -56,30 +59,82 @@ local function DetenerAnimacionesCustom(fadeTime)
     if animReSalto and animReSalto.IsPlaying then animReSalto:Stop(fadeTime) end
     if animImpacto and animImpacto.IsPlaying then animImpacto:Stop(fadeTime) end
     if animDespertar and animDespertar.IsPlaying then animDespertar:Stop(fadeTime) end
+    if animPlataforma and animPlataforma.IsPlaying then animPlataforma:Stop(fadeTime) end
 end
 
 -- ==========================================
--- TELETRANSPORTE OFENSIVO (SLAM)
+-- PLATAFORMA INVISIBLE (NUEVA LÓGICA DEL CLAVADO)
+-- ==========================================
+local function ActivarPlataforma()
+    if not rootPart or not humanoid or isPlatformActive then return end
+
+    -- Cancelar vuelo y restaurar gravedad normal
+    isFloating = false
+    isPlatformActive = true
+    workspace.Gravity = GRAVEDAD_NORMAL
+
+    -- Calcular altura de la plataforma justo debajo de los pies
+    platformY = rootPart.Position.Y - humanoid.HipHeight - 1.5
+
+    -- Crear la plataforma si no existe, o reutilizarla
+    if not platformPart then
+        platformPart = Instance.new("Part")
+        platformPart.Anchored = true
+        platformPart.CanCollide = true
+        platformPart.Transparency = 1        -- Totalmente invisible
+        platformPart.Size = Vector3.new(25, 1, 25)
+        platformPart.Name = "GravPlatform"
+        platformPart.Parent = workspace
+    end
+    platformPart.CanCollide = true
+    platformPart.Position = Vector3.new(rootPart.Position.X, platformY, rootPart.Position.Z)
+
+    -- Reducir velocidad vertical para posarse rápido sobre la plataforma
+    local vel = rootPart.AssemblyLinearVelocity
+    rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, math.min(vel.Y, -10), vel.Z)
+
+    -- Reproducir animación de plataforma
+    if animPlataforma then
+        animPlataforma:Play(0.1)
+    end
+end
+
+local function DesactivarPlataforma()
+    if not isPlatformActive then return end
+    isPlatformActive = false
+
+    if platformPart then
+        platformPart.CanCollide = false
+        platformPart.Position = Vector3.new(0, -100, 0)  -- Mover fuera de la vista
+    end
+
+    if animPlataforma and animPlataforma.IsPlaying then
+        animPlataforma:Stop(0.2)
+    end
+end
+
+-- ==========================================
+-- TELETRANSPORTE OFENSIVO (SLAM) – ya no se usa con Ctrl
 -- ==========================================
 local function AplastarContraElSuelo()
     if isSlamming or not rootPart or not _isActive then return end
     
     local rayOrigin = rootPart.Position
-    local rayDirection = Vector3.new(0, -2000, 0) 
+    local rayDirection = Vector3.new(0, -2000, 0)
     
     local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {character} 
+    rayParams.FilterDescendantsInstances = {character}
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     
     local rayResult = workspace:Raycast(rayOrigin, rayDirection, rayParams)
     
     if rayResult then
         isSlamming = true
-        DetenerAnimacionesCustom(0.1) 
+        DetenerAnimacionesCustom(0.1)
         
         local impactoBase = rayResult.Position
         local objetivo = nil
-        local menorDistancia = 30 
+        local menorDistancia = 30
         
         for _, otroJugador in ipairs(Players:GetPlayers()) do
             if otroJugador ~= player and otroJugador.Character then
@@ -105,9 +160,9 @@ local function AplastarContraElSuelo()
             local agarreConn
             
             agarreConn = RunService.Heartbeat:Connect(function(dt)
-                if not _isActive then 
+                if not _isActive then
                     if agarreConn then agarreConn:Disconnect() end
-                    return 
+                    return
                 end
                 
                 t = t + dt
@@ -119,14 +174,14 @@ local function AplastarContraElSuelo()
                 else
                     local alturaAgarre = (objetivo.Size.Y / 2) + 1.5
                     rootPart.CFrame = CFrame.new(objetivo.Position + Vector3.new(0, alturaAgarre, 0))
-                    rootPart.AssemblyLinearVelocity = Vector3.zero 
+                    rootPart.AssemblyLinearVelocity = Vector3.zero
                 end
             end)
             table.insert(_conns, agarreConn)
         else
             local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
             rootPart.CFrame = CFrame.new(impactoBase + Vector3.new(0, alturaPiernas, 0))
-            rootPart.AssemblyLinearVelocity = Vector3.zero 
+            rootPart.AssemblyLinearVelocity = Vector3.zero
             
             task.delay(0.1, function()
                 if not _isActive then return end
@@ -161,10 +216,13 @@ local function SetupCharacter(newCharacter)
         animReSalto = LoadAnim("rbxassetid://75312251819975", Enum.AnimationPriority.Action3, false)
         animImpacto = LoadAnim("rbxassetid://127236244922151", Enum.AnimationPriority.Action4, false)
         animDespertar = LoadAnim("rbxassetid://83644153292302", Enum.AnimationPriority.Action4, false)
+        -- Nueva animación para la plataforma
+        animPlataforma = LoadAnim("rbxassetid://75699931064837", Enum.AnimationPriority.Action3, true)
     end
 
     isFloating = false
     isSlamming = false
+    isPlatformActive = false
     isHoldingSpace = false
     isHoldingDrop = false
     holdTimer = 0
@@ -188,17 +246,15 @@ function M.Start()
     if _isActive then return end
     _isActive = true
     
-    -- Capturar la gravedad del juego al momento de activar
     GRAVEDAD_NORMAL = workspace.Gravity
     
-    -- Limpiar estado
     table.clear(_conns)
     isHoldingSpace = false
     isHoldingDrop = false
     isFloating = false
     isSlamming = false
+    isPlatformActive = false
     
-    -- Setup Inicial
     if player.Character then SetupCharacter(player.Character) end
     
     local charAddedConn = player.CharacterAdded:Connect(function(newChar)
@@ -216,7 +272,7 @@ function M.Start()
             if isFloating then
                 if animReSalto then
                     animReSalto:Play(0.1)
-                    animReSalto:AdjustSpeed(2) 
+                    animReSalto:AdjustSpeed(2)
                 end
                 local velActual = rootPart.AssemblyLinearVelocity
                 rootPart.AssemblyLinearVelocity = Vector3.new(velActual.X, IMPULSO_EXPLOSIVO_Y, velActual.Z)
@@ -226,9 +282,10 @@ function M.Start()
             isHoldingDrop = true
             
         elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+            -- REEMPLAZO: en lugar del slam, activar plataforma si estás en el aire
             local state = humanoid:GetState()
-            if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall or isFloating then
-                AplastarContraElSuelo()
+            if (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall or isFloating) then
+                ActivarPlataforma()
             end
         end
     end)
@@ -239,13 +296,26 @@ function M.Start()
             isHoldingSpace = false
         elseif input.KeyCode == _dropKey then
             isHoldingDrop = false
+        elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+            -- Al soltar Ctrl, se desactiva la plataforma
+            DesactivarPlataforma()
         end
     end)
     table.insert(_conns, inputEndedConn)
 
     -- BUCLE PRINCIPAL
     local renderConn = RunService.RenderStepped:Connect(function(dt)
-        if not _isActive or isSlamming or not humanoid or not rootPart or not humanoid.Parent then return end
+        if not _isActive or not humanoid or not rootPart or not humanoid.Parent then return end
+
+        -- Mientras la plataforma está activa, solo actualizamos su posición (horizontal)
+        if isPlatformActive then
+            if platformPart then
+                platformPart.Position = Vector3.new(rootPart.Position.X, platformY, rootPart.Position.Z)
+            end
+            return
+        end
+
+        if isSlamming then return end
 
         local state = humanoid:GetState()
         local inAir = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall)
@@ -266,11 +336,11 @@ function M.Start()
             if not isFloating then
                 holdTimer = holdTimer + dt
                 
-                local tiempoRequerido = 0.5 
+                local tiempoRequerido = 0.5
                 if tick() - lastDamageTime <= 3 then
-                    tiempoRequerido = 0.15 
+                    tiempoRequerido = 0.15
                 elseif tick() - lastSlamEndTime <= 1.5 then
-                    tiempoRequerido = 0.3 
+                    tiempoRequerido = 0.3
                 end
                 
                 if holdTimer > tiempoRequerido then
@@ -291,8 +361,8 @@ function M.Start()
                     humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
                     local moveDir = humanoid.MoveDirection
                     rootPart.AssemblyLinearVelocity = Vector3.new(
-                        moveDir.X * IMPULSO_EXPLOSIVO_XZ, 
-                        IMPULSO_EXPLOSIVO_Y, 
+                        moveDir.X * IMPULSO_EXPLOSIVO_XZ,
+                        IMPULSO_EXPLOSIVO_Y,
                         moveDir.Z * IMPULSO_EXPLOSIVO_XZ
                     )
                 end
@@ -335,26 +405,24 @@ function M.Stop()
     if not _isActive then return end
     _isActive = false
     
-    -- Desconectar todos los eventos
+    -- Asegurarse de desactivar la plataforma
+    DesactivarPlataforma()
+    
     for _, c in ipairs(_conns) do
         if c.Disconnect then c:Disconnect() end
     end
     table.clear(_conns)
     
-    -- Detener animaciones visuales si existen
     DetenerAnimacionesCustom(0)
-    
-    -- Restaurar la gravedad nativa de Roblox
     workspace.Gravity = GRAVEDAD_NORMAL
     
-    -- Resetear variables
     isHoldingSpace = false
     isHoldingDrop = false
     isFloating = false
     isSlamming = false
+    isPlatformActive = false
     holdTimer = 0
     
-    -- Si el jugador estaba congelado o flotando, liberamos su velocidad para evitar que se quede pegado
     if rootPart and character and character.Parent then
         local velActual = rootPart.AssemblyLinearVelocity
         rootPart.AssemblyLinearVelocity = Vector3.new(velActual.X, math.min(velActual.Y, 0), velActual.Z)
@@ -364,7 +432,7 @@ end
 function M.SetDropKeybind(keyCode)
     if typeof(keyCode) == "EnumItem" then
         _dropKey = keyCode
-        isHoldingDrop = false -- Resetear estado en caso de que lo cambien mientras presionaba la tecla anterior
+        isHoldingDrop = false
     end
 end
 
