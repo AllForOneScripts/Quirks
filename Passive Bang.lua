@@ -126,7 +126,7 @@ function M.Start(lplr)
         -- 1. PRIORIDAD ABSOLUTA AL LOCK
         -- Evaluamos si el Lock está activo ANTES de intentar sacar a su objetivo.
         if _lockModuleRef and type(_lockModuleRef.IsLockActive) == "function" and _lockModuleRef.IsLockActive() then
-            hasLock = true -- ESTAMOS EN MODO LOCK. EL ESCANEO PASIVO QUEDA TOTALMENTE ANULADO.
+            hasLock = true -- ESTAMOS EN MODO LOCK. EL ESCANEO PASIVO QUEDA TOTALMENTE ANULADO, a menos que no haya objetivo válido.
             
             local lockTarget = type(_lockModuleRef.GetTarget) == "function" and _lockModuleRef.GetTarget() or nil
             
@@ -139,16 +139,16 @@ function M.Start(lplr)
                     _targetPlayer = lockTarget
                     _rescore = PB.RESCORE_INTERVAL
                 else
-                    _targetHRP = nil
-                    _targetPlayer = nil
+                    -- Objetivo del Lock inválido → volvemos al escaneo pasivo para que el clon no se detenga
+                    hasLock = false
                 end
             else
-                _targetHRP = nil
-                _targetPlayer = nil
+                -- Lock activo pero sin objetivo → escaneo pasivo
+                hasLock = false
             end
         end
 
-        -- 2. ESCANEO PASIVO (Solo se ejecuta si el Lock está APAGADO)
+        -- 2. ESCANEO PASIVO (se ejecuta si el Lock está apagado O si el Lock no pudo proporcionar un objetivo válido)
         if not hasLock then
             _rescore = _rescore + 1
             if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
@@ -168,7 +168,7 @@ function M.Start(lplr)
                 _targetHRP = nil
                 _targetPlayer = nil
                 _rescore = PB.RESCORE_INTERVAL
-                return -- Cortamos aquí. Si estamos en Lock, el próximo frame volverá a buscar a tu objetivo exclusivo.
+                return -- Cortamos aquí. Si estábamos en Lock, el próximo frame volverá a intentar con el Lock o con escaneo.
             end
         end
         
@@ -191,6 +191,11 @@ function M.Start(lplr)
         local verticalOffset = (tVel.Y < -10) and -2 or 0
         local targetPos = predictedPos + behindOffset + leadOffset
         targetPos = Vector3.new(targetPos.X, _targetHRP.Position.Y + verticalOffset, targetPos.Z)
+        
+        -- 🔼 Ajuste visual para modo 4D (alerta): elevar el clon para que los pies no se metan en el suelo
+        if _lockModuleRef and type(_lockModuleRef.IsLockActive) == "function" and _lockModuleRef.IsLockActive() then
+            targetPos = targetPos + Vector3.new(0, 2.5, 0)
+        end
         
         -- Notificar bypass si existe el módulo de vuelo
         local _fm = rawget(getgenv(), "_AFO_FLY_MODULE")
