@@ -37,6 +37,7 @@ local lastSlamEndTime = 0
 local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar, animPlataforma
 local plataformaActiva = nil
+local loopPlataformaConn = nil
 
 -- ==========================================
 -- SISTEMA DE ANIMACIONES
@@ -61,18 +62,83 @@ local function DetenerAnimacionesCustom(fadeTime)
 end
 
 -- ==========================================
+-- BUCLE DE ANIMACIÓN DE PLATAFORMA (44% <-> 29%)
+-- ==========================================
+local function IniciarLoopAnimPlataforma()
+    if not animPlataforma then return end
+    
+    if loopPlataformaConn then
+        loopPlataformaConn:Disconnect()
+        loopPlataformaConn = nil
+    end
+
+    animPlataforma:Play(0.1)
+
+    task.spawn(function()
+        -- Esperar a que la animación cargue su duración
+        while animPlataforma and animPlataforma.Length == 0 do
+            task.wait()
+        end
+        
+        if not animPlataforma or not plataformaActiva then return end
+
+        local totalLength = animPlataforma.Length
+        local maxTime = totalLength * 0.44
+        local minTime = totalLength * 0.29
+
+        -- Iniciar en 44% e ir hacia atrás
+        animPlataforma.TimePosition = maxTime
+        animPlataforma:AdjustSpeed(-1)
+
+        local yendoHaciaAtras = true
+
+        loopPlataformaConn = RunService.Heartbeat:Connect(function()
+            if not plataformaActiva or not animPlataforma or not animPlataforma.IsPlaying then
+                if loopPlataformaConn then
+                    loopPlataformaConn:Disconnect()
+                    loopPlataformaConn = nil
+                end
+                return
+            end
+
+            local currentTime = animPlataforma.TimePosition
+
+            if yendoHaciaAtras then
+                if currentTime <= minTime then
+                    animPlataforma.TimePosition = minTime
+                    animPlataforma:AdjustSpeed(1) -- Avanza hacia adelante (hacia 44%)
+                    yendoHaciaAtras = false
+                end
+            else
+                if currentTime >= maxTime then
+                    animPlataforma.TimePosition = maxTime
+                    animPlataforma:AdjustSpeed(-1) -- Retrocede (hacia 29%)
+                    yendoHaciaAtras = true
+                end
+            end
+        end)
+    end)
+end
+
+-- ==========================================
 -- SISTEMA DE PLATAFORMA INVISIBLE
 -- ==========================================
 local function DestruirPlataforma()
+    if loopPlataformaConn then
+        loopPlataformaConn:Disconnect()
+        loopPlataformaConn = nil
+    end
+
     if plataformaActiva then
         plataformaActiva:Destroy()
         plataformaActiva = nil
     end
+
     if animPlataforma and animPlataforma.IsPlaying then
         animPlataforma:Stop(0.2)
     end
     
-    -- Si estamos flotando, restauramos la animación de vuelo
+    -- Restablecer animación de vuelo si seguimos flotando
     if isFloating and not isSlamming and animVuelo then
         animVuelo:Play(0.2)
     end
@@ -83,26 +149,24 @@ local function CrearPlataforma()
     
     plataformaActiva = Instance.new("Part")
     plataformaActiva.Name = "PlataformaGravattack"
-    plataformaActiva.Size = Vector3.new(8, 1, 8) -- Tamaño amplio para evitar caerse fácil
-    plataformaActiva.Transparency = 1 -- Invisible
+    plataformaActiva.Size = Vector3.new(8, 1, 8)
+    plataformaActiva.Transparency = 1
     plataformaActiva.Anchored = true
     plataformaActiva.CanCollide = true
     
-    -- Posicionamos la superficie superior de la plataforma justo debajo de los pies
     local offset = humanoid.HipHeight + (rootPart.Size.Y / 2)
     plataformaActiva.CFrame = rootPart.CFrame * CFrame.new(0, -offset - 0.5, 0)
     plataformaActiva.Parent = workspace
     
-    -- Detenemos vuelo y activamos la animación de la plataforma
+    -- Detener vuelo e iniciar el bucle de la animación especial
     if animVuelo and animVuelo.IsPlaying then animVuelo:Stop(0.2) end
-    if animPlataforma then animPlataforma:Play(0.2) end
+    IniciarLoopAnimPlataforma()
     
-    -- Frenamos la velocidad actual para aterrizar instantáneamente
     rootPart.AssemblyLinearVelocity = Vector3.zero
 end
 
 -- ==========================================
--- TELETRANSPORTE OFENSIVO (SLAM)
+-- TELETRANSPORTE OFENSIVO (SLAM / CTRL)
 -- ==========================================
 local function AplastarContraElSuelo()
     DestruirPlataforma()
@@ -207,7 +271,7 @@ local function SetupCharacter(newCharacter)
         animReSalto = LoadAnim("rbxassetid://75312251819975", Enum.AnimationPriority.Action3, false)
         animImpacto = LoadAnim("rbxassetid://127236244922151", Enum.AnimationPriority.Action4, false)
         animDespertar = LoadAnim("rbxassetid://83644153292302", Enum.AnimationPriority.Action4, false)
-        animPlataforma = LoadAnim("rbxassetid://75699931064837", Enum.AnimationPriority.Action4, true)
+        animPlataforma = LoadAnim("rbxassetid://79304876640360", Enum.AnimationPriority.Action4, false)
     end
 
     isFloating = false
@@ -258,7 +322,6 @@ function M.Start()
             isHoldingSpace = true
             
             if isFloating then
-                -- Si saltan desde la plataforma, la destruimos y continuamos el vuelo
                 if plataformaActiva then
                     DestruirPlataforma()
                     isHoldingDrop = false
@@ -272,17 +335,19 @@ function M.Start()
                 rootPart.AssemblyLinearVelocity = Vector3.new(velActual.X, IMPULSO_EXPLOSIVO_Y, velActual.Z)
             end
             
-        elseif input.KeyCode == _dropKey then
+        elseif input.KeyCode == _dropKey then -- Tecla C por defecto
             isHoldingDrop = true
-            -- Solo creamos la plataforma si el Gravattack está activo y levitando
-            if isFloating and not plataformaActiva then
+            
+            local state = humanoid:GetState()
+            local inAir = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall)
+            
+            if (isFloating or inAir) and not plataformaActiva then
                 CrearPlataforma()
             end
             
         elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
             local state = humanoid:GetState()
             if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall or isFloating then
-                DestruirPlataforma()
                 AplastarContraElSuelo()
             end
         end
@@ -292,7 +357,7 @@ function M.Start()
     local inputEndedConn = UserInputService.InputEnded:Connect(function(input)
         if input.KeyCode == Enum.KeyCode.Space then
             isHoldingSpace = false
-        elseif input.KeyCode == _dropKey then
+        elseif input.KeyCode == _dropKey then -- Al soltar C
             isHoldingDrop = false
             DestruirPlataforma()
         end
@@ -306,7 +371,6 @@ function M.Start()
         local state = humanoid:GetState()
         local inAir = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall)
 
-        -- Evitamos cancelar el modo vuelo si el jugador está parado sobre su propia plataforma
         if not inAir and not plataformaActiva then
             if isFloating then
                 isFloating = false
@@ -362,8 +426,6 @@ function M.Start()
         
         if isFloating then
             if plataformaActiva then
-                -- Si la plataforma está activa, devolvemos la gravedad a la normalidad para el jugador
-                -- No modificamos el Vector de Velocidad para que puedan pararse con naturalidad
                 workspace.Gravity = GRAVEDAD_NORMAL
             else
                 workspace.Gravity = GRAVEDAD_CERO
@@ -422,7 +484,7 @@ function M.SetDropKeybind(keyCode)
     if typeof(keyCode) == "EnumItem" then
         _dropKey = keyCode
         isHoldingDrop = false
-        DestruirPlataforma() -- Asegura limpiar estados viejos al cambiar la tecla
+        DestruirPlataforma()
     end
 end
 
