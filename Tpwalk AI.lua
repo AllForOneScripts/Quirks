@@ -23,8 +23,10 @@ local gameBaseSpeed = 16
 local isExploding = false
 local DASH_COOLDOWN = 1.2
 local lastDashEnd = 0
+local boostEndTime = 0 
 local EXPLOSION_BASE_FORCE = 130 
 local GHOST_DURATION = 0.4 
+local currentSmoothSpeed = 16 -- Variable para transición de velocidad segura
 
 -----------------------------------
 -- FUNCIONES INTERNAS DE LIMPIEZA
@@ -55,13 +57,11 @@ function M.Stop()
     
     clearPhysics()
     
-    -- Desconectar todos los eventos vinculados a este módulo
     for _, conn in ipairs(connections) do
         if conn then conn:Disconnect() end
     end
     table.clear(connections)
     
-    -- Eliminar la GUI
     if gui and gui.Parent then
         gui:Destroy()
     end
@@ -79,21 +79,20 @@ function M.Start(Keys, lplr)
     
     local playerGui = _lplr:WaitForChild("PlayerGui")
     
-    -- REGLA: Si la GUI ya existe, se aborta la creación para no duplicar
     if _active or playerGui:FindFirstChild("CustomMovementGUI") then
         return 
     end
     
-    -- Limpieza de seguridad por si había un proceso fantasma
     M.Stop()
     
-    -- Inicializar variables para esta sesión
     _active = true
     isEnabled = true
     currentSpeed = 100
     gameBaseSpeed = 16
+    currentSmoothSpeed = 16
     isExploding = false
     lastDashEnd = 0
+    boostEndTime = 0
     
     -----------------------------------
     -- CREACIÓN DE LA INTERFAZ (GUI) --
@@ -200,7 +199,6 @@ function M.Start(Keys, lplr)
         if isMinimized then toggleMinimizeState() end
     end)
     
-    -- Conectar el botón de Cerrar (X) con el Stop del Módulo
     closeBtn.MouseButton1Click:Connect(function()
         M.Stop()
     end)
@@ -214,6 +212,7 @@ function M.Start(Keys, lplr)
                 if humanoid then
                     gameBaseSpeed = math.abs(humanoid.WalkSpeed)
                     if gameBaseSpeed == 0 then gameBaseSpeed = 16 end
+                    currentSmoothSpeed = gameBaseSpeed
                 end
                 toggleBtn.Text = "On"
                 toggleBtn.BackgroundColor3 = Color3.fromRGB(70, 20, 100)
@@ -237,6 +236,7 @@ function M.Start(Keys, lplr)
         
         gameBaseSpeed = math.abs(humanoid.WalkSpeed)
         if gameBaseSpeed == 0 then gameBaseSpeed = 16 end
+        currentSmoothSpeed = gameBaseSpeed
         
         clearPhysics()
     end
@@ -256,7 +256,10 @@ function M.Start(Keys, lplr)
             if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll or humanoid.PlatformStand then return end
 
             if tick() - lastDashEnd >= DASH_COOLDOWN then
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                local isLateral = UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.D)
+                local isForwardBack = UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.S)
+                
+                if isForwardBack or not isLateral then
                     return 
                 end
 
@@ -401,32 +404,98 @@ function M.Start(Keys, lplr)
             return
         end
 
-        -- Velocidad Constante + Radar Buff
+        -----------------------------------
+        -- INTELIGENCIA DE BATALLA UNIFICADA
+        -----------------------------------
         local safeCurrentGameSpeed = math.abs(humanoid.WalkSpeed)
         local safeBaseSpeed = math.abs(gameBaseSpeed)
         if safeBaseSpeed == 0 then safeBaseSpeed = 16 end
         
         local speedMultiplier = math.max(1, safeCurrentGameSpeed / safeBaseSpeed)
-        local finalSpeed = math.abs(currentSpeed * speedMultiplier)
+        local baseTargetSpeed = math.abs(currentSpeed * speedMultiplier)
+        local finalTargetSpeed = baseTargetSpeed
 
-        local isPlayerNearby = false
+        local nearestEnemyHRP = nil
+        local minDistance = math.huge
+
+        -- Escáner de Proximidad
         for _, otherPlayer in ipairs(Players:GetPlayers()) do
             if otherPlayer ~= _lplr and otherPlayer.Character then
+                local otherHum = otherPlayer.Character:FindFirstChild("Humanoid")
                 local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if otherRoot then
+                
+                if otherRoot and otherHum and otherHum.Health > 0 then
                     local distance = (otherRoot.Position - rootPart.Position).Magnitude
-                    if distance <= 22.5 then
-                        isPlayerNearby = true
-                        break
+                    
+                    if distance < minDistance then
+                        minDistance = distance
+                        nearestEnemyHRP = otherRoot
                     end
                 end
             end
         end
 
-        if not isPlayerNearby then
-            finalSpeed = finalSpeed * 2
+        -- LÓGICA DE PODER ABSOLUTO (Modo Adrenalina)
+        if nearestEnemyHRP then
+            if humanoid.Health <= (humanoid.MaxHealth * 0.5) then
+                local directionToEnemy = (nearestEnemyHRP.Position - rootPart.Position).Unit
+                local lookVector = rootPart.CFrame.LookVector
+                local dotProduct = lookVector:Dot(directionToEnemy)
+
+                if dotProduct < -0.2 then
+                    boostEndTime = tick() + 10 
+                end
+            end
         end
 
+        -- CÁLCULO DE ZONAS Y DIRECCIÓN
+        if tick() < boostEndTime then
+            finalTargetSpeed = baseTargetSpeed * 2 -- Poder Absoluto sobrescribe todo
+        else
+            if nearestEnemyHRP then
+                local dirToEnemy = (nearestEnemyHRP.Position - rootPart.Position).Unit
+                local moveVector = moveDir.Magnitude > 0 and moveDir.Unit or Vector3.zero
+                local moveDot = 0
+                
+                if moveVector.Magnitude > 0 then
+                    moveDot = moveVector:Dot(dirToEnemy)
+                end
+
+                if minDistance > 45 then
+                    -- Zona de Viaje: Vía libre
+                    finalTargetSpeed = baseTargetSpeed * 2
+                elseif minDistance >= 15 and minDistance <= 45 then
+                    -- Zona de Caza: Acercamiento táctico
+                    finalTargetSpeed = baseTargetSpeed * 1.3
+                    
+                    if moveDot > 0.8 then
+                        -- Boost de persecución frontal
+                        finalTargetSpeed = finalTargetSpeed * 1.15
+                    elseif math.abs(moveDot) < 0.4 and moveVector.Magnitude > 0 then
+                        -- Strafing lateral moderado (Predecible)
+                        finalTargetSpeed = finalTargetSpeed * 1.10
+                    end
+                else
+                    -- Zona de Combate (< 15 studs): Precisión estricta
+                    finalTargetSpeed = baseTargetSpeed * 1.0
+                    
+                    if math.abs(moveDot) < 0.4 and moveVector.Magnitude > 0 then
+                        -- Micro-boost lateral para posicionar M1s perfectamente
+                        finalTargetSpeed = finalTargetSpeed * 1.05
+                    end
+                end
+            else
+                -- Sin enemigos en el mapa
+                finalTargetSpeed = baseTargetSpeed * 2
+            end
+        end
+
+        -- PREVENCIÓN DE DETECCIÓN (Interpolación Suave Lerp)
+        -- Ajusta a la velocidad objetivo rápidamente, pero de forma escalonada físicamente
+        local lerpSpeed = math.clamp(14 * deltaTime, 0, 1)
+        currentSmoothSpeed = currentSmoothSpeed + (finalTargetSpeed - currentSmoothSpeed) * lerpSpeed
+
+        -- APLICACIÓN A FÍSICAS
         if not linearVelocity or not linearVelocity.Parent then
             movementAttachment = Instance.new("Attachment", rootPart)
             movementAttachment.Position = Vector3.zero 
@@ -441,10 +510,10 @@ function M.Start(Keys, lplr)
         
         if moveMagnitude > 0.01 then
             local preciseDir = moveDir.Unit
-            local targetVelocity = preciseDir * finalSpeed
+            local targetVelocityVector = preciseDir * currentSmoothSpeed
             
             linearVelocity.MaxAxesForce = Vector3.new(activeForce, 0, activeForce) 
-            linearVelocity.VectorVelocity = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
+            linearVelocity.VectorVelocity = Vector3.new(targetVelocityVector.X, 0, targetVelocityVector.Z)
         else
             linearVelocity.MaxAxesForce = Vector3.new(activeForce, 0, activeForce)
             linearVelocity.VectorVelocity = Vector3.zero
