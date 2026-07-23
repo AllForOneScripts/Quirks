@@ -24,10 +24,10 @@ local ACELERACION_CAIDA = 0.75
 -- ==========================================
 local _conns = {}
 local _isActive = false
-local _dropKey = Enum.KeyCode.C 
+local _keys = { Platform = Enum.KeyCode.C } -- Tabla por defecto, se sobrescribe en Start()
 
 local isHoldingSpace = false
-local isHoldingDrop = false
+local isPlatformMode = false
 local isFloating = false
 local isSlamming = false
 local holdTimer = 0
@@ -62,8 +62,7 @@ local function DetenerAnimacionesCustom(fadeTime)
 end
 
 -- ==========================================
--- BUCLE DE ANIMACIÓN DE PLATAFORMA - VERSIÓN MUY LENTA Y SUAVE
--- Rango actualizado: 49% <-> 40%
+-- BUCLE DE ANIMACIÓN DE PLATAFORMA 
 -- ==========================================
 local function IniciarLoopAnimPlataforma()
     if not animPlataforma then return end
@@ -76,7 +75,6 @@ local function IniciarLoopAnimPlataforma()
     animPlataforma:Play(0.1)
 
     task.spawn(function()
-        -- Esperar a que la animación cargue su duración
         while animPlataforma and animPlataforma.Length == 0 do
             task.wait()
         end
@@ -84,14 +82,11 @@ local function IniciarLoopAnimPlataforma()
         if not animPlataforma or not plataformaActiva then return end
 
         local totalLength = animPlataforma.Length
-        -- NUEVOS MARCADORES: 49% y 40%
         local maxTime = totalLength * 0.49
         local minTime = totalLength * 0.40
 
-        -- VELOCIDAD DE FLOTACIÓN (0.1 es extremadamente lento y suave)
         local velocidadFlotar = 0.1 
 
-        -- Iniciar en 49% e ir hacia atrás lentamente hacia el 40%
         animPlataforma.TimePosition = maxTime
         animPlataforma:AdjustSpeed(-velocidadFlotar)
 
@@ -109,17 +104,15 @@ local function IniciarLoopAnimPlataforma()
             local currentTime = animPlataforma.TimePosition
 
             if yendoHaciaAtras then
-                -- Si llega o sobrepasa el 40% yendo hacia atrás
                 if currentTime <= minTime then
                     animPlataforma.TimePosition = minTime
-                    animPlataforma:AdjustSpeed(velocidadFlotar) -- Avanza muy lento hacia adelante (hacia 49%)
+                    animPlataforma:AdjustSpeed(velocidadFlotar) 
                     yendoHaciaAtras = false
                 end
             else
-                -- Si llega o sobrepasa el 49% yendo hacia adelante
                 if currentTime >= maxTime then
                     animPlataforma.TimePosition = maxTime
-                    animPlataforma:AdjustSpeed(-velocidadFlotar) -- Retrocede muy lento (hacia 40%)
+                    animPlataforma:AdjustSpeed(-velocidadFlotar) 
                     yendoHaciaAtras = true
                 end
             end
@@ -131,6 +124,8 @@ end
 -- SISTEMA DE PLATAFORMA INVISIBLE
 -- ==========================================
 local function DestruirPlataforma()
+    isPlatformMode = false
+    
     if loopPlataformaConn then
         loopPlataformaConn:Disconnect()
         loopPlataformaConn = nil
@@ -145,7 +140,6 @@ local function DestruirPlataforma()
         animPlataforma:Stop(0.2)
     end
     
-    -- Restablecer animación de vuelo si seguimos flotando
     if isFloating and not isSlamming and animVuelo then
         animVuelo:Play(0.2)
     end
@@ -159,21 +153,21 @@ local function CrearPlataforma()
     plataformaActiva.Size = Vector3.new(8, 1, 8)
     plataformaActiva.Transparency = 1
     plataformaActiva.Anchored = true
-    plataformaActiva.CanCollide = true
+    plataformaActiva.CanCollide = false 
     
     local offset = humanoid.HipHeight + (rootPart.Size.Y / 2)
     plataformaActiva.CFrame = rootPart.CFrame * CFrame.new(0, -offset - 0.5, 0)
     plataformaActiva.Parent = workspace
     
-    -- Detener vuelo e iniciar el bucle de la animación especial lenta
     if animVuelo and animVuelo.IsPlaying then animVuelo:Stop(0.2) end
     IniciarLoopAnimPlataforma()
     
     rootPart.AssemblyLinearVelocity = Vector3.zero
+    isPlatformMode = true
 end
 
 -- ==========================================
--- TELETRANSPORTE OFENSIVO (SLAM / CTRL)
+-- TELETRANSPORTE OFENSIVO (SLAM)
 -- ==========================================
 local function AplastarContraElSuelo()
     DestruirPlataforma()
@@ -284,7 +278,7 @@ local function SetupCharacter(newCharacter)
     isFloating = false
     isSlamming = false
     isHoldingSpace = false
-    isHoldingDrop = false
+    isPlatformMode = false
     holdTimer = 0
     workspace.Gravity = GRAVEDAD_NORMAL
 
@@ -302,7 +296,12 @@ end
 -- API PRINCIPAL (MÓDULO)
 -- ==========================================
 
-function M.Start()
+function M.Start(Keys)
+    -- Recibe la tabla de Keys (ej. Keys.Platform)
+    if Keys then 
+        _keys = Keys 
+    end
+
     if _isActive then return end
     _isActive = true
     
@@ -310,7 +309,7 @@ function M.Start()
     
     table.clear(_conns)
     isHoldingSpace = false
-    isHoldingDrop = false
+    isPlatformMode = false
     isFloating = false
     isSlamming = false
     
@@ -328,10 +327,9 @@ function M.Start()
         if input.KeyCode == Enum.KeyCode.Space then
             isHoldingSpace = true
             
-            if isFloating then
+            if isFloating or isPlatformMode then
                 if plataformaActiva then
                     DestruirPlataforma()
-                    isHoldingDrop = false
                 end
                 
                 if animReSalto then
@@ -340,21 +338,22 @@ function M.Start()
                 end
                 local velActual = rootPart.AssemblyLinearVelocity
                 rootPart.AssemblyLinearVelocity = Vector3.new(velActual.X, IMPULSO_EXPLOSIVO_Y, velActual.Z)
+                
+                isFloating = true
             end
             
-        elseif input.KeyCode == _dropKey then -- Tecla C por defecto
-            isHoldingDrop = true
+        elseif input.KeyCode == _keys.Platform then -- Utiliza la tabla dinámica
+            isPlatformMode = not isPlatformMode
             
-            local state = humanoid:GetState()
-            local inAir = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall)
-            
-            if (isFloating or inAir) and not plataformaActiva then
+            if isPlatformMode then
                 CrearPlataforma()
+            else
+                DestruirPlataforma()
             end
             
         elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
             local state = humanoid:GetState()
-            if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall or isFloating then
+            if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall or isFloating or isPlatformMode then
                 AplastarContraElSuelo()
             end
         end
@@ -364,9 +363,6 @@ function M.Start()
     local inputEndedConn = UserInputService.InputEnded:Connect(function(input)
         if input.KeyCode == Enum.KeyCode.Space then
             isHoldingSpace = false
-        elseif input.KeyCode == _dropKey then -- Al soltar C
-            isHoldingDrop = false
-            DestruirPlataforma()
         end
     end)
     table.insert(_conns, inputEndedConn)
@@ -378,63 +374,95 @@ function M.Start()
         local state = humanoid:GetState()
         local inAir = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall)
 
-        if not inAir and not plataformaActiva then
-            if isFloating then
-                isFloating = false
-                DetenerAnimacionesCustom(0.3)
+        -- MODALIDAD DE PLATAFORMA (VUELO GUIADO POR LA CÁMARA)
+        if isPlatformMode and plataformaActiva then
+            workspace.Gravity = GRAVEDAD_CERO
+            
+            local moveDir = humanoid.MoveDirection
+            local cam = workspace.CurrentCamera
+            local camLook = cam.CFrame.LookVector
+            
+            local targetVel = Vector3.zero
+            
+            if moveDir.Magnitude > 0 then
+                local camLookXZ = Vector3.new(camLook.X, 0, camLook.Z)
+                if camLookXZ.Magnitude > 0 then camLookXZ = camLookXZ.Unit end
+                
+                local dotForward = moveDir:Dot(camLookXZ)
+                local dirY = camLook.Y * dotForward 
+                
+                local move3D = Vector3.new(moveDir.X, dirY, moveDir.Z)
+                if move3D.Magnitude > 0 then move3D = move3D.Unit end
+                
+                targetVel = move3D * VELOCIDAD_VUELO
             end
-            workspace.Gravity = GRAVEDAD_NORMAL
+            
+            local currentVel = rootPart.AssemblyLinearVelocity
+            rootPart.AssemblyLinearVelocity = currentVel:Lerp(targetVel, 0.15)
+            
+            local offset = humanoid.HipHeight + (rootPart.Size.Y / 2)
+            plataformaActiva.CFrame = rootPart.CFrame * CFrame.new(0, -offset - 0.5, 0)
             
             if not isHoldingSpace then
                 holdTimer = 0
             end
-        end
 
-        if isHoldingSpace then
-            if not isFloating then
-                holdTimer = holdTimer + dt
-                
-                local tiempoRequerido = 0.5 
-                if tick() - lastDamageTime <= 3 then
-                    tiempoRequerido = 0.15 
-                elseif tick() - lastSlamEndTime <= 1.5 then
-                    tiempoRequerido = 0.3 
+        -- MODALIDAD FLOTAR NORMAL / EXPLOSIVA
+        else
+            if not inAir then
+                if isFloating then
+                    isFloating = false
+                    DetenerAnimacionesCustom(0.3)
                 end
+                workspace.Gravity = GRAVEDAD_NORMAL
                 
-                if holdTimer > tiempoRequerido then
-                    isFloating = true
+                if not isHoldingSpace then
+                    holdTimer = 0
+                end
+            end
+
+            if isHoldingSpace then
+                if not isFloating then
+                    holdTimer = holdTimer + dt
                     
+                    local tiempoRequerido = 0.5 
                     if tick() - lastDamageTime <= 3 then
-                        if animDespertar then animDespertar:Play(0.1) end
-                        task.delay(0.73, function()
-                            if _isActive and isFloating and animDespertar and animDespertar.IsPlaying then
-                                animDespertar:Stop(0.3)
-                                if animVuelo then animVuelo:Play(0.3) end
-                            end
-                        end)
-                    else
-                        if animVuelo then animVuelo:Play(0.3) end
+                        tiempoRequerido = 0.15 
+                    elseif tick() - lastSlamEndTime <= 1.5 then
+                        tiempoRequerido = 0.3 
                     end
                     
-                    humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                    local moveDir = humanoid.MoveDirection
-                    rootPart.AssemblyLinearVelocity = Vector3.new(
-                        moveDir.X * IMPULSO_EXPLOSIVO_XZ, 
-                        IMPULSO_EXPLOSIVO_Y, 
-                        moveDir.Z * IMPULSO_EXPLOSIVO_XZ
-                    )
+                    if holdTimer > tiempoRequerido then
+                        isFloating = true
+                        
+                        if tick() - lastDamageTime <= 3 then
+                            if animDespertar then animDespertar:Play(0.1) end
+                            task.delay(0.73, function()
+                                if _isActive and isFloating and animDespertar and animDespertar.IsPlaying then
+                                    animDespertar:Stop(0.3)
+                                    if animVuelo then animVuelo:Play(0.3) end
+                                end
+                            end)
+                        else
+                            if animVuelo then animVuelo:Play(0.3) end
+                        end
+                        
+                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        local moveDir = humanoid.MoveDirection
+                        rootPart.AssemblyLinearVelocity = Vector3.new(
+                            moveDir.X * IMPULSO_EXPLOSIVO_XZ, 
+                            IMPULSO_EXPLOSIVO_Y, 
+                            moveDir.Z * IMPULSO_EXPLOSIVO_XZ
+                        )
+                    end
+                end
+            else
+                if not isFloating then
+                    holdTimer = 0
                 end
             end
-        else
-            if not isFloating then
-                holdTimer = 0
-            end
-        end
-        
-        if isFloating then
-            if plataformaActiva then
-                workspace.Gravity = GRAVEDAD_NORMAL
-            else
+            
+            if isFloating then
                 workspace.Gravity = GRAVEDAD_CERO
                 local moveDir = humanoid.MoveDirection
                 local velActual = rootPart.AssemblyLinearVelocity
@@ -476,7 +504,7 @@ function M.Stop()
     workspace.Gravity = GRAVEDAD_NORMAL
     
     isHoldingSpace = false
-    isHoldingDrop = false
+    isPlatformMode = false
     isFloating = false
     isSlamming = false
     holdTimer = 0
@@ -487,12 +515,16 @@ function M.Stop()
     end
 end
 
-function M.SetDropKeybind(keyCode)
-    if typeof(keyCode) == "EnumItem" then
-        _dropKey = keyCode
-        isHoldingDrop = false
-        DestruirPlataforma()
+-- Función para actualizar en caliente (Hot-Swap) similar a tu script de base
+function M.SetKey(kc)
+    if _keys then 
+        _keys.Platform = kc 
     end
+    
+    -- Apagamos la plataforma para evitar quedarnos atascados flotando 
+    -- si se cambia la tecla mientras la habilidad está en uso
+    isPlatformMode = false
+    DestruirPlataforma()
 end
 
 function M.IsActive()
