@@ -8,7 +8,7 @@ local _isStealerActive, _isStolenPlaying = false, false
 local _currentAimedPlayer, _lastCirclePlayer = nil, nil
 local _panelHideTimer, _warningTimer = nil, nil
 local _yHeld, _uHeld, _tHeld = false, false, false
-local _expandConsumed, _tyConsumed, _isInputOpen = false, false, false
+local _tyConsumed, _isInputOpen = false, false
 local _circleIndicatorBB, _circleIndicatorConn, _circleAlphaThread, _pulseThread = nil, nil, nil, nil
 
 -- Dependencias inyectadas por Start()
@@ -24,31 +24,11 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     _Players        = game:GetService("Players")
     _UserInputService = game:GetService("UserInputService")
 
-    -- Alias locales para que el código interno funcione sin cambios
     local emoteStealKey   = Keys.EmoteSteal
     local emoteExecuteKey = Keys.EmoteExecute
     local emoteExpandKey  = Keys.EmoteExpand
 
-    if _screenGui then return end  -- ya activo
-
-    -- ══════════════════════════════════════════════
-    -- A partir de aquí va TODO el código original
-    -- de miscEmoteStart(), con los siguientes cambios:
-    --
-    --   CoreGui        → _CoreGui
-    --   RunService     → _RunService
-    --   TweenService   → _TweenService
-    --   camera         → _camera
-    --   lplr           → _lplr
-    --   Players        → _Players
-    --   UserInputService → _UserInputService
-    --
-    -- Y las variables de módulo (stealerTrack, etc.)
-    -- pasan a ser las locales de módulo definidas arriba
-    -- (con prefijo _), o simplemente se dejan como
-    -- locales dentro de esta función si no necesitan
-    -- ser accedidas desde Stop().
-    -- ══════════════════════════════════════════════
+    if _screenGui then return end
 
     local _lang = "ES"
     pcall(function()
@@ -198,55 +178,55 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         g2.Parent = execBtn
     end
 
-    local expandZone = Instance.new("Frame")
-    expandZone.AnchorPoint = Vector2.new(0, 1)
-    expandZone.Size = UDim2.new(1, 0, 0, 0)
-    expandZone.Position = UDim2.new(0, 0, 1, -BASE_HEIGHT)
-    expandZone.BackgroundTransparency = 1
-    expandZone.BorderSizePixel = 0
-    expandZone.ZIndex = 3
-    expandZone.ClipsDescendants = true
-    expandZone.Visible = false
-    expandZone.Parent = panel
+    -- POPUP HISTORIAL CENTRADO
+    local historyPopup = Instance.new("Frame")
+    historyPopup.AnchorPoint = Vector2.new(0.5, 0.5)
+    historyPopup.Size = UDim2.new(0, 360, 0, 320)
+    historyPopup.Position = UDim2.new(0.5, 0, 0.5, 0)
+    historyPopup.BackgroundColor3 = AFO_BLACK
+    historyPopup.BackgroundTransparency = 0.06
+    historyPopup.BorderSizePixel = 0
+    historyPopup.Visible = false
+    historyPopup.ZIndex = 20
+    historyPopup.Parent = screenGui
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,13); c.Parent = historyPopup end
+
+    local historyStroke = Instance.new("UIStroke")
+    historyStroke.Color = AFO_ACCENT
+    historyStroke.Thickness = 2
+    historyStroke.Transparency = 0
+    historyStroke.Parent = historyPopup
 
     local histTitle = Instance.new("TextLabel")
-    histTitle.Size = UDim2.new(1, -18, 0, 22)
-    histTitle.Position = UDim2.new(0, 9, 0, 6)
+    histTitle.Size = UDim2.new(1, -16, 0, 24)
+    histTitle.Position = UDim2.new(0, 8, 0, 8)
     histTitle.BackgroundTransparency = 1
     histTitle.TextColor3 = AFO_ACCENT
     histTitle.Font = Enum.Font.GothamBold
     histTitle.TextScaled = true
     histTitle.TextXAlignment = Enum.TextXAlignment.Left
-    histTitle.Text = L("📎 Animaciones robadas ["..kn(emoteExecuteKey).."+"..kn(emoteExpandKey).." para cerrar]", "📎 Stolen animations ["..kn(emoteExecuteKey).."+"..kn(emoteExpandKey).." to close]")
-    histTitle.ZIndex = 5
-    histTitle.Parent = expandZone
-
-    local histSep = Instance.new("Frame")
-    histSep.Size = UDim2.new(1, -18, 0, 1)
-    histSep.Position = UDim2.new(0, 9, 0, 30)
-    histSep.BackgroundColor3 = AFO_ACCENT
-    histSep.BackgroundTransparency = 0.5
-    histSep.BorderSizePixel = 0
-    histSep.ZIndex = 5
-    histSep.Parent = expandZone
+    histTitle.Text = L("📎 Historial de Animaciones ["..kn(emoteStealKey).."+"..kn(emoteExecuteKey).." cerrar]", "📎 Animation History ["..kn(emoteStealKey).."+"..kn(emoteExecuteKey).." close]")
+    histTitle.ZIndex = 21
+    histTitle.Parent = historyPopup
 
     local historyFrame = Instance.new("ScrollingFrame")
-    historyFrame.Size = UDim2.new(1, -18, 1, -36)
-    historyFrame.Position = UDim2.new(0, 9, 0, 34)
+    historyFrame.Size = UDim2.new(1, -16, 1, -44)
+    historyFrame.Position = UDim2.new(0, 8, 0, 36)
     historyFrame.BackgroundTransparency = 1
     historyFrame.BorderSizePixel = 0
-    historyFrame.ScrollBarThickness = 3
+    historyFrame.ScrollBarThickness = 4
     historyFrame.ScrollBarImageColor3 = AFO_ACCENT
     historyFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    historyFrame.ZIndex = 4
+    historyFrame.ZIndex = 21
     historyFrame.ClipsDescendants = true
-    historyFrame.Parent = expandZone
+    historyFrame.Parent = historyPopup
 
     local historyLayout = Instance.new("UIListLayout")
     historyLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    historyLayout.Padding = UDim.new(0, 4)
+    historyLayout.Padding = UDim.new(0, 6)
     historyLayout.Parent = historyFrame
 
+    -- POPUP INPUT CENTRADO
     local inputPopup = Instance.new("Frame")
     inputPopup.AnchorPoint = Vector2.new(0.5, 0.5)
     inputPopup.Size = UDim2.new(0, 340, 0, 108)
@@ -273,7 +253,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     inputTitle.Font = Enum.Font.GothamBold
     inputTitle.TextScaled = true
     inputTitle.TextXAlignment = Enum.TextXAlignment.Left
-    inputTitle.Text = L("🔑 Cargar ID [Enter/clic confirmar · "..kn(emoteStealKey).."+"..kn(emoteExecuteKey).." cerrar]", "🔑 Load ID [Enter/click confirm · "..kn(emoteStealKey).."+"..kn(emoteExecuteKey).." close]")
+    inputTitle.Text = L("🔑 Cargar ID [Enter/clic confirmar · "..kn(emoteExpandKey).." cerrar]", "🔑 Load ID [Enter/click confirm · "..kn(emoteExpandKey).." close]")
     inputTitle.ZIndex = 21
     inputTitle.Parent = inputPopup
 
@@ -314,7 +294,6 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
 
     local TWEEN_IN     = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local TWEEN_OUT    = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-    local EXPAND_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
     local stolenHistory  = {}
     local stealerTrack   = nil
@@ -332,26 +311,20 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local warningTimer   = nil
     local isExpanded     = false
     local yHeld = false; local uHeld = false; local tHeld = false
-    local expandConsumed = false; local tyConsumed = false; local isInputOpen = false
+    local tyConsumed = false; local isInputOpen = false
     local circleIndicatorBB = nil; local circleIndicatorConn = nil
     local circleAlphaThread = nil; local pulseThread = nil
 
-    -- Guarda referencias para Stop()
     _stealerTrack  = nil; _stolenTrack = nil; _animator = nil; _animatorConn = nil
 
     local function getPanelBaseH()
         return isStolenPlaying and PLAYING_HEIGHT or BASE_HEIGHT
     end
 
-    local function applyPanelSize(h, animated)
+    local function applyPanelSize(h)
         local ps = UDim2.new(0, 288, 0, h)
         local ss = UDim2.new(0, 296, 0, h + 8)
-        if animated then
-            _TweenService:Create(panel, EXPAND_TWEEN, {Size = ps}):Play()
-            _TweenService:Create(shadow, EXPAND_TWEEN, {Size = ss}):Play()
-        else
-            panel.Size = ps; shadow.Size = ss
-        end
+        panel.Size = ps; shadow.Size = ss
     end
 
     local function clearBaseZone()
@@ -446,12 +419,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local function hidePanel()
         cancelHideTimer()
         if warningTimer then task.cancel(warningTimer); warningTimer = nil end
-        if isExpanded then
-            isExpanded = false
-            local baseH = getPanelBaseH()
-            applyPanelSize(baseH, true)
-            task.delay(0.28, function() expandZone.Visible = false end)
-        end
+        
         clearBaseZone()
         _TweenService:Create(shadow, TWEEN_OUT, {BackgroundTransparency = 1}):Play()
         _TweenService:Create(panel, TWEEN_OUT, {BackgroundTransparency = 1}):Play()
@@ -474,7 +442,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         panel.Visible = true
         shadow.Visible = true
         baseZone.Size = UDim2.new(1, 0, 0, BASE_HEIGHT)
-        if not isExpanded then applyPanelSize(BASE_HEIGHT, false) end
+        applyPanelSize(BASE_HEIGHT)
         _TweenService:Create(shadow, TWEEN_IN, {BackgroundTransparency = 0.58}):Play()
         _TweenService:Create(panel, TWEEN_IN, {BackgroundTransparency = 0.08}):Play()
         _TweenService:Create(stroke, TWEEN_IN, {Transparency = 0.3}):Play()
@@ -507,7 +475,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         infoLabel.TextColor3 = AFO_TEXT
         panel.Visible = true
         shadow.Visible = true
-        if not isExpanded then applyPanelSize(BASE_HEIGHT, false) end
+        applyPanelSize(BASE_HEIGHT)
         _TweenService:Create(shadow, TWEEN_IN, {BackgroundTransparency = 0.52}):Play()
         _TweenService:Create(panel, TWEEN_IN, {BackgroundTransparency = 0.08}):Play()
         _TweenService:Create(stroke, TWEEN_IN, {Transparency = 0}):Play()
@@ -530,7 +498,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         baseZone.Size = UDim2.new(1, 0, 0, PLAYING_HEIGHT)
         panel.Visible = true
         shadow.Visible = true
-        if not isExpanded then applyPanelSize(PLAYING_HEIGHT, true) end
+        applyPanelSize(PLAYING_HEIGHT)
         _TweenService:Create(shadow, TWEEN_IN, {BackgroundTransparency = 0.52}):Play()
         _TweenService:Create(panel, TWEEN_IN, {BackgroundTransparency = 0.08}):Play()
         _TweenService:Create(stroke, TWEEN_IN, {Transparency = 0}):Play()
@@ -550,6 +518,65 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         if #stolenHistory > MAX_HISTORY then table.remove(stolenHistory, 1) end
     end
 
+    local function closeHistoryPanel()
+        if not isExpanded then return end
+        isExpanded = false
+        historyPopup.Visible = false
+    end
+
+    local function ejecutarRobada()
+        if not animator then return end
+        if isStolenPlaying then
+            isStolenPlaying = false
+            unlockAnimations()
+            if stolenTrack then stolenTrack:Stop(0.2); stolenTrack = nil end
+            hidePanel()
+            return
+        end
+        if not stoledAnimId or stoledAnimId == "" then
+            showWarning(L("⚠ Roba una animación primero ["..kn(emoteStealKey).."]", "⚠ Steal an animation first ["..kn(emoteStealKey).."]"))
+            return
+        end
+        if isStealerActive then
+            isStealerActive = false
+            if stealerTrack then
+                unlockAnimations()
+                stealerTrack:AdjustSpeed(1)
+                stealerTrack:Stop(0)
+                stealerTrack = nil
+            end
+            clearCircleIndicator()
+            resetBorder()
+            stopPulse()
+        end
+        local clipboard_label = L("portapapeles", "clipboard")
+        local sourceDisplay, sourceName
+        if stolenAnimSource == "clipboard" or stolenAnimSource == "history" then
+            sourceDisplay = clipboard_label; sourceName = clipboard_label
+        else
+            sourceDisplay = stolenAnimOwner
+                and (stolenAnimOwner.DisplayName ~= "" and stolenAnimOwner.DisplayName or stolenAnimOwner.Name)
+                or clipboard_label
+            sourceName = stolenAnimOwner and stolenAnimOwner.Name or clipboard_label
+        end
+        if stolenAnimSource ~= "history" then
+            addToHistory(stoledAnimId, sourceName, sourceDisplay)
+        end
+        isStolenPlaying = true
+        stopAllTracks()
+        local animObj = Instance.new("Animation")
+        animObj.AnimationId = stoledAnimId
+        stolenTrack = animator:LoadAnimation(animObj)
+        stolenTrack.Priority = Enum.AnimationPriority.Action4
+        stolenTrack.Looped = true
+        stolenTrack:Play(0.1, 1, 1)
+        _stolenTrack = stolenTrack
+        task.wait()
+        lockAnimations(stoledAnimId)
+        resetBorder()
+        showPanelModoY(stoledAnimId, sourceDisplay)
+    end
+
     local function rebuildHistoryUI()
         for _, child in ipairs(historyFrame:GetChildren()) do
             if child:IsA("GuiObject") then child:Destroy() end
@@ -558,14 +585,15 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         for i = #stolenHistory, 1, -1 do
             local entry = stolenHistory[i]
             local row = Instance.new("Frame")
-            row.Size = UDim2.new(1, 0, 0, 50)
+            row.Size = UDim2.new(1, -8, 0, 50)
             row.BackgroundColor3 = AFO_PURPLE_DIM
             row.BackgroundTransparency = 0.35
             row.BorderSizePixel = 0
             row.LayoutOrder = #stolenHistory - i
-            row.ZIndex = 5
+            row.ZIndex = 22
             row.Parent = historyFrame
             do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,6); c.Parent = row end
+
             local nameLabel = Instance.new("TextLabel")
             nameLabel.Size = UDim2.new(1, -8, 0, 18)
             nameLabel.Position = UDim2.new(0, 6, 0, 3)
@@ -575,11 +603,13 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             nameLabel.Font = Enum.Font.GothamSemibold
             nameLabel.TextScaled = true
             nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-            nameLabel.ZIndex = 6
+            nameLabel.ZIndex = 23
             nameLabel.Parent = row
+
             local idShort = entry.animId:match("%d+") or entry.animId
+
             local copyBtn = Instance.new("TextButton")
-            copyBtn.Size = UDim2.new(1, -8, 0, 22)
+            copyBtn.Size = UDim2.new(0.48, -2, 0, 22)
             copyBtn.Position = UDim2.new(0, 4, 0, 23)
             copyBtn.BackgroundColor3 = AFO_BLACK
             copyBtn.BackgroundTransparency = 0.2
@@ -588,54 +618,58 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             copyBtn.Font = Enum.Font.Code
             copyBtn.TextScaled = true
             copyBtn.BorderSizePixel = 0
-            copyBtn.ZIndex = 6
+            copyBtn.ZIndex = 23
             copyBtn.Parent = row
             do local c2 = Instance.new("UICorner"); c2.CornerRadius = UDim.new(0,4); c2.Parent = copyBtn end
+
+            local playBtn = Instance.new("TextButton")
+            playBtn.Size = UDim2.new(0.48, -2, 0, 22)
+            playBtn.Position = UDim2.new(0.5, 4, 0, 23)
+            playBtn.BackgroundColor3 = AFO_PURPLE
+            playBtn.BackgroundTransparency = 0.2
+            playBtn.TextColor3 = AFO_TEXT
+            playBtn.Text = L("▶ Reproducir", "▶ Play")
+            playBtn.Font = Enum.Font.GothamBold
+            playBtn.TextScaled = true
+            playBtn.BorderSizePixel = 0
+            playBtn.ZIndex = 23
+            playBtn.Parent = row
+            do local c3 = Instance.new("UICorner"); c3.CornerRadius = UDim.new(0,4); c3.Parent = playBtn end
+
             local copied = false
             local capturedId = entry.animId
+            
             copyBtn.MouseButton1Click:Connect(function()
                 if copied then return end
                 copied = true
                 pcall(function() setclipboard(capturedId) end)
                 local orig = copyBtn.Text
-                copyBtn.Text = L("✓ ¡Copiado!", "✓ Copied!")
+                copyBtn.Text = L("✓ Copiado", "✓ Copied")
                 copyBtn.TextColor3 = AFO_GREEN
                 task.wait(1.2)
                 copyBtn.Text = orig
                 copyBtn.TextColor3 = AFO_ACCENT
                 copied = false
             end)
-            totalH = totalH + 54
+
+            playBtn.MouseButton1Click:Connect(function()
+                stoledAnimId = capturedId
+                stolenAnimOwner = nil
+                stolenAnimSource = "history"
+                closeHistoryPanel()
+                ejecutarRobada()
+            end)
+
+            totalH = totalH + 56
         end
         historyFrame.CanvasSize = UDim2.new(0, 0, 0, totalH)
     end
 
     local function openHistoryPanel()
-        if isExpanded or not panel.Visible then return end
+        if isExpanded then return end
         isExpanded = true
         rebuildHistoryUI()
-        local baseH = getPanelBaseH()
-        local rows = math.min(#stolenHistory, MAX_HISTORY)
-        local headerH = 34
-        local rawHistH = rows * 54
-        local vp = _camera.ViewportSize
-        local maxTotal = math.floor(vp.Y - 30)
-        local maxHistH = maxTotal - baseH - headerH
-        local histH = math.max(math.min(rawHistH, maxHistH), 30)
-        local totalH = baseH + headerH + histH
-        expandZone.Position = UDim2.new(0, 0, 1, -baseH)
-        expandZone.Size = UDim2.new(1, 0, 0, headerH + histH)
-        expandZone.Visible = true
-        baseZone.Size = UDim2.new(1, 0, 0, baseH)
-        applyPanelSize(totalH, true)
-    end
-
-    local function closeHistoryPanel()
-        if not isExpanded then return end
-        isExpanded = false
-        local baseH = getPanelBaseH()
-        applyPanelSize(baseH, true)
-        task.delay(0.28, function() expandZone.Visible = false end)
+        historyPopup.Visible = true
     end
 
     local function unlockAnimations()
@@ -759,57 +793,6 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         end
     end
 
-    local function ejecutarRobada()
-        if not animator then return end
-        if isStolenPlaying then
-            isStolenPlaying = false
-            unlockAnimations()
-            if stolenTrack then stolenTrack:Stop(0.2); stolenTrack = nil end
-            hidePanel()
-            return
-        end
-        if not stoledAnimId or stoledAnimId == "" then
-            showWarning(L("⚠ Roba una animación primero ["..kn(emoteStealKey).."]", "⚠ Steal an animation first ["..kn(emoteStealKey).."]"))
-            return
-        end
-        if isStealerActive then
-            isStealerActive = false
-            if stealerTrack then
-                unlockAnimations()
-                stealerTrack:AdjustSpeed(1)
-                stealerTrack:Stop(0)
-                stealerTrack = nil
-            end
-            clearCircleIndicator()
-            resetBorder()
-            stopPulse()
-        end
-        local clipboard_label = L("portapapeles", "clipboard")
-        local sourceDisplay, sourceName
-        if stolenAnimSource == "clipboard" then
-            sourceDisplay = clipboard_label; sourceName = clipboard_label
-        else
-            sourceDisplay = stolenAnimOwner
-                and (stolenAnimOwner.DisplayName ~= "" and stolenAnimOwner.DisplayName or stolenAnimOwner.Name)
-                or clipboard_label
-            sourceName = stolenAnimOwner and stolenAnimOwner.Name or clipboard_label
-        end
-        addToHistory(stoledAnimId, sourceName, sourceDisplay)
-        isStolenPlaying = true
-        stopAllTracks()
-        local animObj = Instance.new("Animation")
-        animObj.AnimationId = stoledAnimId
-        stolenTrack = animator:LoadAnimation(animObj)
-        stolenTrack.Priority = Enum.AnimationPriority.Action4
-        stolenTrack.Looped = true
-        stolenTrack:Play(0.1, 1, 1)
-        _stolenTrack = stolenTrack
-        task.wait()
-        lockAnimations(stoledAnimId)
-        resetBorder()
-        showPanelModoY(stoledAnimId, sourceDisplay)
-    end
-
     local function activarStealer()
         if not animator then return end
         local firstTarget = getTargetInView()
@@ -900,22 +883,30 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local function confirmInputId()
         local raw = inputBox.Text
         local digits = raw:match("%d+")
+        
+        -- Si no hay nada o no se encuentran números, error.
         if not digits or digits == "" then
             inputStroke.Color = AFO_WARN
             task.delay(0.7, function() inputStroke.Color = AFO_ACCENT end)
             return
         end
+        
+        -- Ensambla el Asset ID correctamente sin importar cómo fue pegado
         local candidateId = "rbxassetid://" .. digits
+        
         if isBlockedAnim(candidateId) then
             closeInputPopup()
             showWarning(L("⚠ ID bloqueada — animaciones meh", "⚠ ID blocked — meh animations"))
             stoledAnimId = nil
             return
         end
+        
         stoledAnimId = candidateId
         stolenAnimOwner = nil
         stolenAnimSource = "clipboard"
         closeInputPopup()
+        
+        -- Ejecuta la animación automáticamente (simulando usar la tecla Y)
         ejecutarRobada()
     end
 
@@ -949,17 +940,21 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     end)
     miscRenderConn = _miscRenderConn
 
+    -- ATENCIÓN: Se reorganizaron los Inputs
+    -- U -> Abre Input ID.
+    -- T + Y -> Abre Historial de animaciones robadas.
     _miscInputBegin = _UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
-        local stealKey   = _Keys.EmoteSteal
-        local executeKey = _Keys.EmoteExecute
-        local expandKey  = _Keys.EmoteExpand
+        local stealKey   = _Keys.EmoteSteal   -- T
+        local executeKey = _Keys.EmoteExecute -- Y
+        local expandKey  = _Keys.EmoteExpand  -- U
+        
         if input.KeyCode == stealKey then
             tHeld = true
             if yHeld then
                 if not tyConsumed then
                     tyConsumed = true
-                    if isInputOpen then closeInputPopup() else openInputPopup() end
+                    if isExpanded then closeHistoryPanel() else openHistoryPanel() end
                 end
                 return
             end
@@ -969,19 +964,13 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             if isStealerActive then activarStealer() else cancelarStealer() end
             return
         end
+        
         if input.KeyCode == executeKey then
             yHeld = true
             if tHeld then
                 if not tyConsumed then
                     tyConsumed = true
-                    if isInputOpen then closeInputPopup() else openInputPopup() end
-                end
-                return
-            end
-            if uHeld then
-                if not expandConsumed then
-                    expandConsumed = true
-                    if isExpanded then closeHistoryPanel() else if panel.Visible then openHistoryPanel() end end
+                    if isExpanded then closeHistoryPanel() else openHistoryPanel() end
                 end
                 return
             end
@@ -1001,11 +990,14 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             ejecutarRobada()
             return
         end
+        
+        -- Cargar Menú ID directamente con U
         if input.KeyCode == expandKey then
             uHeld = true
-            if yHeld and not expandConsumed then
-                expandConsumed = true
-                if isExpanded then closeHistoryPanel() else if panel.Visible then openHistoryPanel() end end
+            if isInputOpen then
+                closeInputPopup()
+            else
+                openInputPopup()
             end
             return
         end
@@ -1017,8 +1009,8 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         local executeKey = _Keys.EmoteExecute
         local expandKey  = _Keys.EmoteExpand
         if input.KeyCode == stealKey then tHeld = false; tyConsumed = false end
-        if input.KeyCode == executeKey then yHeld = false; tyConsumed = false; expandConsumed = false end
-        if input.KeyCode == expandKey then uHeld = false; expandConsumed = false end
+        if input.KeyCode == executeKey then yHeld = false; tyConsumed = false end
+        if input.KeyCode == expandKey then uHeld = false end
     end)
     miscInputEnd = _miscInputEnd
 
@@ -1030,8 +1022,8 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         isStealerActive = false; isStolenPlaying = false
         currentAimedPlayer = nil; lastCirclePlayer = nil
         yHeld = false; uHeld = false; tHeld = false
-        isExpanded = false; expandConsumed = false; tyConsumed = false; isInputOpen = false
-        warningLabel.Visible = false; expandZone.Visible = false
+        isExpanded = false; tyConsumed = false; isInputOpen = false
+        warningLabel.Visible = false; historyPopup.Visible = false
         inputPopup.Visible = false; execBtn.Visible = false; idButton.Visible = false
         hidePanel(); resetBorder()
         local humanoid = char:WaitForChild("Humanoid")
