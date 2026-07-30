@@ -92,11 +92,6 @@ function M.Start(lplr)
     
     if #_conns > 0 then M.Stop() end
     
-    local char = _lplr.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
     local c1 = UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = true end
@@ -119,14 +114,21 @@ function M.Start(lplr)
     
     local c3 = RunService.RenderStepped:Connect(function(dt)
         if not _holding then return end
-        if not hrp or not hrp.Parent then return end
+        
+        -- 🔥 CORRECCIÓN: Obtener el Character y HRP dinámicamente en cada frame
+        local char = _lplr.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        
+        -- Si estamos muertos o no tenemos partes vitales, no hacer nada hasta reaparecer
+        if not hrp or not hrp.Parent or not hum or hum.Health <= 0 then return end
         
         local hasLock = false
         
         -- 1. PRIORIDAD ABSOLUTA AL LOCK
-        -- Evaluamos si el Lock está activo ANTES de intentar sacar a su objetivo.
         if _lockModuleRef and type(_lockModuleRef.IsLockActive) == "function" and _lockModuleRef.IsLockActive() then
-            hasLock = true -- ESTAMOS EN MODO LOCK. EL ESCANEO PASIVO QUEDA TOTALMENTE ANULADO, a menos que no haya objetivo válido.
+            hasLock = true 
             
             local lockTarget = type(_lockModuleRef.GetTarget) == "function" and _lockModuleRef.GetTarget() or nil
             
@@ -139,16 +141,14 @@ function M.Start(lplr)
                     _targetPlayer = lockTarget
                     _rescore = PB.RESCORE_INTERVAL
                 else
-                    -- Objetivo del Lock inválido → volvemos al escaneo pasivo para que el clon no se detenga
                     hasLock = false
                 end
             else
-                -- Lock activo pero sin objetivo → escaneo pasivo
                 hasLock = false
             end
         end
 
-        -- 2. ESCANEO PASIVO (se ejecuta si el Lock está apagado O si el Lock no pudo proporcionar un objetivo válido)
+        -- 2. ESCANEO PASIVO 
         if not hasLock then
             _rescore = _rescore + 1
             if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
@@ -168,7 +168,7 @@ function M.Start(lplr)
                 _targetHRP = nil
                 _targetPlayer = nil
                 _rescore = PB.RESCORE_INTERVAL
-                return -- Cortamos aquí. Si estábamos en Lock, el próximo frame volverá a intentar con el Lock o con escaneo.
+                return 
             end
         end
         
@@ -201,11 +201,11 @@ function M.Start(lplr)
         local _fm = rawget(getgenv(), "_AFO_FLY_MODULE")
         if _fm and _fm.Bypass then _fm.Bypass(0.1, "passivebang") end
         
-        -- Ejecutar CFrame
+        -- Ejecutar CFrame (usando el hrp dinámico)
         hrp.CFrame = CFrame.new(targetPos, predictedPos)
         _camera.CFrame = _camera.CFrame:Lerp(CFrame.new(_camera.CFrame.Position, predictedPos), 0.25)
         
-        -- Desenganche manual (solo afectará si NO estás usando Lock, ya que el Lock lo reengancharía al frame siguiente)
+        -- Desenganche manual
         if _leftDown and _rightDown then
             _targetHRP = nil
             _targetPlayer = nil
