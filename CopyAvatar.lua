@@ -5,14 +5,17 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
 
-local player
+local localPlayer
 local keys
 local active = false
 local connections = {}
+
 local gui
 local mainFrame
 local playerImage
 local isOpen = false
+local setPanelOpen
+
 local toggleKey = Enum.KeyCode.F4
 local lastUsername = nil
 local requestId = 0
@@ -32,9 +35,29 @@ local function disconnectAll()
 	table.clear(connections)
 end
 
+local function getUserId(username)
+	local targetPlayer = Players:FindFirstChild(username)
+
+	if targetPlayer then
+		return targetPlayer.UserId
+	end
+
+	local success, userId = pcall(
+		Players.GetUserIdFromNameAsync,
+		Players,
+		username
+	)
+
+	if success then
+		return userId
+	end
+
+	return nil
+end
+
 local function loadAvatarImage(userId, currentRequest)
 	task.spawn(function()
-		local success, content = pcall(function()
+		local success, image = pcall(function()
 			return Players:GetUserThumbnailAsync(
 				userId,
 				Enum.ThumbnailType.AvatarBust,
@@ -42,12 +65,12 @@ local function loadAvatarImage(userId, currentRequest)
 			)
 		end)
 
-		if currentRequest ~= requestId or not playerImage or not playerImage.Parent then
+		if currentRequest ~= requestId then
 			return
 		end
 
-		if success and content then
-			playerImage.Image = content
+		if success and image and playerImage and playerImage.Parent then
+			playerImage.Image = image
 
 			pcall(function()
 				ContentProvider:PreloadAsync({ playerImage })
@@ -91,7 +114,10 @@ local function manualAttachAccessory(accessory, character)
 		return false
 	end
 
-	local characterAttachment = findCharacterAttachment(character, handleAttachment.Name)
+	local characterAttachment = findCharacterAttachment(
+		character,
+		handleAttachment.Name
+	)
 
 	if not characterAttachment then
 		return false
@@ -102,6 +128,7 @@ local function manualAttachAccessory(accessory, character)
 	handle.CanCollide = false
 	handle.Massless = true
 	handle.LocalTransparencyModifier = 0
+
 	handle.CFrame =
 		characterAttachment.Parent.CFrame
 		* characterAttachment.CFrame
@@ -124,26 +151,8 @@ local function manualAttachAccessory(accessory, character)
 	return true
 end
 
-local function getUserId(username)
-	local targetPlayer = Players:FindFirstChild(username)
-
-	if targetPlayer then
-		return targetPlayer.UserId
-	end
-
-	local success, userId = pcall(function()
-		return Players:GetUserIdFromNameAsync(username)
-	end)
-
-	if success then
-		return userId
-	end
-
-	return nil
-end
-
 local function applyAvatar(username, isReset)
-	if not player or not username or username == "" then
+	if not localPlayer or not username or username == "" then
 		return
 	end
 
@@ -151,7 +160,7 @@ local function applyAvatar(username, isReset)
 	local currentRequest = requestId
 
 	task.spawn(function()
-		local character = player.Character or player.CharacterAdded:Wait()
+		local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
 
 		if currentRequest ~= requestId then
 			return
@@ -251,7 +260,9 @@ local function applyAvatar(username, isReset)
 					local faceId = string.match(item.Texture, "%d+")
 
 					if faceId then
-						face.Texture = "rbxthumb://type=Asset&id=" .. faceId .. "&w=420&h=420"
+						face.Texture = "rbxthumb://type=Asset&id="
+							.. faceId
+							.. "&w=420&h=420"
 					end
 
 					face.Parent = head
@@ -297,22 +308,52 @@ local function applyAvatar(username, isReset)
 		end
 
 		if humanoid.RigType == Enum.HumanoidRigType.R6 and head and not loadedFace then
-			local errFace = Instance.new("Decal")
-			errFace.Name = "face"
-			errFace.Face = Enum.NormalId.Front
-			errFace.Texture = "rbxthumb://type=Asset&id=7084675103&w=420&h=420"
-			errFace.Parent = head
+			local errorFace = Instance.new("Decal")
+			errorFace.Name = "face"
+			errorFace.Face = Enum.NormalId.Front
+			errorFace.Texture = "rbxthumb://type=Asset&id=7084675103&w=420&h=420"
+			errorFace.Parent = head
 		end
 	end)
 end
 
 local function resetToOriginal()
-	if not player then
+	if not localPlayer then
 		return
 	end
 
 	lastUsername = nil
-	applyAvatar(player.Name, true)
+	applyAvatar(localPlayer.Name, true)
+end
+
+function M.SetKey(keyCode)
+	if typeof(keyCode) ~= "EnumItem" then
+		return
+	end
+
+	toggleKey = keyCode
+
+	if keys then
+		keys.Toggle = keyCode
+	end
+end
+
+function M.Open()
+	if not active or not setPanelOpen then
+		return false
+	end
+
+	setPanelOpen(true)
+	return true
+end
+
+function M.Close()
+	if not active or not setPanelOpen then
+		return false
+	end
+
+	setPanelOpen(false)
+	return true
 end
 
 function M.Stop(restoreAvatar)
@@ -327,56 +368,47 @@ function M.Stop(restoreAvatar)
 	gui = nil
 	mainFrame = nil
 	playerImage = nil
+	setPanelOpen = nil
 	isOpen = false
 
-	if restoreAvatar and player then
-		applyAvatar(player.Name, true)
-	end
-end
-
-function M.SetKey(keyCode)
-	if typeof(keyCode) == "EnumItem" then
-		toggleKey = keyCode
-
-		if keys then
-			keys.Toggle = keyCode
-		end
+	if restoreAvatar and localPlayer then
+		applyAvatar(localPlayer.Name, true)
 	end
 end
 
 function M.Start(firstArgument, secondArgument)
-	-- Permite Start(Keys, Player) y Start(Player, Keys).
+	-- Compatible con Start(Keys, Player) y Start(Player, Keys).
 	if typeof(firstArgument) == "Instance" and firstArgument:IsA("Player") then
-		player = firstArgument
+		localPlayer = firstArgument
 		keys = secondArgument
 	else
 		keys = firstArgument
-		player = secondArgument or Players.LocalPlayer
+		localPlayer = secondArgument or Players.LocalPlayer
 	end
 
-	if not player then
-		warn("AvatarChanger: no se encontró LocalPlayer.")
-		return
+	if not localPlayer then
+		warn("[CopyAvatar] No se encontró LocalPlayer.")
+		return false
 	end
 
 	if keys and typeof(keys.Toggle) == "EnumItem" then
 		toggleKey = keys.Toggle
 	end
 
-	-- Limpia una instancia anterior sin restaurar el avatar:
-	-- evita que una tarea anterior borre el avatar recién aplicado.
+	-- Cancela tareas anteriores y elimina una GUI vieja,
+	-- sin restaurar el avatar durante el arranque.
 	requestId += 1
 	disconnectAll()
 
-	local playerGui = player:WaitForChild("PlayerGui")
+	if gui then
+		gui:Destroy()
+	end
+
+	local playerGui = localPlayer:WaitForChild("PlayerGui")
 	local oldGui = playerGui:FindFirstChild("AFO_AvatarChanger")
 
 	if oldGui then
 		oldGui:Destroy()
-	end
-
-	if gui then
-		gui:Destroy()
 	end
 
 	active = true
@@ -420,6 +452,7 @@ function M.Start(firstArgument, secondArgument)
 	closeButton.Text = "X"
 	closeButton.BorderSizePixel = 0
 	closeButton.Parent = mainFrame
+
 	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
 
 	local title = Instance.new("TextLabel")
@@ -447,6 +480,7 @@ function M.Start(firstArgument, secondArgument)
 	textBox.BorderSizePixel = 0
 	textBox.ClearTextOnFocus = true
 	textBox.Parent = mainFrame
+
 	Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 4)
 
 	local boxStroke = Instance.new("UIStroke")
@@ -466,6 +500,7 @@ function M.Start(firstArgument, secondArgument)
 	applyButton.Text = "Apply"
 	applyButton.BorderSizePixel = 0
 	applyButton.Parent = mainFrame
+
 	Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
 
 	local resetButton = Instance.new("TextButton")
@@ -479,6 +514,7 @@ function M.Start(firstArgument, secondArgument)
 	resetButton.Text = "↻"
 	resetButton.BorderSizePixel = 0
 	resetButton.Parent = mainFrame
+
 	Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 4)
 
 	local imageContainer = Instance.new("Frame")
@@ -489,29 +525,43 @@ function M.Start(firstArgument, secondArgument)
 	imageContainer.BorderSizePixel = 0
 	imageContainer.ZIndex = 11
 	imageContainer.Parent = mainFrame
+
 	Instance.new("UICorner", imageContainer).CornerRadius = UDim.new(1, 0)
 
 	playerImage = Instance.new("ImageLabel")
+	playerImage.Name = "PlayerImage"
 	playerImage.Size = UDim2.fromScale(1, 1)
 	playerImage.BackgroundTransparency = 1
+	playerImage.Image = ""
 	playerImage.ZIndex = 12
 	playerImage.Parent = imageContainer
+
 	Instance.new("UICorner", playerImage).CornerRadius = UDim.new(1, 0)
 
-	local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+	local tweenInfo = TweenInfo.new(
+		0.5,
+		Enum.EasingStyle.Quart,
+		Enum.EasingDirection.Out
+	)
 
-	local function toggleGui()
-		if not active or not mainFrame then
+	setPanelOpen = function(open)
+		if not active or not mainFrame or not mainFrame.Parent then
 			return
 		end
 
-		isOpen = not isOpen
+		isOpen = open
+
+		local position = isOpen
+			and UDim2.new(1, -20, 0, 190)
+			or UDim2.new(1, 300, 0, 190)
 
 		TweenService:Create(mainFrame, tweenInfo, {
-			Position = isOpen
-				and UDim2.new(1, -20, 0, 190)
-				or UDim2.new(1, 300, 0, 190),
+			Position = position,
 		}):Play()
+	end
+
+	local function togglePanel()
+		setPanelOpen(not isOpen)
 	end
 
 	local function startNewAvatar(username)
@@ -521,8 +571,8 @@ function M.Start(firstArgument, secondArgument)
 		end
 	end
 
-	table.insert(connections, player.CharacterAppearanceLoaded:Connect(function()
-		if active and lastUsername and lastUsername ~= player.Name then
+	table.insert(connections, localPlayer.CharacterAppearanceLoaded:Connect(function()
+		if active and lastUsername and lastUsername ~= localPlayer.Name then
 			applyAvatar(lastUsername, false)
 		end
 	end))
@@ -538,7 +588,7 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	table.insert(connections, resetButton.MouseButton1Click:Connect(function()
-		textBox.Text = player.Name
+		textBox.Text = localPlayer.Name
 		resetToOriginal()
 	end))
 
@@ -548,12 +598,14 @@ function M.Start(firstArgument, secondArgument)
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if not gameProcessed and input.KeyCode == toggleKey then
-			toggleGui()
+			togglePanel()
 		end
 	end))
 
 	startNewAvatar("Wiftor")
-	toggleGui()
+	M.Open()
+
+	return true
 end
 
 return M
