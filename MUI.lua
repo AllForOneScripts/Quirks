@@ -33,11 +33,15 @@ local SoundService = game:GetService("SoundService")
 -- Añade tus animaciones aquí. La clave es solo un nombre legible para el hub.
 -- Duration está expresada en segundos.
 M.Config = {
+	-- Cada dodge puede usar Delay (espera tras detectar), Duration (4D activo)
+	-- y ExtendUntilSourceDies para renovar Duration hasta observar la muerte del origen.
 
 	Dodges = {
 		Bakugo_Ultimate = {
 			AnimationId = "18673594132",
-			Duration = 2.50,
+			Delay = 5,
+			Duration = 5,
+			ExtendUntilSourceDies = true,
 		},
 	},
 
@@ -87,6 +91,12 @@ local active = false
 local activeUntil = 0
 local activationToken = 0
 local activeDodgeName = nil
+local activeDuration = 0
+local activeExtendsUntilSourceDies = false
+local sourceDeathObserved = false
+local sourceDeathConnection = nil
+local pendingActivationToken = 0
+local pendingDodgeName = nil
 
 local dodgeByAnimationId = {}
 local lastTriggerAt = {}
@@ -167,11 +177,14 @@ local function rebuildDodgeIndex()
 	table.clear(dodgeByAnimationId)
 	for dodgeName, dodge in pairs(M.Config.Dodges) do
 		local id = assetNumber(dodge.AnimationId)
+		local delay = tonumber(dodge.Delay) or 0
 		local duration = tonumber(dodge.Duration)
-		if id ~= "" and duration and duration > 0 then
+		if id ~= "" and delay >= 0 and duration and duration > 0 then
 			dodgeByAnimationId[id] = {
 				Name = dodgeName,
+				Delay = delay,
 				Duration = duration,
+				ExtendUntilSourceDies = dodge.ExtendUntilSourceDies == true,
 			}
 		end
 	end
@@ -542,6 +555,32 @@ end
 
 local deactivate4D
 
+local function clearSourceDeathWatch()
+	disconnect(sourceDeathConnection)
+	sourceDeathConnection = nil
+	sourceDeathObserved = false
+end
+
+local function watchSourceDeath(player)
+	clearSourceDeathWatch()
+	if not player then
+		return
+	end
+
+	local humanoid = getHumanoid(player.Character)
+	if not humanoid then
+		return
+	end
+	if humanoid.Health <= 0 then
+		sourceDeathObserved = true
+		return
+	end
+
+	sourceDeathConnection = humanoid.Died:Connect(function()
+		sourceDeathObserved = true
+	end)
+end
+
 local function startSkyLift(character, root, token)
 	destroySkyForces()
 
@@ -579,7 +618,7 @@ local function startSkyLift(character, root, token)
 	end)
 end
 
-local function begin4D(dodge)
+local function begin4D(dodge, sourcePlayer)
 	local character = localPlayer and localPlayer.Character
 	local root = getRoot(character)
 	local humanoid = getHumanoid(character)
@@ -591,7 +630,11 @@ local function begin4D(dodge)
 	activationToken += 1
 	local token = activationToken
 	activeDodgeName = dodge.Name
+	activeDuration = dodge.Duration
+	activeExtendsUntilSourceDies = dodge.ExtendUntilSourceDies == true and sourcePlayer ~= nil
 	activeUntil = os.clock() + dodge.Duration
+	pendingDodgeName = nil
+	watchSourceDeath(sourcePlayer)
 	footOffset = getFootOffset(character)
 	virtualRootPosition = root.Position
 	skyY = root.Position.Y + M.Config.SkyAltitude
@@ -618,6 +661,7 @@ deactivate4D = function(shouldReturnToClone)
 	active = false
 	activationToken += 1
 	destroySkyForces()
+	clearSourceDeathWatch()
 
 	local character = localPlayer and localPlayer.Character
 	local root = getRoot(character)
@@ -654,6 +698,8 @@ deactivate4D = function(shouldReturnToClone)
 	virtualRootPosition = nil
 	skyY = nil
 	activeDodgeName = nil
+	activeDuration = 0
+	activeExtendsUntilSourceDies = false
 	playLocalSound(M.Config.DeactivationSoundId)
 end
 
@@ -677,7 +723,29 @@ local function triggerDodge(dodge, player)
 		return
 	end
 
-	begin4D(dodge)
+	if pendingDodgeName then
+		return
+	end
+
+	local delay = dodge.Delay or 0
+	if delay <= 0 then
+		begin4D(dodge, player)
+		return
+	end
+
+	pendingDodgeName = dodge.Name
+	pendingActivationToken += 1
+	local token = pendingActivationToken
+	task.delay(delay, function()
+		if token ~= pendingActivationToken then
+			return
+		end
+		pendingDodgeName = nil
+		if not enabled or active then
+			return
+		end
+		begin4D(dodge, player)
+	end)
 end
 
 local function onRemoteAnimationPlayed(player, track)
@@ -776,6 +844,10 @@ local function onHeartbeat(dt)
 	end
 
 	if os.clock() >= activeUntil then
+		if activeExtendsUntilSourceDies and not sourceDeathObserved then
+			activeUntil = os.clock() + activeDuration
+			return
+		end
 		deactivate4D(true)
 		return
 	end
@@ -830,6 +902,8 @@ function M.Stop()
 		return
 	end
 
+	pendingActivationToken += 1
+	pendingDodgeName = nil
 	if active then
 		deactivate4D(true)
 	end
