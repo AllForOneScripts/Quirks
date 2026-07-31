@@ -43,7 +43,7 @@ local OCFG = {
     ORBIT_SPEED      = 6,
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
-    CLONE_VISUAL_Y_OFFSET = 0, -- 🔥 Puesto a 0. El offset ahora es calculado matemáticamente sin fallos.
+    CLONE_VISUAL_Y_OFFSET = 1.5, -- Elevación extra para evitar que las piernas atraviesen el suelo
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
@@ -51,7 +51,7 @@ local OCFG = {
     CLIMB_STEP_MAX     = 1.8,
     DESCEND_STEP_MAX   = 2.2,
     GROUND_PROBE_AHEAD = 1.5,
-    MAX_VERTICAL_SPEED = 30, -- Aumentado ligeramente para caídas más fluidas
+    MAX_VERTICAL_SPEED = 24,
 
     PRED_SAMPLES      = 30,
     PRED_DT           = 0.03,
@@ -114,14 +114,7 @@ end
 local function omniHRPFootOffset(char)
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local hrp = omniGetHRP(char)
-    if hum and hrp then 
-        -- 🔥 Corrección para que funcione perfectamente tanto en avatares R15 como R6
-        if hum.RigType == Enum.HumanoidRigType.R15 then
-            return hum.HipHeight + (hrp.Size.Y / 2)
-        else
-            return 3 -- R6 no tiene HipHeight (es 0), por lo que la altura estándar de HRP al suelo son 3 studs.
-        end
-    end
+    if hum and hrp then return hum.HipHeight + hrp.Size.Y / 2 end
     return 3
 end
 
@@ -175,7 +168,7 @@ local function predSimulate(p0, v0, excludeList)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SEGUIMIENTO DE TERRENO DEL CLON (CORREGIDO)
+--  SEGUIMIENTO DE TERRENO DEL CLON (VERSIÓN SIMPLIFICADA Y CORREGIDA)
 -- ═══════════════════════════════════════════════════════════════════════════
 local function omniGetGroundHeight(pos, char)
     local rp = RaycastParams.new()
@@ -184,10 +177,8 @@ local function omniGetGroundHeight(pos, char)
     if char then table.insert(excl, char) end
     if omniCloneModel then table.insert(excl, omniCloneModel) end
     rp.FilterDescendantsInstances = excl
-    
-    -- 🔥 Origen del Raycast elevado a +20 y longitud bajada a -100 para no fallar en desniveles bruscos.
-    local origin = Vector3.new(pos.X, pos.Y + 20, pos.Z)
-    local hit = workspace:Raycast(origin, Vector3.new(0, -100, 0), rp)
+    local origin = Vector3.new(pos.X, pos.Y + 5, pos.Z)
+    local hit = workspace:Raycast(origin, Vector3.new(0, -50, 0), rp)
     if hit then return hit.Position.Y + omniFootOffset end
     return nil
 end
@@ -199,18 +190,10 @@ local function omniFollowGround(prevPos, desiredXZ, dt, char)
     -- Raycast para obtener altura del suelo en la nueva posición
     local groundY = omniGetGroundHeight(newPos, char)
     if groundY then
+        -- Limitar velocidad de descenso/ascenso para evitar tirones
         local diff = groundY - prevPos.Y
-        local newY = prevPos.Y
-        
-        -- 🔥 Corrección: Si vamos cuesta arriba, escalamos instantáneamente para que los pies no atraviesen el suelo.
-        if diff > 0 then
-            newY = groundY
-        else
-            -- Si vamos hacia abajo, suavizamos la caída para evitar teletransportes bruscos
-            local maxDelta = OCFG.MAX_VERTICAL_SPEED * dt
-            newY = prevPos.Y + math.clamp(diff, -maxDelta, maxDelta)
-        end
-        
+        local maxDelta = OCFG.MAX_VERTICAL_SPEED * dt
+        local newY = prevPos.Y + math.clamp(diff, -maxDelta, maxDelta)
         newPos = Vector3.new(newPos.X, newY, newPos.Z)
     else
         -- Si no hay suelo, mantener Y actual (puede estar en el aire)
@@ -736,8 +719,7 @@ local function omniStart()
                     local yaw  = flat.Magnitude > 0.01
                         and math.atan2(-flat.X, -flat.Z)
                         or  select(2, omniCloneModel.PrimaryPart.CFrame:ToEulerAnglesYXZ())
-                    -- 🔥 Removido el OCFG.CLONE_VISUAL_Y_OFFSET de la ecuación
-                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset, omniGroundPos.Z)
+                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0), omniGroundPos.Z)
                     local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
                     omniCloneModel:SetPrimaryPartCFrame(newCF)
                 end
