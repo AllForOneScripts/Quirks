@@ -334,7 +334,7 @@ function M.SetKey(keyCode)
 	toggleKey = keyCode
 
 	if keys then
-		keys.Toggle = keyCode
+		keys.CopyAvatar = keyCode
 	end
 end
 
@@ -391,8 +391,11 @@ function M.Start(firstArgument, secondArgument)
 		return false
 	end
 
-	if keys and typeof(keys.Toggle) == "EnumItem" then
-		toggleKey = keys.Toggle
+	if keys then
+		local configuredKey = keys.CopyAvatar or keys.Toggle
+		if typeof(configuredKey) == "EnumItem" then
+			toggleKey = configuredKey
+		end
 	end
 
 	-- Cancela tareas anteriores y elimina una GUI vieja,
@@ -603,7 +606,6 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	startNewAvatar("Wiftor")
-	M.Open()
 
 	return true
 end
