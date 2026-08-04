@@ -37,6 +37,7 @@ local lastSlamEndTime = 0
 local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar, animPlataforma
 local plataformaActiva = nil
+local alturaPlataforma = nil
 local loopPlataformaConn = nil
 
 -- ==========================================
@@ -128,6 +129,7 @@ end
 -- ==========================================
 local function DestruirPlataforma()
 	isPlatformMode = false
+	alturaPlataforma = nil
 
 	if loopPlataformaConn then
 		loopPlataformaConn:Disconnect()
@@ -165,8 +167,13 @@ local function CrearPlataforma()
 		+ (rootPart.Size.Y / 2)
 		+ (plataformaActiva.Size.Y / 2)
 
+	-- La altura queda fijada al crearla: solo seguirá X/Z.
+	alturaPlataforma = rootPart.Position.Y - altura
+
 	plataformaActiva.CFrame = CFrame.new(
-		rootPart.Position - Vector3.new(0, altura, 0)
+		rootPart.Position.X,
+		alturaPlataforma,
+		rootPart.Position.Z
 	)
 
 	if animVuelo and animVuelo.IsPlaying then
@@ -438,7 +445,7 @@ function M.Start(Keys)
 			or state == Enum.HumanoidStateType.Freefall
 		)
 
-		-- PLATAFORMA: movimiento horizontal y plataforma que sigue al jugador.
+		-- PLATAFORMA: se mueve contigo lateralmente, pero no sube.
 		if isPlatformMode and plataformaActiva then
 			workspace.Gravity = GRAVEDAD_NORMAL
 
@@ -456,12 +463,10 @@ function M.Start(Keys)
 				targetXZ.Z
 			)
 
-			local altura = humanoid.HipHeight
-				+ (rootPart.Size.Y / 2)
-				+ (plataformaActiva.Size.Y / 2)
-
 			plataformaActiva.CFrame = CFrame.new(
-				rootPart.Position - Vector3.new(0, altura, 0)
+				rootPart.Position.X,
+				alturaPlataforma,
+				rootPart.Position.Z
 			)
 
 			if not isHoldingSpace then
