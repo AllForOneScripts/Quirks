@@ -1,68 +1,3 @@
---[[
-╔══════════════════════════════════════════════════════════════════╗
-║                    LOCK SYSTEM  (módulo aislado)                  ║
-║  Sistema de lock/target: cámara, GUI info, highlight, icono,      ║
-║  tecla de lock, y sub-sistemas que se activan automáticamente     ║
-║  cuando detectan vuelo activo vía getgenv().AFO_FLYSTATE /        ║
-║  getgenv().AFO_FLYMODE — sin depender de flyModuleRef ni flyAnim. ║
-╚══════════════════════════════════════════════════════════════════╝
-
-  ÍNDICE
-  ──────
-  [1]  SERVICIOS Y UTILIDADES GENÉRICAS
-  [2]  IDIOMA / LOCALIZACIÓN (subset de lock)
-  [3]  ESTADO INTERNO (L)
-  [4]  TARGETING (validez, target más cercano)
-  [5]  ICONO DE LOCK + HIGHLIGHT
-  [6]  GUI INFO PANEL (avatar, nombre, distancia, vida, altura)
-  [7]  CÁMARA DE LOCK
-  [8]  TOGGLE / START / STOP DEL SISTEMA DE LOCK
-  [9]  GUI EMBEBIBLE (sección "LOCK" del HUD de Fly)
-  [10] HOOKS PARA FLY (rotación Y, anti-orbiting, TP-debajo)
-  [11] API PÚBLICA (M)
-
-  ──────────────────────────────────────────────────────────────────
-  INTEGRACIÓN CON OMNIBLOCK
-  ──────────────────────────────────────────────────────────────────
-  Cuando OmniBlock está en modo blocking (IsBlocking()) o 4D (Is4DActive()),
-  el sistema de lock cambia su comportamiento sobre cámara y dirección:
-
-    Sin vuelo activo:
-      • NO modifica la cámara en ningún eje
-      • NO modifica la dirección/rotación del personaje en ningún eje
-
-    Con vuelo activo:
-      • NO modifica la cámara en X (yaw / izquierda-derecha)
-      • SÍ modifica la cámara en Y (pitch / arriba-abajo)
-      • NO modifica la dirección del personaje en X (yaw)
-      • SÍ modifica la dirección del personaje en Y (pitch / BodyGyro)
-
-  La condición se evalúa como: IsBlocking() OR Is4DActive()
-
-  Para conectar OmniBlock con el lock, llamar desde el script principal:
-    LockModule.SetOmniBlockProvider(function()
-        return omniModule.IsBlocking() or omniModule.Is4DActive()
-    end)
-
-  ──────────────────────────────────────────────────────────────────
-  ESTADO DEL FLY — COMPLETAMENTE AUTÓNOMO
-  ──────────────────────────────────────────────────────────────────
-  Lock.lua NO depende de flyModuleRef ni de flyAnim.
-  Lee el estado del vuelo directamente desde getgenv():
-
-    getgenv().AFO_FLYSTATE  → true/false  (vuelo activo)
-    getgenv().AFO_FLYMODE   → string      (modo actual)
-
-  Modos reconocidos en AFO_FLYMODE:
-    "normal"      → modo base
-    "turbo"       → fast (snap-to-target activo)
-    "mega turbo"  → turbo (snap-to-target activo)
-    "mega up"     → modo mega up
-
-  El BodyGyro se busca directamente en el HumanoidRootPart del
-  personaje — Lock no necesita que nadie le pase la referencia.
---]]
-
 -- ──────────────────────────────────────────────────────────────────
 -- [1]  SERVICIOS Y UTILIDADES GENÉRICAS
 -- ──────────────────────────────────────────────────────────────────
@@ -409,7 +344,7 @@ local function createLockInfoGui(parentFrame)
     heightLabel.Size             = UDim2.new(0, 120, 0, 15)
     heightLabel.Position         = UDim2.new(0, 40, 0, 68)
     heightLabel.BackgroundTransparency = 1
-    heightLabel.Font             = Enum.Font.Gotham
+    healthLabel.Font             = Enum.Font.Gotham
     heightLabel.TextSize         = 9
     heightLabel.TextColor3       = Color3.fromRGB(150, 220, 255)
     heightLabel.Text             = "---"
@@ -591,9 +526,11 @@ local function updateLockCamera()
     local myChar     = lplr and lplr.Character
     local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    
+    -- Se ha eliminado el límite de 750 studs para que el lock sea infinito.
     if myRoot and targetRoot then
         local d = (myRoot.Position - targetRoot.Position).Magnitude
-        if not isnan(d) and d > 750 then clearLock(); return end
+        -- if not isnan(d) and d > 750 then clearLock(); return end
     end
 
     local targetPart = targetChar:FindFirstChild("UpperTorso")
