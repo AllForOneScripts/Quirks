@@ -1,6 +1,6 @@
--- PassiveBang_corregido.lua
--- El módulo Lock debe conectarse antes de usar el bang:
---   PassiveBang.SetLockModule(LockModule)
+-- PassiveBang_lock_reader.lua
+-- Requiere que el lector de Lock se haya ejecutado primero y haya creado:
+-- getgenv().AFO_LOCK_API
 
 local M = {}
 
@@ -11,7 +11,6 @@ local UserInputService = game:GetService("UserInputService")
 local _lplr
 local _camera = workspace.CurrentCamera
 local _conns = {}
-
 local _bangKey = Enum.KeyCode.Quote
 local _lockModuleRef
 local _holding = false
@@ -20,6 +19,12 @@ local _targetPlayer
 local _leftDown = false
 local _rightDown = false
 local _rescore = 0
+
+-- Estado del TP de caída. Durante el breve anclaje mantiene los pies sobre
+-- la cabeza; después suelta el personaje con velocidad vertical descendente.
+local _dropTargetRoot
+local _dropStickUntil = 0
+local _dropCompletedFor
 
 local PB = {
     MAX_3D_DIST = 150,
@@ -34,14 +39,26 @@ local PB = {
     LEAD_MAX = 8,
     VEL_THRESHOLD = 8,
     RESCORE_INTERVAL = 12,
-    -- 1 = giro inmediato; garantiza que la cámara no quede mirando al objetivo anterior.
     CAMERA_SMOOTH = 1,
+
+    -- TP de caída, inspirado en PegarALaCabeza de Gravattack.
+    FALL_TRIGGER_HEIGHT = 20,
+    FALL_HEAD_STICK_TIME = 0.22,
+    FALL_STICK_VELOCITY = -20,
+    FALL_RELEASE_VELOCITY = -140,
 }
+
+local function resetDrop()
+    _dropTargetRoot = nil
+    _dropStickUntil = 0
+    _dropCompletedFor = nil
+end
 
 local function resetTarget()
     _targetHRP = nil
     _targetPlayer = nil
     _rescore = PB.RESCORE_INTERVAL
+    resetDrop()
 end
 
 local function updateCharacter()
@@ -64,8 +81,7 @@ local function scoreCandidate(player, myRoot, mouseX, mouseY)
 
     local distance = (root.Position - myRoot.Position).Magnitude
     local isCurrent = root == _targetHRP
-    local maxDistance = isCurrent and PB.MAX_ENGAGED_DIST or PB.MAX_3D_DIST
-    if distance > maxDistance then return nil end
+    if distance > (isCurrent and PB.MAX_ENGAGED_DIST or PB.MAX_3D_DIST) then return nil end
 
     local proximity = PB.W_PROXIMITY * (1 - math.clamp(distance / PB.MAX_3D_DIST, 0, 1))
     local mouseScore = 0
@@ -84,29 +100,39 @@ local function selectPassiveTarget(myRoot)
     local mouse = _lplr:GetMouse()
     local bestScore, bestRoot, bestPlayer = -math.huge, nil, nil
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        local score, root, candidate = scoreCandidate(player, myRoot, mouse.X, mouse.Y)
+    for _, candidate in ipairs(Players:GetPlayers()) do
+        local score, root, player = scoreCandidate(candidate, myRoot, mouse.X, mouse.Y)
         if score and score > bestScore then
-            bestScore, bestRoot, bestPlayer = score, root, candidate
+            bestScore, bestRoot, bestPlayer = score, root, player
         end
     end
-
     return bestRoot, bestPlayer
 end
 
--- Devuelve el lock solo si las dos llamadas de la API son válidas.
--- No hay ningún filtro de distancia aquí: un lock válido siempre gana.
+-- Lector de la API: primero respeta un módulo inyectado por el Hub y, si no
+-- existe, toma la API que deja el script Lock API Reader en getgenv().
+local function getLockApi()
+    if type(_lockModuleRef) == "table" then return _lockModuleRef end
+    local fromReader = rawget(getgenv(), "AFO_LOCK_API")
+    if type(fromReader) == "table" then
+        _lockModuleRef = fromReader
+        return fromReader
+    end
+    return nil
+end
+
 local function getLockTarget()
-    if not _lockModuleRef
-        or type(_lockModuleRef.IsLockActive) ~= "function"
-        or type(_lockModuleRef.GetTarget) ~= "function" then
+    local lock = getLockApi()
+    if not lock
+        or type(lock.IsLockActive) ~= "function"
+        or type(lock.GetTarget) ~= "function" then
         return nil
     end
 
-    local okActive, active = pcall(_lockModuleRef.IsLockActive)
+    local okActive, active = pcall(lock.IsLockActive)
     if not okActive or active ~= true then return nil end
 
-    local okTarget, target = pcall(_lockModuleRef.GetTarget)
+    local okTarget, target = pcall(lock.GetTarget)
     if not okTarget then return nil end
 
     local root = getLiveRoot(target)
@@ -119,20 +145,13 @@ local function getPredictedPosition(targetRoot)
     local predicted = targetRoot.Position + velocity * (PB.PING_PREDICT_BASE + PB.PING_PREDICT_EXTRA)
     local horizontalVelocity = Vector3.new(velocity.X, 0, velocity.Z)
     local lead = Vector3.zero
-
     if horizontalVelocity.Magnitude > PB.VEL_THRESHOLD then
-        lead = horizontalVelocity.Unit * math.clamp(
-            horizontalVelocity.Magnitude * PB.LEAD_FACTOR,
-            0,
-            PB.LEAD_MAX
-        )
+        lead = horizontalVelocity.Unit * math.clamp(horizontalVelocity.Magnitude * PB.LEAD_FACTOR, 0, PB.LEAD_MAX)
     end
-
     return predicted, velocity, lead
 end
 
 local function faceTarget(myRoot, targetPosition)
-    -- Mantiene el eje vertical del personaje estable y mira horizontalmente al objetivo.
     local flatTarget = Vector3.new(targetPosition.X, myRoot.Position.Y, targetPosition.Z)
     if (flatTarget - myRoot.Position).Magnitude > 0.01 then
         myRoot.CFrame = CFrame.lookAt(myRoot.Position, flatTarget)
@@ -142,14 +161,57 @@ end
 local function aimCamera(targetPosition)
     _camera = workspace.CurrentCamera or _camera
     if not _camera then return end
-
     local origin = _camera.CFrame.Position
     if (targetPosition - origin).Magnitude > 0.01 then
-        _camera.CFrame = _camera.CFrame:Lerp(
-            CFrame.lookAt(origin, targetPosition),
-            PB.CAMERA_SMOOTH
-        )
+        _camera.CFrame = _camera.CFrame:Lerp(CFrame.lookAt(origin, targetPosition), PB.CAMERA_SMOOTH)
     end
+end
+
+local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
+    local now = tick()
+
+    -- Tras soltar el anclaje no debe volver al TP normal en el siguiente
+    -- frame: se deja que la velocidad descendente complete la caída. Se
+    -- reinicia al soltar la tecla de Bang o al pasar a otro objetivo.
+    if _dropCompletedFor == targetRoot then
+        return true
+    end
+
+    -- Se inicia solo si el jugador está 20+ studs por encima del objetivo.
+    if _dropTargetRoot ~= targetRoot and _dropCompletedFor ~= targetRoot
+        and myRoot.Position.Y - targetRoot.Position.Y >= PB.FALL_TRIGGER_HEIGHT then
+        _dropTargetRoot = targetRoot
+        _dropStickUntil = now + PB.FALL_HEAD_STICK_TIME
+    end
+
+    if _dropTargetRoot ~= targetRoot then return false end
+    if not targetRoot.Parent then
+        resetDrop()
+        return false
+    end
+
+    if now < _dropStickUntil then
+        local head = targetRoot.Parent:FindFirstChild("Head")
+        local headPosition = head and head.Position or (targetRoot.Position + Vector3.new(0, targetRoot.Size.Y, 0))
+        local footHeight = myHumanoid.HipHeight + (myRoot.Size.Y / 2) + 0.15
+
+        myRoot.CFrame = CFrame.new(headPosition + Vector3.new(0, footHeight, 0))
+        myRoot.AssemblyLinearVelocity = Vector3.new(
+            targetRoot.AssemblyLinearVelocity.X,
+            PB.FALL_STICK_VELOCITY,
+            targetRoot.AssemblyLinearVelocity.Z
+        )
+        return true
+    end
+
+    myRoot.AssemblyLinearVelocity = Vector3.new(
+        targetRoot.AssemblyLinearVelocity.X,
+        PB.FALL_RELEASE_VELOCITY,
+        targetRoot.AssemblyLinearVelocity.Z
+    )
+    _dropCompletedFor = targetRoot
+    _dropTargetRoot = nil
+    return true
 end
 
 function M.Start(lplr)
@@ -183,12 +245,12 @@ function M.Start(lplr)
 
         local myChar = _lplr.Character
         local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        if not myRoot then return end
+        local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        if not myRoot or not myHumanoid then return end
 
-        -- Esta decisión ocurre antes del scan: el lock siempre tiene prioridad.
+        -- Un Lock válido reemplaza por completo el escaneo pasivo.
         local lockedPlayer, lockedRoot = getLockTarget()
         local isLocked = lockedPlayer ~= nil
-
         if isLocked then
             _targetPlayer, _targetHRP = lockedPlayer, lockedRoot
             _rescore = PB.RESCORE_INTERVAL
@@ -197,38 +259,38 @@ function M.Start(lplr)
             if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
                 _rescore = 0
                 local newRoot, newPlayer = selectPassiveTarget(myRoot)
-                if newRoot then
-                    _targetHRP, _targetPlayer = newRoot, newPlayer
-                else
-                    resetTarget()
-                end
+                if newRoot then _targetHRP, _targetPlayer = newRoot, newPlayer else resetTarget() end
             end
         end
 
         local validRoot = _targetPlayer and getLiveRoot(_targetPlayer)
-        if not validRoot then
-            resetTarget()
-            return
-        end
+        if not validRoot then resetTarget(); return end
         _targetHRP = validRoot
 
         local predicted, velocity, lead = getPredictedPosition(_targetHRP)
-        local behind = _targetHRP.CFrame.LookVector * -2.8
-        local vertical = velocity.Y < -10 and -2 or 0
-        local targetPosition = predicted + behind + lead
-        targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
-        if isLocked then targetPosition += Vector3.new(0, 2.5, 0) end
 
         local fly = rawget(getgenv(), "_AFO_FLY_MODULE")
         if fly and type(fly.Bypass) == "function" then
-            fly.Bypass(0.1, "passivebang")
+            pcall(fly.Bypass, 0.1, "passivebang")
         end
 
-        myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
+        local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP)
+        if not doingFallTP then
+            local behind = _targetHRP.CFrame.LookVector * -2.8
+            local vertical = velocity.Y < -10 and -2 or 0
+            local targetPosition = predicted + behind + lead
+            targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
+            if isLocked then targetPosition += Vector3.new(0, 2.5, 0) end
+            myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
+        end
 
-        -- También se ejecuta sin lock: cámara y personaje quedan mirando al objetivo pasivo.
         faceTarget(myRoot, predicted)
-        aimCamera(predicted)
+
+        -- La cámara solo se modifica durante un TP pasivo. Un Lock activo
+        -- conserva completamente la cámara, incluso mientras Bang está pulsado.
+        if not isLocked then
+            aimCamera(predicted)
+        end
 
         if _leftDown and _rightDown then
             resetTarget()
@@ -238,7 +300,7 @@ function M.Start(lplr)
 end
 
 function M.Stop()
-    for _, connection in ipairs(_conns) do connection:Disconnect() end
+    for _, connection in ipairs(_conns) do pcall(function() connection:Disconnect() end) end
     table.clear(_conns)
     _holding = false
     _leftDown, _rightDown = false, false
@@ -246,7 +308,7 @@ function M.Stop()
 end
 
 function M.SetLockModule(module)
-    _lockModuleRef = module
+    _lockModuleRef = type(module) == "table" and module or nil
 end
 
 function M.SetKeybind(keyCode)
