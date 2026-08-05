@@ -1,5 +1,6 @@
--- SoftAim_corregido.lua
--- Integración obligatoria: SoftAim.SetLockModule(LockModule)
+-- SoftAim_lock_reader.lua
+-- Si existe, usa el Lock inyectado con SetLockModule(). Si no, obtiene la
+-- misma instancia compartida por el lector: getgenv().AFO_LOCK_API.
 
 local M = {}
 
@@ -37,19 +38,30 @@ local function ensureHighlight()
     _highlight.FillTransparency = 0.85
 end
 
--- Una única fuente de verdad: la API pública del módulo Lock.
--- No depende de getgenv(), porque el Lock compartido no publica AFO_LOCK_ACTIVE.
+-- No carga otra copia de Lock. Solo recupera la instancia ya expuesta por el
+-- lector, por lo que ambos módulos observan exactamente el mismo objetivo.
+local function getLockApi()
+    if type(_lockModuleRef) == "table" then return _lockModuleRef end
+    local fromReader = rawget(getgenv(), "AFO_LOCK_API")
+    if type(fromReader) == "table" then
+        _lockModuleRef = fromReader
+        return fromReader
+    end
+    return nil
+end
+
 local function lockHasValidTarget()
-    if not _lockModuleRef
-        or type(_lockModuleRef.IsLockActive) ~= "function"
-        or type(_lockModuleRef.GetTarget) ~= "function" then
+    local lock = getLockApi()
+    if not lock
+        or type(lock.IsLockActive) ~= "function"
+        or type(lock.GetTarget) ~= "function" then
         return false
     end
 
-    local okActive, isActive = pcall(_lockModuleRef.IsLockActive)
+    local okActive, isActive = pcall(lock.IsLockActive)
     if not okActive or isActive ~= true then return false end
 
-    local okTarget, target = pcall(_lockModuleRef.GetTarget)
+    local okTarget, target = pcall(lock.GetTarget)
     if not okTarget or not target then return false end
 
     local char = target.Character
@@ -96,22 +108,22 @@ function M.Stop()
 end
 
 function M.SetLockModule(lockModule)
-    _lockModuleRef = lockModule
-    -- Si se conecta un Lock que ya está activo, no queda softaim residual.
+    _lockModuleRef = type(lockModule) == "table" and lockModule or nil
     if lockHasValidTarget() then clearSoftAim() end
 end
 
-function M.Setup(Keys, lplr, Players, RunService, UserInputService, camera)
+function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera)
     M.Stop()
-    _Keys, _lplr, _Players = Keys or {}, lplr, Players
-    _RunService, _UIS, _camera = RunService, UserInputService, camera
+    _Keys, _lplr, _Players = Keys or {}, lplr, PlayersRef
+    _RunService, _UIS, _camera = RunServiceRef, UserInputService, camera
     _enabled = true
     ensureHighlight()
 
     _heartbeatConn = _RunService.Heartbeat:Connect(function()
         if not _enabled then return end
 
-        -- Se apaga por completo y borra teclas retenidas mientras exista lock.
+        -- Esta condición se evalúa primero en cada frame. SoftAim no conserva
+        -- target, teclas ni Highlight y tampoco rota mientras Lock esté activo.
         if lockHasValidTarget() then
             clearSoftAim()
             return
@@ -148,7 +160,7 @@ function M.Setup(Keys, lplr, Players, RunService, UserInputService, camera)
 
     _inputConn = _UIS.InputBegan:Connect(function(input, gpe)
         if gpe or not _enabled then return end
-        -- Impide incluso crear/renovar estado de softaim mientras Lock tiene objetivo.
+        -- También bloquea la creación de estado nuevo mientras Lock manda.
         if lockHasValidTarget() then clearSoftAim(); return end
 
         if input.KeyCode == Enum.KeyCode.Q
