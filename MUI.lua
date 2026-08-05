@@ -1,937 +1,1426 @@
 --[[
-    UltraInstinct4DDodge.lua
+    MasteredUltraInstinct4DDodge.lua
+    Client module for a Roblox experience you control.
 
-    Módulo de cliente para integrarlo en un hub. Detecta animaciones que el
-    cliente recibe de jugadores remotos y ejecuta un 4D temporal para cada
-    regla configurada.
-
-    Uso mínimo:
-        local Dodge4D = loadstring(readfile("UltraInstinct4DDodge.lua"))()
-        Dodge4D.Start()
-
-    O, si se guarda como ModuleScript:
-        local Dodge4D = require(path.AlModulo)
-        Dodge4D.Start()
-
-    El personaje real se mueve hacia arriba y solo se oculta localmente.
-    El clon, el aura y los sonidos también son locales. La experiencia debe
-    permitir al cliente controlar el movimiento de su personaje para que el
-    desplazamiento físico tenga efecto fuera de su propio cliente.
+    Detects configured remote animation tracks, warns locally about their
+    source, and activates a temporary Mastered Ultra Instinct 4D defense.
 ]]
 
 local M = {}
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Debris = game:GetService("Debris")
-local SoundService = game:GetService("SoundService")
+local MasteredUltraInstinctPlayers = game:GetService("Players")
+local MasteredUltraInstinctRunService = game:GetService("RunService")
+local MasteredUltraInstinctUserInputService = game:GetService("UserInputService")
+local MasteredUltraInstinctTweenService = game:GetService("TweenService")
+local MasteredUltraInstinctDebris = game:GetService("Debris")
+local MasteredUltraInstinctSoundService = game:GetService("SoundService")
+local MasteredUltraInstinctContentProvider = game:GetService("ContentProvider")
 
--- ============================================================================
--- CONFIGURACIÓN
--- ============================================================================
--- Añade tus animaciones aquí. La clave es solo un nombre legible para el hub.
--- Duration está expresada en segundos.
 M.Config = {
-	-- Cada dodge puede usar Delay (espera tras detectar), Duration (4D activo)
-	-- y ExtendUntilSourceDies para renovar Duration hasta observar la muerte del origen.
+    Dodges = {
+        Bakugo_Nuker = {
+            AnimationId = "18673594132",
+            Delay = 5,
+            Duration = 5,
+            ExtendUntilSourceDies = true,
+        },
+    },
 
-	Dodges = {
-		Bakugo_Ultimate = {
-			AnimationId = "18673594132",
-			Delay = 5,
-			Duration = 5,
-			ExtendUntilSourceDies = true,
-		},
-	},
+    SkyAltitude = 1500,
+    LiftSpeed = 900,
+    LiftTimeout = 4,
+    HoldForce = 9e8,
+    SameAnimationCooldown = 0.20,
+    RefreshOnRepeatedTrigger = true,
 
-	-- 4D
-	SkyAltitude = 1500,
-	LiftSpeed = 900,
-	LiftTimeout = 4,
-	HoldForce = 9e8,
-	RefreshOnRepeatedTrigger = true,
-	SameAnimationCooldown = 0.20,
+    AllowCloneMovement = true,
+    CloneWalkSpeed = 105,
+    CloneHeadOffset = 3,
+    GroundProbeHeight = 220,
+    GroundProbeDepth = 520,
+    MaxGroundStepPerSecond = 28,
 
-	-- Clon visual. Puedes moverlo con WASD mientras el 4D está activo.
-	AllowCloneMovement = true,
-	CloneWalkSpeed = 105,
-	CloneHeadOffset = 3,
-	GroundProbeHeight = 220,
-	GroundProbeDepth = 520,
-	MaxGroundStepPerSecond = 28,
+    ActivationSoundId = "140694363106746",
+    DeactivationSoundId = "130457690489621",
+    SoundVolume = 1.35,
 
-	-- Sonidos pedidos
-	ActivationSoundId = "140694363106746",
-	DeactivationSoundId = "130457690489621",
-	SoundVolume = 1.35,
+    Aura = {
+        Enabled = true,
+        CoreColor = Color3.fromRGB(245, 250, 255),
+        CyanColor = Color3.fromRGB(95, 225, 255),
+        VioletColor = Color3.fromRGB(156, 115, 255),
+        ParticleRate = 56,
+        RingSegments = 18,
+        UpdateInterval = 1 / 30,
+    },
 
-	-- Aura local: plata, blanco, cian y violeta; el cuerpo del clon no se tiñe.
-	Aura = {
-		Enabled = true,
-		CoreColor = Color3.fromRGB(245, 250, 255),
-		CyanColor = Color3.fromRGB(95, 225, 255),
-		VioletColor = Color3.fromRGB(156, 115, 255),
-		ParticleRate = 56,
-		RingSegments = 18,
-	},
-
-	-- Normalmente se deja en false: AnimationPlayed solo captura futuras pistas.
-	-- Activarlo también evalúa las animaciones que ya estaban reproduciéndose al
-	-- conectarse al personaje remoto.
-	ScanAlreadyPlayingOnAttach = false,
+    ThreatAlertLifetime = 8,
+    ThreatHudTopOffset = 330, -- Deliberately below the CopyAvatar panel.
+    ThreatHudRightOffset = 18,
+    ThreatLineOuterThickness = 18,
+    ThreatLineInnerThickness = 8,
+    ThreatFarLightRange = 72,
 }
 
--- ============================================================================
--- ESTADO INTERNO
--- ============================================================================
-local enabled = false
-local localPlayer = nil
-local active = false
-local activeUntil = 0
-local activationToken = 0
-local activeDodgeName = nil
-local activeDuration = 0
-local activeExtendsUntilSourceDies = false
-local sourceDeathObserved = false
-local sourceDeathConnection = nil
-local pendingActivationToken = 0
-local pendingDodgeName = nil
+-- All state is private and prefixed to make it easy to identify in a hub.
+local MasteredUltraInstinctEnabled = false
+local MasteredUltraInstinctLocalPlayer = nil
+local MasteredUltraInstinctDefenseActive = false
+local MasteredUltraInstinctActivationToken = 0
+local MasteredUltraInstinctPendingToken = 0
+local MasteredUltraInstinctPendingDodge = nil
+local MasteredUltraInstinctActiveUntil = 0
+local MasteredUltraInstinctActiveDuration = 0
+local MasteredUltraInstinctActiveDodgeName = nil
+local MasteredUltraInstinctActiveSource = nil
+local MasteredUltraInstinctExtendUntilSourceDies = false
+local MasteredUltraInstinctSourceDied = false
 
-local dodgeByAnimationId = {}
-local lastTriggerAt = {}
-local playerWatches = {}
+local MasteredUltraInstinctDodgeByAnimationId = {}
+local MasteredUltraInstinctLastTriggerAt = {}
+local MasteredUltraInstinctPlayerWatches = {}
+local MasteredUltraInstinctThreats = {}
+local MasteredUltraInstinctThumbnailCache = {}
+local MasteredUltraInstinctOriginalTransparency = setmetatable({}, { __mode = "k" })
 
-local heartbeatConnection = nil
-local playerAddedConnection = nil
-local playerRemovingConnection = nil
-local localCharacterRemovingConnection = nil
+local MasteredUltraInstinctHeartbeatConnection = nil
+local MasteredUltraInstinctRenderConnection = nil
+local MasteredUltraInstinctPlayerAddedConnection = nil
+local MasteredUltraInstinctPlayerRemovingConnection = nil
+local MasteredUltraInstinctCharacterRemovingConnection = nil
+local MasteredUltraInstinctSourceDiedConnection = nil
 
-local cloneModel = nil
-local cloneRoot = nil
-local cameraSubject = nil
-local skyVelocity = nil
-local skyPosition = nil
-local auraFolder = nil
-local auraRings = {}
-local auraLight = nil
+local MasteredUltraInstinctCloneModel = nil
+local MasteredUltraInstinctCloneRoot = nil
+local MasteredUltraInstinctAuraFolder = nil
+local MasteredUltraInstinctAuraRings = {}
+local MasteredUltraInstinctAuraLight = nil
+local MasteredUltraInstinctCameraSubject = nil
+local MasteredUltraInstinctSkyVelocity = nil
+local MasteredUltraInstinctSkyPosition = nil
+local MasteredUltraInstinctVirtualRootPosition = nil
+local MasteredUltraInstinctSkyY = nil
+local MasteredUltraInstinctFootOffset = 3
+local MasteredUltraInstinctHud = nil
+local MasteredUltraInstinctHudCards = nil
+local MasteredUltraInstinctHudLines = nil
+local MasteredUltraInstinctLastHudUpdate = 0
+local MasteredUltraInstinctLastAuraUpdate = 0
 
-local virtualRootPosition = nil
-local skyY = nil
-local footOffset = 3
-local originalTransparency = setmetatable({}, { __mode = "k" })
-
--- ============================================================================
--- UTILIDADES
--- ============================================================================
-local function disconnect(connection)
-	if connection then
-		pcall(function()
-			connection:Disconnect()
-		end)
-	end
+local function MasteredUltraInstinctDisconnect(MasteredUltraInstinctConnection)
+    if MasteredUltraInstinctConnection then
+        pcall(function()
+            MasteredUltraInstinctConnection:Disconnect()
+        end)
+    end
 end
 
-local function assetNumber(value)
-	return tostring(value or ""):match("%d+") or ""
+local function MasteredUltraInstinctAssetNumber(MasteredUltraInstinctValue)
+    return tostring(MasteredUltraInstinctValue or ""):match("%d+") or ""
 end
 
-local function toAssetId(value)
-	local id = assetNumber(value)
-	return id ~= "" and ("rbxassetid://" .. id) or ""
+local function MasteredUltraInstinctAssetId(MasteredUltraInstinctValue)
+    local MasteredUltraInstinctId = MasteredUltraInstinctAssetNumber(MasteredUltraInstinctValue)
+    return MasteredUltraInstinctId ~= "" and "rbxassetid://" .. MasteredUltraInstinctId or ""
 end
 
-local function getRoot(character)
-	return character and (character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso"))
+local function MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    return MasteredUltraInstinctCharacter
+        and (MasteredUltraInstinctCharacter:FindFirstChild("HumanoidRootPart")
+            or MasteredUltraInstinctCharacter:FindFirstChild("Torso"))
 end
 
-local function getHumanoid(character)
-	return character and character:FindFirstChildOfClass("Humanoid")
+local function MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+    return MasteredUltraInstinctCharacter
+        and MasteredUltraInstinctCharacter:FindFirstChildOfClass("Humanoid")
 end
 
-local function getFootOffset(character)
-	local humanoid = getHumanoid(character)
-	local root = getRoot(character)
-	if humanoid and root then
-		return humanoid.HipHeight + root.Size.Y * 0.5
-	end
-	return 3
+local function MasteredUltraInstinctGetFootOffset(MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    if MasteredUltraInstinctHumanoid and MasteredUltraInstinctRoot then
+        return MasteredUltraInstinctHumanoid.HipHeight + MasteredUltraInstinctRoot.Size.Y * 0.5
+    end
+    return 3
 end
 
-local function playLocalSound(id)
-	local soundId = toAssetId(id)
-	if soundId == "" then
-		return
-	end
-
-	local sound = Instance.new("Sound")
-	sound.Name = "UltraInstinct4DSound"
-	sound.SoundId = soundId
-	sound.Volume = M.Config.SoundVolume
-	sound.Parent = SoundService
-	sound:Play()
-	Debris:AddItem(sound, 8)
+local function MasteredUltraInstinctMergeConfig(MasteredUltraInstinctTarget, MasteredUltraInstinctSource)
+    for MasteredUltraInstinctKey, MasteredUltraInstinctValue in pairs(MasteredUltraInstinctSource) do
+        if MasteredUltraInstinctKey ~= "Dodges"
+            and type(MasteredUltraInstinctValue) == "table"
+            and type(MasteredUltraInstinctTarget[MasteredUltraInstinctKey]) == "table" then
+            MasteredUltraInstinctMergeConfig(
+                MasteredUltraInstinctTarget[MasteredUltraInstinctKey],
+                MasteredUltraInstinctValue
+            )
+        else
+            MasteredUltraInstinctTarget[MasteredUltraInstinctKey] = MasteredUltraInstinctValue
+        end
+    end
 end
 
-local function rebuildDodgeIndex()
-	table.clear(dodgeByAnimationId)
-	for dodgeName, dodge in pairs(M.Config.Dodges) do
-		local id = assetNumber(dodge.AnimationId)
-		local delay = tonumber(dodge.Delay) or 0
-		local duration = tonumber(dodge.Duration)
-		if id ~= "" and delay >= 0 and duration and duration > 0 then
-			dodgeByAnimationId[id] = {
-				Name = dodgeName,
-				Delay = delay,
-				Duration = duration,
-				ExtendUntilSourceDies = dodge.ExtendUntilSourceDies == true,
-			}
-		end
-	end
+local function MasteredUltraInstinctRebuildDodgeIndex()
+    table.clear(MasteredUltraInstinctDodgeByAnimationId)
+    for MasteredUltraInstinctName, MasteredUltraInstinctDodge in pairs(M.Config.Dodges) do
+        local MasteredUltraInstinctId = MasteredUltraInstinctAssetNumber(MasteredUltraInstinctDodge.AnimationId)
+        local MasteredUltraInstinctDelay = tonumber(MasteredUltraInstinctDodge.Delay) or 0
+        local MasteredUltraInstinctDuration = tonumber(MasteredUltraInstinctDodge.Duration)
+        if MasteredUltraInstinctId ~= ""
+            and MasteredUltraInstinctDelay >= 0
+            and MasteredUltraInstinctDuration
+            and MasteredUltraInstinctDuration > 0 then
+            MasteredUltraInstinctDodgeByAnimationId[MasteredUltraInstinctId] = {
+                Name = MasteredUltraInstinctName,
+                Delay = MasteredUltraInstinctDelay,
+                Duration = MasteredUltraInstinctDuration,
+                ExtendUntilSourceDies = MasteredUltraInstinctDodge.ExtendUntilSourceDies == true,
+            }
+        end
+    end
 end
 
-local function mergeConfig(target, source)
-	for key, value in pairs(source) do
-		if key ~= "Dodges" and type(value) == "table" and type(target[key]) == "table" then
-			mergeConfig(target[key], value)
-		else
-			target[key] = value
-		end
-	end
+-- Sounds are parented to SoundService and locally preloaded. This handles the
+-- common failure mode where a short-lived Sound is destroyed before it loads.
+local function MasteredUltraInstinctPlayLocalSound(MasteredUltraInstinctSoundId)
+    local MasteredUltraInstinctResolvedId = MasteredUltraInstinctAssetId(MasteredUltraInstinctSoundId)
+    if MasteredUltraInstinctResolvedId == "" then
+        return
+    end
+
+    local MasteredUltraInstinctSound = Instance.new("Sound")
+    MasteredUltraInstinctSound.Name = "MasteredUltraInstinctSound"
+    MasteredUltraInstinctSound.SoundId = MasteredUltraInstinctResolvedId
+    MasteredUltraInstinctSound.Volume = M.Config.SoundVolume
+    MasteredUltraInstinctSound.Parent = MasteredUltraInstinctSoundService
+    MasteredUltraInstinctDebris:AddItem(MasteredUltraInstinctSound, 12)
+
+    task.spawn(function()
+        pcall(function()
+            MasteredUltraInstinctContentProvider:PreloadAsync({ MasteredUltraInstinctSound })
+        end)
+    end)
+    local MasteredUltraInstinctPlayed = pcall(function()
+        if MasteredUltraInstinctSoundService.PlayLocalSound then
+            MasteredUltraInstinctSoundService:PlayLocalSound(MasteredUltraInstinctSound)
+        else
+            MasteredUltraInstinctSound:Play()
+        end
+    end)
+    if not MasteredUltraInstinctPlayed then
+        pcall(function()
+            MasteredUltraInstinctSound:Play()
+        end)
+    end
 end
 
-local function destroySkyForces()
-	if skyVelocity then
-		skyVelocity:Destroy()
-		skyVelocity = nil
-	end
-	if skyPosition then
-		skyPosition:Destroy()
-		skyPosition = nil
-	end
+local function MasteredUltraInstinctDestroySkyForces()
+    if MasteredUltraInstinctSkyVelocity then
+        MasteredUltraInstinctSkyVelocity:Destroy()
+        MasteredUltraInstinctSkyVelocity = nil
+    end
+    if MasteredUltraInstinctSkyPosition then
+        MasteredUltraInstinctSkyPosition:Destroy()
+        MasteredUltraInstinctSkyPosition = nil
+    end
 end
 
-local function destroyCameraSubject()
-	if cameraSubject then
-		cameraSubject:Destroy()
-		cameraSubject = nil
-	end
+local function MasteredUltraInstinctDestroyClone()
+    if MasteredUltraInstinctCloneModel then
+        MasteredUltraInstinctCloneModel:Destroy()
+    end
+    MasteredUltraInstinctCloneModel = nil
+    MasteredUltraInstinctCloneRoot = nil
+    MasteredUltraInstinctAuraFolder = nil
+    MasteredUltraInstinctAuraRings = {}
+    MasteredUltraInstinctAuraLight = nil
 end
 
-local function destroyClone()
-	if cloneModel then
-		cloneModel:Destroy()
-		cloneModel = nil
-		cloneRoot = nil
-	end
+local function MasteredUltraInstinctDestroyCameraSubject()
+    if MasteredUltraInstinctCameraSubject then
+        MasteredUltraInstinctCameraSubject:Destroy()
+    end
+    MasteredUltraInstinctCameraSubject = nil
 end
 
-local function destroyAura()
-	if auraFolder then
-		auraFolder:Destroy()
-		auraFolder = nil
-	end
-	auraRings = {}
-	auraLight = nil
+local function MasteredUltraInstinctHideRealCharacter(MasteredUltraInstinctCharacter)
+    table.clear(MasteredUltraInstinctOriginalTransparency)
+    for _, MasteredUltraInstinctInstance in ipairs(MasteredUltraInstinctCharacter:GetDescendants()) do
+        if MasteredUltraInstinctInstance:IsA("BasePart") or MasteredUltraInstinctInstance:IsA("Decal") then
+            MasteredUltraInstinctOriginalTransparency[MasteredUltraInstinctInstance] =
+                MasteredUltraInstinctInstance.LocalTransparencyModifier
+            MasteredUltraInstinctInstance.LocalTransparencyModifier = 1
+        end
+    end
 end
 
-local function hideRealCharacter(character)
-	table.clear(originalTransparency)
-	for _, descendant in ipairs(character:GetDescendants()) do
-		if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-			pcall(function()
-				originalTransparency[descendant] = descendant.LocalTransparencyModifier
-				descendant.LocalTransparencyModifier = 1
-			end)
-		end
-	end
+local function MasteredUltraInstinctRestoreRealCharacter()
+    for MasteredUltraInstinctInstance, MasteredUltraInstinctTransparency in pairs(MasteredUltraInstinctOriginalTransparency) do
+        if MasteredUltraInstinctInstance.Parent then
+            pcall(function()
+                MasteredUltraInstinctInstance.LocalTransparencyModifier = MasteredUltraInstinctTransparency
+            end)
+        end
+    end
+    table.clear(MasteredUltraInstinctOriginalTransparency)
 end
 
-local function restoreRealCharacter()
-	for instance, previousValue in pairs(originalTransparency) do
-		if instance and instance.Parent then
-			pcall(function()
-				instance.LocalTransparencyModifier = previousValue
-			end)
-		end
-	end
-	table.clear(originalTransparency)
+local function MasteredUltraInstinctCreateClone(MasteredUltraInstinctCharacter, MasteredUltraInstinctStartCFrame)
+    local MasteredUltraInstinctPreviousArchivable = MasteredUltraInstinctCharacter.Archivable
+    MasteredUltraInstinctCharacter.Archivable = true
+    local MasteredUltraInstinctOk, MasteredUltraInstinctClone = pcall(function()
+        return MasteredUltraInstinctCharacter:Clone()
+    end)
+    MasteredUltraInstinctCharacter.Archivable = MasteredUltraInstinctPreviousArchivable
+    if not MasteredUltraInstinctOk or not MasteredUltraInstinctClone then
+        return nil, nil
+    end
+
+    MasteredUltraInstinctClone.Name = "MasteredUltraInstinctClone"
+    for _, MasteredUltraInstinctInstance in ipairs(MasteredUltraInstinctClone:GetDescendants()) do
+        if MasteredUltraInstinctInstance:IsA("Script")
+            or MasteredUltraInstinctInstance:IsA("LocalScript")
+            or MasteredUltraInstinctInstance:IsA("ModuleScript") then
+            MasteredUltraInstinctInstance:Destroy()
+        elseif MasteredUltraInstinctInstance:IsA("BasePart") then
+            MasteredUltraInstinctInstance.Anchored = true
+            MasteredUltraInstinctInstance.CanCollide = false
+            MasteredUltraInstinctInstance.CanTouch = false
+            MasteredUltraInstinctInstance.CanQuery = false
+            MasteredUltraInstinctInstance.CastShadow = false
+        elseif MasteredUltraInstinctInstance:IsA("Humanoid") then
+            MasteredUltraInstinctInstance.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            MasteredUltraInstinctInstance.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+            MasteredUltraInstinctInstance.AutoRotate = false
+        end
+    end
+
+    MasteredUltraInstinctClone.Parent = workspace
+    MasteredUltraInstinctClone:PivotTo(MasteredUltraInstinctStartCFrame)
+    return MasteredUltraInstinctClone, MasteredUltraInstinctGetRoot(MasteredUltraInstinctClone)
 end
 
-local function createVisualClone(character, startCFrame)
-	local previousArchivable = character.Archivable
-	character.Archivable = true
-	local ok, clone = pcall(function()
-		return character:Clone()
-	end)
-	character.Archivable = previousArchivable
-
-	if not ok or not clone then
-		return nil, nil
-	end
-
-	clone.Name = "UltraInstinct4DClone"
-	for _, descendant in ipairs(clone:GetDescendants()) do
-		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
-			descendant:Destroy()
-		elseif descendant:IsA("BasePart") then
-			descendant.Anchored = true
-			descendant.CanCollide = false
-			descendant.CanTouch = false
-			descendant.CanQuery = false
-			descendant.CastShadow = false
-		elseif descendant:IsA("Humanoid") then
-			descendant.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-			descendant.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-			descendant.AutoRotate = false
-		end
-	end
-
-	clone.Parent = workspace
-	clone:PivotTo(startCFrame)
-	return clone, getRoot(clone)
+local function MasteredUltraInstinctCreateCameraSubject(MasteredUltraInstinctPosition)
+    local MasteredUltraInstinctSubject = Instance.new("Part")
+    MasteredUltraInstinctSubject.Name = "MasteredUltraInstinctCameraSubject"
+    MasteredUltraInstinctSubject.Size = Vector3.one
+    MasteredUltraInstinctSubject.Transparency = 1
+    MasteredUltraInstinctSubject.Anchored = true
+    MasteredUltraInstinctSubject.CanCollide = false
+    MasteredUltraInstinctSubject.CanTouch = false
+    MasteredUltraInstinctSubject.CanQuery = false
+    MasteredUltraInstinctSubject.CFrame = CFrame.new(
+        MasteredUltraInstinctPosition + Vector3.new(0, M.Config.CloneHeadOffset, 0)
+    )
+    MasteredUltraInstinctSubject.Parent = workspace
+    return MasteredUltraInstinctSubject
 end
 
-local function createCameraSubject(position)
-	local subject = Instance.new("Part")
-	subject.Name = "UltraInstinct4DCameraSubject"
-	subject.Size = Vector3.new(1, 1, 1)
-	subject.Transparency = 1
-	subject.Anchored = true
-	subject.CanCollide = false
-	subject.CanTouch = false
-	subject.CanQuery = false
-	subject.CFrame = CFrame.new(position + Vector3.new(0, M.Config.CloneHeadOffset, 0))
-	subject.Parent = workspace
-	return subject
+-- The original aura is retained, but its instances are created once and only
+-- their transforms are touched while the 4D defense is active.
+local function MasteredUltraInstinctCreateParticle(
+    MasteredUltraInstinctParent,
+    MasteredUltraInstinctColor,
+    MasteredUltraInstinctRate,
+    MasteredUltraInstinctSpeed,
+    MasteredUltraInstinctLifetime,
+    MasteredUltraInstinctSize,
+    MasteredUltraInstinctTransparency
+)
+    local MasteredUltraInstinctEmitter = Instance.new("ParticleEmitter")
+    MasteredUltraInstinctEmitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+    MasteredUltraInstinctEmitter.Color = ColorSequence.new(MasteredUltraInstinctColor)
+    MasteredUltraInstinctEmitter.LightEmission = 0.9
+    MasteredUltraInstinctEmitter.LightInfluence = 0
+    MasteredUltraInstinctEmitter.Rate = MasteredUltraInstinctRate
+    MasteredUltraInstinctEmitter.Lifetime = MasteredUltraInstinctLifetime
+    MasteredUltraInstinctEmitter.Speed = MasteredUltraInstinctSpeed
+    MasteredUltraInstinctEmitter.Acceleration = Vector3.new(0, 10, 0)
+    MasteredUltraInstinctEmitter.SpreadAngle = Vector2.new(22, 22)
+    MasteredUltraInstinctEmitter.EmissionDirection = Enum.NormalId.Top
+    MasteredUltraInstinctEmitter.Size = MasteredUltraInstinctSize
+    MasteredUltraInstinctEmitter.Transparency = MasteredUltraInstinctTransparency
+    MasteredUltraInstinctEmitter.Parent = MasteredUltraInstinctParent
 end
 
-local function makeParticle(parent, color, rate, speed, lifetime, size, transparency)
-	local emitter = Instance.new("ParticleEmitter")
-	emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
-	emitter.Color = ColorSequence.new(color)
-	emitter.LightEmission = 0.9
-	emitter.LightInfluence = 0
-	emitter.Rate = rate
-	emitter.Lifetime = lifetime
-	emitter.Speed = speed
-	emitter.Acceleration = Vector3.new(0, 10, 0)
-	emitter.SpreadAngle = Vector2.new(22, 22)
-	emitter.EmissionDirection = Enum.NormalId.Top
-	emitter.Rotation = NumberRange.new(0, 360)
-	emitter.RotSpeed = NumberRange.new(-75, 75)
-	emitter.Size = size
-	emitter.Transparency = transparency
-	emitter.Parent = parent
-	return emitter
+local function MasteredUltraInstinctCreateAuraRing(
+    MasteredUltraInstinctFolder,
+    MasteredUltraInstinctColor,
+    MasteredUltraInstinctRadius,
+    MasteredUltraInstinctYOffset,
+    MasteredUltraInstinctPhase
+)
+    local MasteredUltraInstinctRing = {
+        Parts = {},
+        Radius = MasteredUltraInstinctRadius,
+        YOffset = MasteredUltraInstinctYOffset,
+        Phase = MasteredUltraInstinctPhase,
+    }
+    local MasteredUltraInstinctSegments = math.max(8, math.floor(M.Config.Aura.RingSegments))
+    for _ = 1, MasteredUltraInstinctSegments do
+        local MasteredUltraInstinctPart = Instance.new("Part")
+        MasteredUltraInstinctPart.Name = "MasteredUltraInstinctAuraRing"
+        MasteredUltraInstinctPart.Anchored = true
+        MasteredUltraInstinctPart.CanCollide = false
+        MasteredUltraInstinctPart.CanTouch = false
+        MasteredUltraInstinctPart.CanQuery = false
+        MasteredUltraInstinctPart.CastShadow = false
+        MasteredUltraInstinctPart.Material = Enum.Material.Neon
+        MasteredUltraInstinctPart.Color = MasteredUltraInstinctColor
+        MasteredUltraInstinctPart.Transparency = 0.32
+        MasteredUltraInstinctPart.Size = Vector3.new(0.12, 0.12, 0.12)
+        MasteredUltraInstinctPart.Parent = MasteredUltraInstinctFolder
+        table.insert(MasteredUltraInstinctRing.Parts, MasteredUltraInstinctPart)
+    end
+    return MasteredUltraInstinctRing
 end
 
-local function createRing(folder, color, radius, yOffset, phase)
-	local ring = {
-		Parts = {},
-		Color = color,
-		Radius = radius,
-		YOffset = yOffset,
-		Phase = phase,
-	}
-
-	local segments = math.max(8, math.floor(M.Config.Aura.RingSegments))
-	for _ = 1, segments do
-		local part = Instance.new("Part")
-		part.Name = "AuraRingSegment"
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanTouch = false
-		part.CanQuery = false
-		part.CastShadow = false
-		part.Material = Enum.Material.Neon
-		part.Color = color
-		part.Transparency = 0.32
-		part.Size = Vector3.new(0.12, 0.12, 0.12)
-		part.Parent = folder
-		table.insert(ring.Parts, part)
-	end
-	return ring
+local function MasteredUltraInstinctCreateAura()
+    if not M.Config.Aura.Enabled or not MasteredUltraInstinctCloneRoot or not MasteredUltraInstinctCloneModel then
+        return
+    end
+    local MasteredUltraInstinctConfig = M.Config.Aura
+    MasteredUltraInstinctAuraFolder = Instance.new("Folder")
+    MasteredUltraInstinctAuraFolder.Name = "MasteredUltraInstinctAura"
+    MasteredUltraInstinctAuraFolder.Parent = MasteredUltraInstinctCloneModel
+    local MasteredUltraInstinctLower = Instance.new("Attachment")
+    MasteredUltraInstinctLower.Position = Vector3.new(0, -2.2, 0)
+    MasteredUltraInstinctLower.Parent = MasteredUltraInstinctCloneRoot
+    local MasteredUltraInstinctUpper = Instance.new("Attachment")
+    MasteredUltraInstinctUpper.Position = Vector3.new(0, 2.2, 0)
+    MasteredUltraInstinctUpper.Parent = MasteredUltraInstinctCloneRoot
+    MasteredUltraInstinctCreateParticle(
+        MasteredUltraInstinctLower, MasteredUltraInstinctConfig.CyanColor,
+        MasteredUltraInstinctConfig.ParticleRate, NumberRange.new(4, 8), NumberRange.new(0.46, 0.82),
+        NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(0.45, 2.1), NumberSequenceKeypoint.new(1, 0.15) }),
+        NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.38), NumberSequenceKeypoint.new(0.65, 0.58), NumberSequenceKeypoint.new(1, 1) })
+    )
+    MasteredUltraInstinctCreateParticle(
+        MasteredUltraInstinctUpper, MasteredUltraInstinctConfig.VioletColor,
+        math.floor(MasteredUltraInstinctConfig.ParticleRate * 0.42), NumberRange.new(2, 5), NumberRange.new(0.55, 1.05),
+        NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(0.5, 1.45), NumberSequenceKeypoint.new(1, 0.05) }),
+        NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) })
+    )
+    MasteredUltraInstinctAuraLight = Instance.new("PointLight")
+    MasteredUltraInstinctAuraLight.Name = "MasteredUltraInstinctAuraGlow"
+    MasteredUltraInstinctAuraLight.Color = MasteredUltraInstinctConfig.CyanColor
+    MasteredUltraInstinctAuraLight.Brightness = 1.8
+    MasteredUltraInstinctAuraLight.Range = 18
+    MasteredUltraInstinctAuraLight.Shadows = false
+    MasteredUltraInstinctAuraLight.Parent = MasteredUltraInstinctCloneRoot
+    MasteredUltraInstinctAuraRings = {
+        MasteredUltraInstinctCreateAuraRing(MasteredUltraInstinctAuraFolder, MasteredUltraInstinctConfig.CoreColor, 3.2, -1.7, 0),
+        MasteredUltraInstinctCreateAuraRing(MasteredUltraInstinctAuraFolder, MasteredUltraInstinctConfig.CyanColor, 4.7, -0.1, math.pi),
+        MasteredUltraInstinctCreateAuraRing(MasteredUltraInstinctAuraFolder, MasteredUltraInstinctConfig.VioletColor, 3.8, 1.6, math.pi * 0.5),
+    }
 end
 
-local function createUltraInstinctAura(root)
-	if not M.Config.Aura.Enabled or not root then
-		return
-	end
-
-	local aura = Instance.new("Folder")
-	aura.Name = "UltraInstinctAura_Local"
-	aura.Parent = cloneModel
-	auraFolder = aura
-
-	local lowerAttachment = Instance.new("Attachment")
-	lowerAttachment.Name = "AuraLower"
-	lowerAttachment.Position = Vector3.new(0, -2.2, 0)
-	lowerAttachment.Parent = root
-
-	local upperAttachment = Instance.new("Attachment")
-	upperAttachment.Name = "AuraUpper"
-	upperAttachment.Position = Vector3.new(0, 2.2, 0)
-	upperAttachment.Parent = root
-
-	local auraConfig = M.Config.Aura
-	makeParticle(
-		lowerAttachment,
-		auraConfig.CyanColor,
-		auraConfig.ParticleRate,
-		NumberRange.new(4, 8),
-		NumberRange.new(0.46, 0.82),
-		NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.9),
-			NumberSequenceKeypoint.new(0.45, 2.1),
-			NumberSequenceKeypoint.new(1, 0.15),
-		}),
-		NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.38),
-			NumberSequenceKeypoint.new(0.65, 0.58),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-	)
-
-	makeParticle(
-		upperAttachment,
-		auraConfig.VioletColor,
-		math.floor(auraConfig.ParticleRate * 0.42),
-		NumberRange.new(2, 5),
-		NumberRange.new(0.55, 1.05),
-		NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.35),
-			NumberSequenceKeypoint.new(0.5, 1.45),
-			NumberSequenceKeypoint.new(1, 0.05),
-		}),
-		NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.55),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-	)
-
-	local sparks = Instance.new("ParticleEmitter")
-	sparks.Name = "SilverSparks"
-	sparks.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	sparks.Color = ColorSequence.new(auraConfig.CoreColor, auraConfig.CyanColor)
-	sparks.LightEmission = 1
-	sparks.LightInfluence = 0
-	sparks.Rate = math.floor(auraConfig.ParticleRate * 0.6)
-	sparks.Lifetime = NumberRange.new(0.65, 1.25)
-	sparks.Speed = NumberRange.new(2, 7)
-	sparks.Acceleration = Vector3.new(0, 5, 0)
-	sparks.SpreadAngle = Vector2.new(180, 180)
-	sparks.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.18),
-		NumberSequenceKeypoint.new(0.5, 0.5),
-		NumberSequenceKeypoint.new(1, 0),
-	})
-	sparks.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0),
-		NumberSequenceKeypoint.new(0.7, 0.1),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-	sparks.Parent = upperAttachment
-
-	local light = Instance.new("PointLight")
-	light.Name = "UltraInstinctGlow"
-	light.Color = auraConfig.CyanColor
-	light.Brightness = 1.8
-	light.Range = 18
-	light.Shadows = false
-	light.Parent = root
-	auraLight = light
-
-	auraRings = {
-		createRing(aura, auraConfig.CoreColor, 3.2, -1.7, 0),
-		createRing(aura, auraConfig.CyanColor, 4.7, -0.1, math.pi),
-		createRing(aura, auraConfig.VioletColor, 3.8, 1.6, math.pi * 0.5),
-	}
+local function MasteredUltraInstinctUpdateAura(MasteredUltraInstinctNow)
+    if not MasteredUltraInstinctCloneRoot then
+        return
+    end
+    for MasteredUltraInstinctRingIndex, MasteredUltraInstinctRing in ipairs(MasteredUltraInstinctAuraRings) do
+        local MasteredUltraInstinctCount = #MasteredUltraInstinctRing.Parts
+        local MasteredUltraInstinctRadius = MasteredUltraInstinctRing.Radius + math.sin(MasteredUltraInstinctNow * 3.2 + MasteredUltraInstinctRing.Phase) * 0.18
+        local MasteredUltraInstinctY = MasteredUltraInstinctRing.YOffset + math.sin(MasteredUltraInstinctNow * 2.4 + MasteredUltraInstinctRing.Phase) * 0.22
+        local MasteredUltraInstinctRotation = MasteredUltraInstinctNow
+            * (MasteredUltraInstinctRingIndex % 2 == 0 and -1.6 or 1.25)
+            + MasteredUltraInstinctRing.Phase
+        local MasteredUltraInstinctArc = (2 * math.pi * MasteredUltraInstinctRadius / MasteredUltraInstinctCount) * 0.82
+        for MasteredUltraInstinctIndex, MasteredUltraInstinctPart in ipairs(MasteredUltraInstinctRing.Parts) do
+            local MasteredUltraInstinctAngle = MasteredUltraInstinctRotation
+                + (MasteredUltraInstinctIndex - 1) / MasteredUltraInstinctCount * math.pi * 2
+            local MasteredUltraInstinctRadial = Vector3.new(math.cos(MasteredUltraInstinctAngle), 0, math.sin(MasteredUltraInstinctAngle))
+            local MasteredUltraInstinctTangent = Vector3.new(-math.sin(MasteredUltraInstinctAngle), 0, math.cos(MasteredUltraInstinctAngle))
+            local MasteredUltraInstinctPosition = MasteredUltraInstinctCloneRoot.Position
+                + MasteredUltraInstinctRadial * MasteredUltraInstinctRadius + Vector3.new(0, MasteredUltraInstinctY, 0)
+            MasteredUltraInstinctPart.Size = Vector3.new(0.09, 0.09, MasteredUltraInstinctArc)
+            MasteredUltraInstinctPart.CFrame = CFrame.lookAt(MasteredUltraInstinctPosition, MasteredUltraInstinctPosition + MasteredUltraInstinctTangent)
+            MasteredUltraInstinctPart.Transparency = 0.25 + math.abs(math.sin(MasteredUltraInstinctNow * 4 + MasteredUltraInstinctIndex)) * 0.35
+        end
+    end
+    if MasteredUltraInstinctAuraLight then
+        MasteredUltraInstinctAuraLight.Brightness = 1.4 + (math.sin(MasteredUltraInstinctNow * 7) + 1) * 0.65
+    end
 end
 
-local function updateAura(now)
-	if not cloneRoot then
-		return
-	end
-
-	for ringIndex, ring in ipairs(auraRings) do
-		local parts = ring.Parts
-		local count = #parts
-		local radius = ring.Radius + math.sin(now * 3.2 + ring.Phase) * 0.18
-		local y = ring.YOffset + math.sin(now * 2.4 + ring.Phase) * 0.22
-		local rotation = now * (ringIndex % 2 == 0 and -1.6 or 1.25) + ring.Phase
-		local arcLength = (2 * math.pi * radius / count) * 0.82
-
-		for index, part in ipairs(parts) do
-			if part.Parent then
-				local angle = rotation + (index - 1) / count * math.pi * 2
-				local radial = Vector3.new(math.cos(angle), 0, math.sin(angle))
-				local position = cloneRoot.Position + radial * radius + Vector3.new(0, y, 0)
-				local tangent = Vector3.new(-math.sin(angle), 0, math.cos(angle))
-				part.Size = Vector3.new(0.09, 0.09, arcLength)
-				part.CFrame = CFrame.lookAt(position, position + tangent)
-				part.Transparency = 0.25 + math.abs(math.sin(now * 4 + index)) * 0.35
-			end
-		end
-	end
-
-	if auraLight and auraLight.Parent then
-		auraLight.Brightness = 1.4 + (math.sin(now * 7) + 1) * 0.65
-	end
+local function MasteredUltraInstinctGroundPosition(MasteredUltraInstinctPosition, MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctRayParams = RaycastParams.new()
+    MasteredUltraInstinctRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    MasteredUltraInstinctRayParams.FilterDescendantsInstances = {
+        MasteredUltraInstinctCharacter,
+        MasteredUltraInstinctCloneModel,
+        MasteredUltraInstinctCameraSubject,
+    }
+    local MasteredUltraInstinctOrigin = Vector3.new(
+        MasteredUltraInstinctPosition.X,
+        MasteredUltraInstinctPosition.Y + M.Config.GroundProbeHeight,
+        MasteredUltraInstinctPosition.Z
+    )
+    local MasteredUltraInstinctHit = workspace:Raycast(
+        MasteredUltraInstinctOrigin,
+        Vector3.new(0, -M.Config.GroundProbeDepth, 0),
+        MasteredUltraInstinctRayParams
+    )
+    if MasteredUltraInstinctHit then
+        return Vector3.new(
+            MasteredUltraInstinctPosition.X,
+            MasteredUltraInstinctHit.Position.Y + MasteredUltraInstinctFootOffset,
+            MasteredUltraInstinctPosition.Z
+        )
+    end
+    return MasteredUltraInstinctPosition
 end
 
-local function getGroundRootPosition(position, character)
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { character, cloneModel, cameraSubject, auraFolder }
+local function MasteredUltraInstinctBuildHud()
+    if MasteredUltraInstinctHud and MasteredUltraInstinctHud.Parent then
+        return
+    end
+    local MasteredUltraInstinctPlayerGui = MasteredUltraInstinctLocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not MasteredUltraInstinctPlayerGui then
+        return
+    end
 
-	local origin = Vector3.new(position.X, position.Y + M.Config.GroundProbeHeight, position.Z)
-	local result = workspace:Raycast(origin, Vector3.new(0, -M.Config.GroundProbeDepth, 0), rayParams)
-	if result then
-		return Vector3.new(position.X, result.Position.Y + footOffset, position.Z)
-	end
-	return position
+    MasteredUltraInstinctHud = Instance.new("ScreenGui")
+    MasteredUltraInstinctHud.Name = "MasteredUltraInstinctThreatHUD"
+    MasteredUltraInstinctHud.IgnoreGuiInset = true
+    MasteredUltraInstinctHud.ResetOnSpawn = false
+    MasteredUltraInstinctHud.DisplayOrder = 75
+    MasteredUltraInstinctHud.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    MasteredUltraInstinctHud.Parent = MasteredUltraInstinctPlayerGui
+
+    MasteredUltraInstinctHudCards = Instance.new("Frame")
+    MasteredUltraInstinctHudCards.Name = "MasteredUltraInstinctThreatCards"
+    MasteredUltraInstinctHudCards.BackgroundTransparency = 1
+    MasteredUltraInstinctHudCards.Size = UDim2.fromScale(1, 1)
+    MasteredUltraInstinctHudCards.Parent = MasteredUltraInstinctHud
+
+    MasteredUltraInstinctHudLines = Instance.new("Frame")
+    MasteredUltraInstinctHudLines.Name = "MasteredUltraInstinctDangerLines"
+    MasteredUltraInstinctHudLines.BackgroundTransparency = 1
+    MasteredUltraInstinctHudLines.Size = UDim2.fromScale(1, 1)
+    MasteredUltraInstinctHudLines.Parent = MasteredUltraInstinctHud
 end
 
-local function moveVirtualClone(dt, character)
-	if not M.Config.AllowCloneMovement or not virtualRootPosition then
-		return
-	end
-
-	local camera = workspace.CurrentCamera
-	if not camera then
-		return
-	end
-
-	local look = camera.CFrame.LookVector
-	local right = camera.CFrame.RightVector
-	local forwardFlat = Vector3.new(look.X, 0, look.Z)
-	local rightFlat = Vector3.new(right.X, 0, right.Z)
-	if forwardFlat.Magnitude > 0 then forwardFlat = forwardFlat.Unit end
-	if rightFlat.Magnitude > 0 then rightFlat = rightFlat.Unit end
-
-	local movement = Vector3.zero
-	if UserInputService:IsKeyDown(Enum.KeyCode.W) then movement += forwardFlat end
-	if UserInputService:IsKeyDown(Enum.KeyCode.S) then movement -= forwardFlat end
-	if UserInputService:IsKeyDown(Enum.KeyCode.D) then movement += rightFlat end
-	if UserInputService:IsKeyDown(Enum.KeyCode.A) then movement -= rightFlat end
-
-	if movement.Magnitude > 0 then
-		local proposed = virtualRootPosition + movement.Unit * M.Config.CloneWalkSpeed * dt
-		local grounded = getGroundRootPosition(proposed, character)
-		local yDelta = math.clamp(
-			grounded.Y - virtualRootPosition.Y,
-			-M.Config.MaxGroundStepPerSecond * dt,
-			M.Config.MaxGroundStepPerSecond * dt
-		)
-		virtualRootPosition = Vector3.new(proposed.X, virtualRootPosition.Y + yDelta, proposed.Z)
-	end
+local function MasteredUltraInstinctSetText(MasteredUltraInstinctObject, MasteredUltraInstinctText)
+    if MasteredUltraInstinctObject and MasteredUltraInstinctObject.Parent then
+        MasteredUltraInstinctObject.Text = MasteredUltraInstinctText
+    end
 end
 
-local function updateCloneAndCamera()
-	if not virtualRootPosition then
-		return
-	end
+local function MasteredUltraInstinctCreateThreatCard(MasteredUltraInstinctThreat)
+    MasteredUltraInstinctBuildHud()
+    if not MasteredUltraInstinctHudCards then
+        return
+    end
 
-	local camera = workspace.CurrentCamera
-	local yaw = 0
-	if camera then
-		local look = camera.CFrame.LookVector
-		if Vector3.new(look.X, 0, look.Z).Magnitude > 0.01 then
-			yaw = math.atan2(-look.X, -look.Z)
-		end
-	end
+    local MasteredUltraInstinctGroup = Instance.new("CanvasGroup")
+    MasteredUltraInstinctGroup.Name = "MasteredUltraInstinctAlert_" .. MasteredUltraInstinctThreat.Player.UserId
+    MasteredUltraInstinctGroup.BackgroundTransparency = 1
+    MasteredUltraInstinctGroup.GroupTransparency = 1
+    MasteredUltraInstinctGroup.Parent = MasteredUltraInstinctHudCards
+    local MasteredUltraInstinctScale = Instance.new("UIScale")
+    MasteredUltraInstinctScale.Scale = 0.82
+    MasteredUltraInstinctScale.Parent = MasteredUltraInstinctGroup
 
-	if cloneModel and cloneRoot then
-		cloneModel:PivotTo(CFrame.new(virtualRootPosition) * CFrame.Angles(0, yaw, 0))
-	end
-	if cameraSubject then
-		cameraSubject.CFrame = CFrame.new(virtualRootPosition + Vector3.new(0, M.Config.CloneHeadOffset, 0))
-	end
-	if skyPosition and skyY then
-		skyPosition.Position = Vector3.new(virtualRootPosition.X, skyY, virtualRootPosition.Z)
-	end
+    local MasteredUltraInstinctPanel = Instance.new("Frame")
+    MasteredUltraInstinctPanel.BackgroundColor3 = Color3.fromRGB(8, 8, 10)
+    MasteredUltraInstinctPanel.BackgroundTransparency = 0.08
+    MasteredUltraInstinctPanel.BorderSizePixel = 0
+    MasteredUltraInstinctPanel.Size = UDim2.fromScale(1, 1)
+    MasteredUltraInstinctPanel.Parent = MasteredUltraInstinctGroup
+    Instance.new("UICorner", MasteredUltraInstinctPanel).CornerRadius = UDim.new(0, 7)
+    local MasteredUltraInstinctStroke = Instance.new("UIStroke")
+    MasteredUltraInstinctStroke.Color = Color3.fromRGB(255, 209, 35)
+    MasteredUltraInstinctStroke.Thickness = 2
+    MasteredUltraInstinctStroke.Parent = MasteredUltraInstinctPanel
+
+    local MasteredUltraInstinctDangerStrip = Instance.new("Frame")
+    MasteredUltraInstinctDangerStrip.BackgroundColor3 = Color3.fromRGB(255, 209, 35)
+    MasteredUltraInstinctDangerStrip.BorderSizePixel = 0
+    MasteredUltraInstinctDangerStrip.Size = UDim2.new(0, 5, 1, -14)
+    MasteredUltraInstinctDangerStrip.Position = UDim2.fromOffset(8, 7)
+    MasteredUltraInstinctDangerStrip.Parent = MasteredUltraInstinctPanel
+    Instance.new("UICorner", MasteredUltraInstinctDangerStrip).CornerRadius = UDim.new(1, 0)
+
+    local function MasteredUltraInstinctCardLabel(MasteredUltraInstinctName, MasteredUltraInstinctY, MasteredUltraInstinctFont, MasteredUltraInstinctSize, MasteredUltraInstinctColor)
+        local MasteredUltraInstinctLabel = Instance.new("TextLabel")
+        MasteredUltraInstinctLabel.Name = MasteredUltraInstinctName
+        MasteredUltraInstinctLabel.BackgroundTransparency = 1
+        MasteredUltraInstinctLabel.Position = UDim2.new(0, 25, 0, MasteredUltraInstinctY)
+        MasteredUltraInstinctLabel.Size = UDim2.new(1, -88, 0, MasteredUltraInstinctSize + 5)
+        MasteredUltraInstinctLabel.Font = MasteredUltraInstinctFont
+        MasteredUltraInstinctLabel.TextSize = MasteredUltraInstinctSize
+        MasteredUltraInstinctLabel.TextColor3 = MasteredUltraInstinctColor
+        MasteredUltraInstinctLabel.TextXAlignment = Enum.TextXAlignment.Left
+        MasteredUltraInstinctLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        MasteredUltraInstinctLabel.Parent = MasteredUltraInstinctPanel
+        return MasteredUltraInstinctLabel
+    end
+
+    MasteredUltraInstinctCardLabel("ThreatLabel", 8, Enum.Font.GothamBold, 13, Color3.fromRGB(255, 221, 65)).Text = "THREAT DETECTED"
+    local MasteredUltraInstinctName = MasteredUltraInstinctCardLabel("NameLabel", 29, Enum.Font.GothamBold, 13, Color3.fromRGB(245, 245, 245))
+    local MasteredUltraInstinctDistance = MasteredUltraInstinctCardLabel("DistanceLabel", 50, Enum.Font.Gotham, 11, Color3.fromRGB(220, 220, 220))
+    local MasteredUltraInstinctHealth = MasteredUltraInstinctCardLabel("HealthLabel", 67, Enum.Font.Gotham, 11, Color3.fromRGB(220, 220, 220))
+    local MasteredUltraInstinctAbility = MasteredUltraInstinctCardLabel("AbilityLabel", 84, Enum.Font.GothamBold, 10, Color3.fromRGB(255, 209, 35))
+    MasteredUltraInstinctAbility.Size = UDim2.new(1, -35, 0, 17)
+
+    local MasteredUltraInstinctImageHolder = Instance.new("Frame")
+    MasteredUltraInstinctImageHolder.BackgroundColor3 = Color3.fromRGB(255, 209, 35)
+    MasteredUltraInstinctImageHolder.BorderSizePixel = 0
+    MasteredUltraInstinctImageHolder.Position = UDim2.new(1, -57, 0, 26)
+    MasteredUltraInstinctImageHolder.Size = UDim2.fromOffset(44, 44)
+    MasteredUltraInstinctImageHolder.Parent = MasteredUltraInstinctPanel
+    Instance.new("UICorner", MasteredUltraInstinctImageHolder).CornerRadius = UDim.new(1, 0)
+    local MasteredUltraInstinctImage = Instance.new("ImageLabel")
+    MasteredUltraInstinctImage.Name = "Portrait"
+    MasteredUltraInstinctImage.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
+    MasteredUltraInstinctImage.BorderSizePixel = 0
+    MasteredUltraInstinctImage.Position = UDim2.fromOffset(2, 2)
+    MasteredUltraInstinctImage.Size = UDim2.fromOffset(40, 40)
+    MasteredUltraInstinctImage.Parent = MasteredUltraInstinctImageHolder
+    Instance.new("UICorner", MasteredUltraInstinctImage).CornerRadius = UDim.new(1, 0)
+
+    MasteredUltraInstinctThreat.Card = MasteredUltraInstinctGroup
+    MasteredUltraInstinctThreat.CardScale = MasteredUltraInstinctScale
+    MasteredUltraInstinctThreat.CardLabels = {
+        Name = MasteredUltraInstinctName,
+        Distance = MasteredUltraInstinctDistance,
+        Health = MasteredUltraInstinctHealth,
+        Ability = MasteredUltraInstinctAbility,
+        Portrait = MasteredUltraInstinctImage,
+    }
+    MasteredUltraInstinctTweenService:Create(
+        MasteredUltraInstinctGroup,
+        TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { GroupTransparency = 0 }
+    ):Play()
+    MasteredUltraInstinctTweenService:Create(
+        MasteredUltraInstinctScale,
+        TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        { Scale = 1 }
+    ):Play()
+
+    local MasteredUltraInstinctUserId = MasteredUltraInstinctThreat.Player.UserId
+    local MasteredUltraInstinctCachedThumbnail = MasteredUltraInstinctThumbnailCache[MasteredUltraInstinctUserId]
+    if MasteredUltraInstinctCachedThumbnail then
+        MasteredUltraInstinctImage.Image = MasteredUltraInstinctCachedThumbnail
+    else
+        task.spawn(function()
+            local MasteredUltraInstinctOk, MasteredUltraInstinctThumbnail = pcall(function()
+                return MasteredUltraInstinctPlayers:GetUserThumbnailAsync(
+                    MasteredUltraInstinctUserId,
+                    Enum.ThumbnailType.HeadShot,
+                    Enum.ThumbnailSize.Size100x100
+                )
+            end)
+            if MasteredUltraInstinctOk then
+                MasteredUltraInstinctThumbnailCache[MasteredUltraInstinctUserId] = MasteredUltraInstinctThumbnail
+                if MasteredUltraInstinctThreat.Card
+                    and MasteredUltraInstinctThreat.Card.Parent
+                    and MasteredUltraInstinctThreat.CardLabels.Portrait then
+                    MasteredUltraInstinctThreat.CardLabels.Portrait.Image = MasteredUltraInstinctThumbnail
+                end
+            end
+        end)
+    end
 end
 
-local deactivate4D
-
-local function clearSourceDeathWatch()
-	disconnect(sourceDeathConnection)
-	sourceDeathConnection = nil
-	sourceDeathObserved = false
+local function MasteredUltraInstinctCreateLine(MasteredUltraInstinctThreat)
+    MasteredUltraInstinctBuildHud()
+    if not MasteredUltraInstinctHudLines then
+        return
+    end
+    local MasteredUltraInstinctOuter = Instance.new("Frame")
+    MasteredUltraInstinctOuter.Name = "MasteredUltraInstinctDangerLine"
+    MasteredUltraInstinctOuter.AnchorPoint = Vector2.new(0, 0.5)
+    MasteredUltraInstinctOuter.BackgroundColor3 = Color3.new(0, 0, 0)
+    MasteredUltraInstinctOuter.BorderSizePixel = 0
+    MasteredUltraInstinctOuter.Visible = false
+    MasteredUltraInstinctOuter.ZIndex = 2
+    MasteredUltraInstinctOuter.Parent = MasteredUltraInstinctHudLines
+    local MasteredUltraInstinctInner = Instance.new("Frame")
+    MasteredUltraInstinctInner.AnchorPoint = Vector2.new(0, 0.5)
+    MasteredUltraInstinctInner.BackgroundColor3 = Color3.fromRGB(255, 214, 24)
+    MasteredUltraInstinctInner.BorderSizePixel = 0
+    MasteredUltraInstinctInner.Position = UDim2.new(0, 0, 0.5, 0)
+    MasteredUltraInstinctInner.Size = UDim2.new(1, 0, 0, M.Config.ThreatLineInnerThickness)
+    MasteredUltraInstinctInner.ZIndex = 3
+    MasteredUltraInstinctInner.Parent = MasteredUltraInstinctOuter
+    MasteredUltraInstinctThreat.Line = MasteredUltraInstinctOuter
 end
 
-local function watchSourceDeath(player)
-	clearSourceDeathWatch()
-	if not player then
-		return
-	end
+local function MasteredUltraInstinctCreateFarLight(MasteredUltraInstinctThreat)
+    local MasteredUltraInstinctCharacter = MasteredUltraInstinctThreat.Player.Character
+    local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    if not MasteredUltraInstinctRoot then
+        return
+    end
+    local MasteredUltraInstinctHighlight = Instance.new("Highlight")
+    MasteredUltraInstinctHighlight.Name = "MasteredUltraInstinctThreatFarLight"
+    MasteredUltraInstinctHighlight.FillColor = Color3.fromRGB(255, 202, 0)
+    MasteredUltraInstinctHighlight.OutlineColor = Color3.fromRGB(255, 240, 120)
+    MasteredUltraInstinctHighlight.FillTransparency = 0.55
+    MasteredUltraInstinctHighlight.OutlineTransparency = 0
+    MasteredUltraInstinctHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    MasteredUltraInstinctHighlight.Adornee = MasteredUltraInstinctCharacter
+    MasteredUltraInstinctHighlight.Parent = MasteredUltraInstinctCharacter
 
-	local humanoid = getHumanoid(player.Character)
-	if not humanoid then
-		return
-	end
-	if humanoid.Health <= 0 then
-		sourceDeathObserved = true
-		return
-	end
+    local MasteredUltraInstinctBillboard = Instance.new("BillboardGui")
+    MasteredUltraInstinctBillboard.Name = "MasteredUltraInstinctThreatBeacon"
+    MasteredUltraInstinctBillboard.Adornee = MasteredUltraInstinctRoot
+    MasteredUltraInstinctBillboard.AlwaysOnTop = true
+    MasteredUltraInstinctBillboard.LightInfluence = 0
+    MasteredUltraInstinctBillboard.Size = UDim2.fromOffset(86, 86)
+    MasteredUltraInstinctBillboard.StudsOffset = Vector3.new(0, 4.5, 0)
+    MasteredUltraInstinctBillboard.Parent = MasteredUltraInstinctCharacter
+    local MasteredUltraInstinctBeacon = Instance.new("TextLabel")
+    MasteredUltraInstinctBeacon.BackgroundTransparency = 1
+    MasteredUltraInstinctBeacon.Size = UDim2.fromScale(1, 1)
+    MasteredUltraInstinctBeacon.Font = Enum.Font.GothamBlack
+    MasteredUltraInstinctBeacon.Text = "!"
+    MasteredUltraInstinctBeacon.TextColor3 = Color3.fromRGB(255, 218, 35)
+    MasteredUltraInstinctBeacon.TextStrokeColor3 = Color3.new(0, 0, 0)
+    MasteredUltraInstinctBeacon.TextStrokeTransparency = 0
+    MasteredUltraInstinctBeacon.TextSize = 74
+    MasteredUltraInstinctBeacon.Parent = MasteredUltraInstinctBillboard
+    local MasteredUltraInstinctBeaconScale = Instance.new("UIScale")
+    MasteredUltraInstinctBeaconScale.Parent = MasteredUltraInstinctBillboard
+    local MasteredUltraInstinctPointLight = Instance.new("PointLight")
+    MasteredUltraInstinctPointLight.Name = "MasteredUltraInstinctThreatFarLight"
+    MasteredUltraInstinctPointLight.Color = Color3.fromRGB(255, 214, 24)
+    MasteredUltraInstinctPointLight.Brightness = 8
+    MasteredUltraInstinctPointLight.Range = M.Config.ThreatFarLightRange
+    MasteredUltraInstinctPointLight.Shadows = false
+    MasteredUltraInstinctPointLight.Parent = MasteredUltraInstinctRoot
 
-	sourceDeathConnection = humanoid.Died:Connect(function()
-		sourceDeathObserved = true
-	end)
+    MasteredUltraInstinctThreat.Highlight = MasteredUltraInstinctHighlight
+    MasteredUltraInstinctThreat.Beacon = MasteredUltraInstinctBillboard
+    MasteredUltraInstinctThreat.BeaconScale = MasteredUltraInstinctBeaconScale
+    MasteredUltraInstinctThreat.FarLight = MasteredUltraInstinctPointLight
 end
 
-local function startSkyLift(character, root, token)
-	destroySkyForces()
-
-	skyVelocity = Instance.new("BodyVelocity")
-	skyVelocity.Name = "UltraInstinct4DLift"
-	skyVelocity.Velocity = Vector3.new(0, M.Config.LiftSpeed, 0)
-	skyVelocity.MaxForce = Vector3.new(0, M.Config.HoldForce, 0)
-	skyVelocity.Parent = root
-
-	task.spawn(function()
-		local startedAt = os.clock()
-		while active and token == activationToken and root.Parent do
-			if root.Position.Y >= skyY - 20 or os.clock() - startedAt >= M.Config.LiftTimeout then
-				break
-			end
-			task.wait(0.05)
-		end
-
-		if not active or token ~= activationToken or not root.Parent then
-			return
-		end
-
-		if skyVelocity then
-			skyVelocity:Destroy()
-			skyVelocity = nil
-		end
-
-		skyPosition = Instance.new("BodyPosition")
-		skyPosition.Name = "UltraInstinct4DHold"
-		skyPosition.Position = Vector3.new(root.Position.X, skyY, root.Position.Z)
-		skyPosition.MaxForce = Vector3.new(M.Config.HoldForce, M.Config.HoldForce, M.Config.HoldForce)
-		skyPosition.P = 60000
-		skyPosition.D = 2500
-		skyPosition.Parent = root
-	end)
+local function MasteredUltraInstinctDestroyThreatVisuals(MasteredUltraInstinctThreat)
+    if MasteredUltraInstinctThreat.Line then
+        MasteredUltraInstinctThreat.Line:Destroy()
+    end
+    if MasteredUltraInstinctThreat.Highlight then
+        MasteredUltraInstinctThreat.Highlight:Destroy()
+    end
+    if MasteredUltraInstinctThreat.Beacon then
+        MasteredUltraInstinctThreat.Beacon:Destroy()
+    end
+    if MasteredUltraInstinctThreat.FarLight then
+        MasteredUltraInstinctThreat.FarLight:Destroy()
+    end
+    MasteredUltraInstinctThreat.Line = nil
+    MasteredUltraInstinctThreat.Highlight = nil
+    MasteredUltraInstinctThreat.Beacon = nil
+    MasteredUltraInstinctThreat.FarLight = nil
 end
 
-local function begin4D(dodge, sourcePlayer)
-	local character = localPlayer and localPlayer.Character
-	local root = getRoot(character)
-	local humanoid = getHumanoid(character)
-	if not character or not root or not humanoid or humanoid.Health <= 0 then
-		return
-	end
-
-	active = true
-	activationToken += 1
-	local token = activationToken
-	activeDodgeName = dodge.Name
-	activeDuration = dodge.Duration
-	activeExtendsUntilSourceDies = dodge.ExtendUntilSourceDies == true and sourcePlayer ~= nil
-	activeUntil = os.clock() + dodge.Duration
-	pendingDodgeName = nil
-	watchSourceDeath(sourcePlayer)
-	footOffset = getFootOffset(character)
-	virtualRootPosition = root.Position
-	skyY = root.Position.Y + M.Config.SkyAltitude
-
-	cloneModel, cloneRoot = createVisualClone(character, root.CFrame)
-	cameraSubject = createCameraSubject(virtualRootPosition)
-	hideRealCharacter(character)
-	createUltraInstinctAura(cloneRoot)
-
-	local camera = workspace.CurrentCamera
-	if camera and cameraSubject then
-		camera.CameraSubject = cameraSubject
-	end
-
-	startSkyLift(character, root, token)
-	playLocalSound(M.Config.ActivationSoundId)
+local function MasteredUltraInstinctDismissThreat(MasteredUltraInstinctThreat)
+    if MasteredUltraInstinctThreat.Removing then
+        return
+    end
+    MasteredUltraInstinctThreat.Removing = true
+    MasteredUltraInstinctDestroyThreatVisuals(MasteredUltraInstinctThreat)
+    if MasteredUltraInstinctThreat.Card and MasteredUltraInstinctThreat.Card.Parent then
+        local MasteredUltraInstinctCard = MasteredUltraInstinctThreat.Card
+        if MasteredUltraInstinctThreat.CardScale then
+            MasteredUltraInstinctTweenService:Create(
+                MasteredUltraInstinctThreat.CardScale,
+                TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                { Scale = 0.9 }
+            ):Play()
+        end
+        MasteredUltraInstinctTweenService:Create(
+            MasteredUltraInstinctCard,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+            { GroupTransparency = 1 }
+        ):Play()
+        task.delay(0.18, function()
+            if MasteredUltraInstinctCard then
+                MasteredUltraInstinctCard:Destroy()
+            end
+        end)
+    end
+    MasteredUltraInstinctThreats[MasteredUltraInstinctThreat.Player] = nil
 end
 
-deactivate4D = function(shouldReturnToClone)
-	if not active then
-		return
-	end
+local function MasteredUltraInstinctMarkThreat(MasteredUltraInstinctPlayer, MasteredUltraInstinctDodge)
+    if not MasteredUltraInstinctPlayer or MasteredUltraInstinctPlayer == MasteredUltraInstinctLocalPlayer then
+        return
+    end
+    local MasteredUltraInstinctNow = os.clock()
+    local MasteredUltraInstinctThreat = MasteredUltraInstinctThreats[MasteredUltraInstinctPlayer]
+    if MasteredUltraInstinctThreat then
+        MasteredUltraInstinctThreat.DodgeName = MasteredUltraInstinctDodge.Name
+        MasteredUltraInstinctThreat.ExpiresAt = MasteredUltraInstinctNow + M.Config.ThreatAlertLifetime
+        MasteredUltraInstinctThreat.Removing = false
+        return
+    end
 
-	active = false
-	activationToken += 1
-	destroySkyForces()
-	clearSourceDeathWatch()
-
-	local character = localPlayer and localPlayer.Character
-	local root = getRoot(character)
-	local humanoid = getHumanoid(character)
-	local landingCFrame = cloneRoot and cloneRoot.CFrame or (root and root.CFrame)
-
-	if shouldReturnToClone and root and humanoid and humanoid.Health > 0 and landingCFrame then
-		local _, yaw = landingCFrame:ToOrientation()
-		local landingPosition = virtualRootPosition or landingCFrame.Position
-		landingPosition = getGroundRootPosition(landingPosition, character)
-
-		pcall(function()
-			humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-			root.CFrame = CFrame.new(landingPosition) * CFrame.Angles(0, yaw, 0)
-			root.AssemblyLinearVelocity = Vector3.zero
-			root.AssemblyAngularVelocity = Vector3.zero
-			task.defer(function()
-				if humanoid.Parent then
-					humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-				end
-			end)
-		end)
-	end
-
-	local camera = workspace.CurrentCamera
-	if camera and humanoid and humanoid.Parent then
-		camera.CameraSubject = humanoid
-	end
-
-	restoreRealCharacter()
-	destroyAura()
-	destroyClone()
-	destroyCameraSubject()
-	virtualRootPosition = nil
-	skyY = nil
-	activeDodgeName = nil
-	activeDuration = 0
-	activeExtendsUntilSourceDies = false
-	playLocalSound(M.Config.DeactivationSoundId)
+    MasteredUltraInstinctThreat = {
+        Player = MasteredUltraInstinctPlayer,
+        DodgeName = MasteredUltraInstinctDodge.Name,
+        MarkedAt = MasteredUltraInstinctNow,
+        ExpiresAt = MasteredUltraInstinctNow + M.Config.ThreatAlertLifetime,
+    }
+    MasteredUltraInstinctThreats[MasteredUltraInstinctPlayer] = MasteredUltraInstinctThreat
+    MasteredUltraInstinctCreateThreatCard(MasteredUltraInstinctThreat)
+    MasteredUltraInstinctCreateLine(MasteredUltraInstinctThreat)
+    MasteredUltraInstinctCreateFarLight(MasteredUltraInstinctThreat)
 end
 
-local function triggerDodge(dodge, player)
-	if not enabled or not dodge then
-		return
-	end
-
-	local now = os.clock()
-	local playerKey = player and player.UserId or 0
-	local triggerKey = tostring(playerKey) .. ":" .. dodge.Name
-	if now - (lastTriggerAt[triggerKey] or -math.huge) < M.Config.SameAnimationCooldown then
-		return
-	end
-	lastTriggerAt[triggerKey] = now
-
-	if active then
-		if M.Config.RefreshOnRepeatedTrigger then
-			activeUntil = math.max(activeUntil, now + dodge.Duration)
-		end
-		return
-	end
-
-	if pendingDodgeName then
-		return
-	end
-
-	local delay = dodge.Delay or 0
-	if delay <= 0 then
-		begin4D(dodge, player)
-		return
-	end
-
-	pendingDodgeName = dodge.Name
-	pendingActivationToken += 1
-	local token = pendingActivationToken
-	task.delay(delay, function()
-		if token ~= pendingActivationToken then
-			return
-		end
-		pendingDodgeName = nil
-		if not enabled or active then
-			return
-		end
-		begin4D(dodge, player)
-	end)
+local function MasteredUltraInstinctThreatList()
+    local MasteredUltraInstinctList = {}
+    for _, MasteredUltraInstinctThreat in pairs(MasteredUltraInstinctThreats) do
+        table.insert(MasteredUltraInstinctList, MasteredUltraInstinctThreat)
+    end
+    table.sort(MasteredUltraInstinctList, function(MasteredUltraInstinctLeft, MasteredUltraInstinctRight)
+        return MasteredUltraInstinctLeft.MarkedAt > MasteredUltraInstinctRight.MarkedAt
+    end)
+    return MasteredUltraInstinctList
 end
 
-local function onRemoteAnimationPlayed(player, track)
-	local animation = track and track.Animation
-	local animationId = animation and assetNumber(animation.AnimationId)
-	if animationId == "" then
-		return
-	end
-	triggerDodge(dodgeByAnimationId[animationId], player)
+local function MasteredUltraInstinctUpdateThreatHud(MasteredUltraInstinctNow)
+    local MasteredUltraInstinctList = MasteredUltraInstinctThreatList()
+    local MasteredUltraInstinctCount = #MasteredUltraInstinctList
+    local MasteredUltraInstinctCardWidth = math.max(118, 238 - math.max(0, MasteredUltraInstinctCount - 1) * 22)
+    local MasteredUltraInstinctCardHeight = math.max(74, 108 - math.max(0, MasteredUltraInstinctCount - 1) * 7)
+    local MasteredUltraInstinctOriginRoot = MasteredUltraInstinctDefenseActive
+        and MasteredUltraInstinctCloneRoot
+        or MasteredUltraInstinctGetRoot(MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character)
+    local MasteredUltraInstinctOriginPosition = MasteredUltraInstinctOriginRoot
+        and MasteredUltraInstinctOriginRoot.Position
+        or MasteredUltraInstinctVirtualRootPosition
+
+    for MasteredUltraInstinctIndex, MasteredUltraInstinctThreat in ipairs(MasteredUltraInstinctList) do
+        local MasteredUltraInstinctCharacter = MasteredUltraInstinctThreat.Player.Character
+        local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+        local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+        if not MasteredUltraInstinctRoot or not MasteredUltraInstinctHumanoid or MasteredUltraInstinctHumanoid.Health <= 0 then
+            MasteredUltraInstinctDismissThreat(MasteredUltraInstinctThreat)
+            continue
+        end
+
+        if MasteredUltraInstinctThreat.Card and MasteredUltraInstinctThreat.Card.Parent then
+            MasteredUltraInstinctThreat.Card.AnchorPoint = Vector2.new(1, 0)
+            MasteredUltraInstinctThreat.Card.Position = UDim2.new(
+                1,
+                -M.Config.ThreatHudRightOffset - (MasteredUltraInstinctIndex - 1) * (MasteredUltraInstinctCardWidth + 8),
+                0,
+                M.Config.ThreatHudTopOffset
+            )
+            MasteredUltraInstinctThreat.Card.Size = UDim2.fromOffset(MasteredUltraInstinctCardWidth, MasteredUltraInstinctCardHeight)
+            local MasteredUltraInstinctDistance = MasteredUltraInstinctOriginPosition
+                and (MasteredUltraInstinctRoot.Position - MasteredUltraInstinctOriginPosition).Magnitude
+                or 0
+            MasteredUltraInstinctSetText(
+                MasteredUltraInstinctThreat.CardLabels.Name,
+                MasteredUltraInstinctThreat.Player.DisplayName or MasteredUltraInstinctThreat.Player.Name
+            )
+            MasteredUltraInstinctSetText(MasteredUltraInstinctThreat.CardLabels.Distance, string.format("%.0f studs", MasteredUltraInstinctDistance))
+            MasteredUltraInstinctSetText(
+                MasteredUltraInstinctThreat.CardLabels.Health,
+                string.format("HP  %.0f / %.0f", math.max(0, MasteredUltraInstinctHumanoid.Health), MasteredUltraInstinctHumanoid.MaxHealth)
+            )
+            MasteredUltraInstinctSetText(MasteredUltraInstinctThreat.CardLabels.Ability, MasteredUltraInstinctThreat.DodgeName)
+        end
+
+        if MasteredUltraInstinctThreat.BeaconScale then
+            MasteredUltraInstinctThreat.BeaconScale.Scale = 0.92 + math.abs(math.sin(MasteredUltraInstinctNow * 7)) * 0.18
+        end
+        if MasteredUltraInstinctThreat.Highlight then
+            MasteredUltraInstinctThreat.Highlight.FillTransparency = 0.44 + math.abs(math.sin(MasteredUltraInstinctNow * 6)) * 0.22
+        end
+    end
 end
 
-local function disconnectWatch(player)
-	local watch = playerWatches[player]
-	if not watch then
-		return
-	end
-	disconnect(watch.CharacterAdded)
-	disconnect(watch.AnimationPlayed)
-	playerWatches[player] = nil
+local function MasteredUltraInstinctRenderThreatLines()
+    local MasteredUltraInstinctCamera = workspace.CurrentCamera
+    local MasteredUltraInstinctOriginRoot = MasteredUltraInstinctDefenseActive
+        and MasteredUltraInstinctCloneRoot
+        or MasteredUltraInstinctGetRoot(MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character)
+    local MasteredUltraInstinctOriginPosition = MasteredUltraInstinctOriginRoot
+        and MasteredUltraInstinctOriginRoot.Position
+        or MasteredUltraInstinctVirtualRootPosition
+    if not MasteredUltraInstinctCamera or not MasteredUltraInstinctOriginPosition then
+        return
+    end
+    local MasteredUltraInstinctOriginScreen, MasteredUltraInstinctOriginVisible =
+        MasteredUltraInstinctCamera:WorldToViewportPoint(MasteredUltraInstinctOriginPosition)
+
+    for _, MasteredUltraInstinctThreat in pairs(MasteredUltraInstinctThreats) do
+        local MasteredUltraInstinctLine = MasteredUltraInstinctThreat.Line
+        local MasteredUltraInstinctTargetRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctThreat.Player.Character)
+        if not MasteredUltraInstinctLine or not MasteredUltraInstinctTargetRoot or not MasteredUltraInstinctOriginVisible then
+            if MasteredUltraInstinctLine then
+                MasteredUltraInstinctLine.Visible = false
+            end
+            continue
+        end
+        local MasteredUltraInstinctTargetScreen, MasteredUltraInstinctTargetVisible =
+            MasteredUltraInstinctCamera:WorldToViewportPoint(MasteredUltraInstinctTargetRoot.Position)
+        if not MasteredUltraInstinctTargetVisible then
+            MasteredUltraInstinctLine.Visible = false
+            continue
+        end
+        local MasteredUltraInstinctDelta = Vector2.new(
+            MasteredUltraInstinctTargetScreen.X - MasteredUltraInstinctOriginScreen.X,
+            MasteredUltraInstinctTargetScreen.Y - MasteredUltraInstinctOriginScreen.Y
+        )
+        local MasteredUltraInstinctLength = MasteredUltraInstinctDelta.Magnitude
+        if MasteredUltraInstinctLength < 2 then
+            MasteredUltraInstinctLine.Visible = false
+            continue
+        end
+        MasteredUltraInstinctLine.Visible = true
+        MasteredUltraInstinctLine.Position = UDim2.fromOffset(MasteredUltraInstinctOriginScreen.X, MasteredUltraInstinctOriginScreen.Y)
+        MasteredUltraInstinctLine.Size = UDim2.fromOffset(MasteredUltraInstinctLength, M.Config.ThreatLineOuterThickness)
+        MasteredUltraInstinctLine.Rotation = math.deg(math.atan2(MasteredUltraInstinctDelta.Y, MasteredUltraInstinctDelta.X))
+    end
 end
 
-local function hookCharacter(player, character)
-	local watch = playerWatches[player]
-	if not watch then
-		return
-	end
-	disconnect(watch.AnimationPlayed)
-	watch.AnimationPlayed = nil
-
-	task.spawn(function()
-		local humanoid = character:WaitForChild("Humanoid", 5)
-		if not enabled or player.Character ~= character or playerWatches[player] ~= watch or not humanoid then
-			return
-		end
-
-		local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 5)
-		if not enabled or player.Character ~= character or playerWatches[player] ~= watch then
-			return
-		end
-		animator = animator or humanoid
-
-		watch.AnimationPlayed = animator.AnimationPlayed:Connect(function(track)
-			onRemoteAnimationPlayed(player, track)
-		end)
-
-		if M.Config.ScanAlreadyPlayingOnAttach then
-			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-				onRemoteAnimationPlayed(player, track)
-			end
-		end
-	end)
+local function MasteredUltraInstinctClearSourceDeathWatch()
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctSourceDiedConnection)
+    MasteredUltraInstinctSourceDiedConnection = nil
+    MasteredUltraInstinctSourceDied = false
 end
 
-local function watchRemotePlayer(player)
-	if player == localPlayer or playerWatches[player] then
-		return
-	end
-
-	local watch = {}
-	playerWatches[player] = watch
-	watch.CharacterAdded = player.CharacterAdded:Connect(function(character)
-		hookCharacter(player, character)
-	end)
-
-	if player.Character then
-		hookCharacter(player, player.Character)
-	end
+local function MasteredUltraInstinctWatchSourceDeath(MasteredUltraInstinctPlayer)
+    MasteredUltraInstinctClearSourceDeathWatch()
+    if not MasteredUltraInstinctPlayer then
+        return
+    end
+    local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctPlayer.Character)
+    if not MasteredUltraInstinctHumanoid then
+        return
+    end
+    if MasteredUltraInstinctHumanoid.Health <= 0 then
+        MasteredUltraInstinctSourceDied = true
+        return
+    end
+    MasteredUltraInstinctSourceDiedConnection = MasteredUltraInstinctHumanoid.Died:Connect(function()
+        MasteredUltraInstinctSourceDied = true
+    end)
 end
 
-local function stopWatchingEveryone()
-	local watchedPlayers = {}
-	for player in pairs(playerWatches) do
-		table.insert(watchedPlayers, player)
-	end
-	for _, player in ipairs(watchedPlayers) do
-		disconnectWatch(player)
-	end
-	disconnect(playerAddedConnection)
-	disconnect(playerRemovingConnection)
-	playerAddedConnection = nil
-	playerRemovingConnection = nil
-	table.clear(lastTriggerAt)
+local function MasteredUltraInstinctStartSkyLift(MasteredUltraInstinctRoot, MasteredUltraInstinctToken)
+    MasteredUltraInstinctDestroySkyForces()
+    MasteredUltraInstinctSkyVelocity = Instance.new("BodyVelocity")
+    MasteredUltraInstinctSkyVelocity.Name = "MasteredUltraInstinctLift"
+    MasteredUltraInstinctSkyVelocity.Velocity = Vector3.new(0, M.Config.LiftSpeed, 0)
+    MasteredUltraInstinctSkyVelocity.MaxForce = Vector3.new(0, M.Config.HoldForce, 0)
+    MasteredUltraInstinctSkyVelocity.Parent = MasteredUltraInstinctRoot
+
+    task.spawn(function()
+        local MasteredUltraInstinctStartedAt = os.clock()
+        while MasteredUltraInstinctDefenseActive
+            and MasteredUltraInstinctToken == MasteredUltraInstinctActivationToken
+            and MasteredUltraInstinctRoot.Parent do
+            if MasteredUltraInstinctRoot.Position.Y >= MasteredUltraInstinctSkyY - 20
+                or os.clock() - MasteredUltraInstinctStartedAt >= M.Config.LiftTimeout then
+                break
+            end
+            task.wait(0.05)
+        end
+        if not MasteredUltraInstinctDefenseActive
+            or MasteredUltraInstinctToken ~= MasteredUltraInstinctActivationToken
+            or not MasteredUltraInstinctRoot.Parent then
+            return
+        end
+        if MasteredUltraInstinctSkyVelocity then
+            MasteredUltraInstinctSkyVelocity:Destroy()
+            MasteredUltraInstinctSkyVelocity = nil
+        end
+        MasteredUltraInstinctSkyPosition = Instance.new("BodyPosition")
+        MasteredUltraInstinctSkyPosition.Name = "MasteredUltraInstinctHold"
+        MasteredUltraInstinctSkyPosition.Position = Vector3.new(
+            MasteredUltraInstinctRoot.Position.X,
+            MasteredUltraInstinctSkyY,
+            MasteredUltraInstinctRoot.Position.Z
+        )
+        MasteredUltraInstinctSkyPosition.MaxForce = Vector3.new(M.Config.HoldForce, M.Config.HoldForce, M.Config.HoldForce)
+        MasteredUltraInstinctSkyPosition.P = 60000
+        MasteredUltraInstinctSkyPosition.D = 2500
+        MasteredUltraInstinctSkyPosition.Parent = MasteredUltraInstinctRoot
+    end)
 end
 
-local function onHeartbeat(dt)
-	if not active then
-		return
-	end
+local MasteredUltraInstinctDeactivate
 
-	local character = localPlayer and localPlayer.Character
-	local root = getRoot(character)
-	local humanoid = getHumanoid(character)
-	if not character or not root or not humanoid or humanoid.Health <= 0 then
-		deactivate4D(false)
-		return
-	end
+local function MasteredUltraInstinctBegin(MasteredUltraInstinctDodge, MasteredUltraInstinctSource)
+    local MasteredUltraInstinctCharacter = MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character
+    local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+    if not MasteredUltraInstinctCharacter
+        or not MasteredUltraInstinctRoot
+        or not MasteredUltraInstinctHumanoid
+        or MasteredUltraInstinctHumanoid.Health <= 0 then
+        return
+    end
 
-	if os.clock() >= activeUntil then
-		if activeExtendsUntilSourceDies and not sourceDeathObserved then
-			activeUntil = os.clock() + activeDuration
-			return
-		end
-		deactivate4D(true)
-		return
-	end
+    MasteredUltraInstinctFootOffset = MasteredUltraInstinctGetFootOffset(MasteredUltraInstinctCharacter)
+    MasteredUltraInstinctVirtualRootPosition = MasteredUltraInstinctGroundPosition(
+        MasteredUltraInstinctRoot.Position,
+        MasteredUltraInstinctCharacter
+    )
+    local _, MasteredUltraInstinctYaw = MasteredUltraInstinctRoot.CFrame:ToOrientation()
+    local MasteredUltraInstinctCloneCFrame = CFrame.new(MasteredUltraInstinctVirtualRootPosition)
+        * CFrame.Angles(0, MasteredUltraInstinctYaw, 0)
+    MasteredUltraInstinctCloneModel, MasteredUltraInstinctCloneRoot =
+        MasteredUltraInstinctCreateClone(MasteredUltraInstinctCharacter, MasteredUltraInstinctCloneCFrame)
+    if not MasteredUltraInstinctCloneRoot then
+        MasteredUltraInstinctDestroyClone()
+        MasteredUltraInstinctVirtualRootPosition = nil
+        return
+    end
 
-	moveVirtualClone(dt, character)
-	updateCloneAndCamera()
-	updateAura(os.clock())
+    MasteredUltraInstinctDefenseActive = true
+    MasteredUltraInstinctActivationToken += 1
+    local MasteredUltraInstinctToken = MasteredUltraInstinctActivationToken
+    MasteredUltraInstinctActiveDodgeName = MasteredUltraInstinctDodge.Name
+    MasteredUltraInstinctActiveDuration = MasteredUltraInstinctDodge.Duration
+    MasteredUltraInstinctActiveUntil = os.clock() + MasteredUltraInstinctDodge.Duration
+    MasteredUltraInstinctActiveSource = MasteredUltraInstinctSource
+    MasteredUltraInstinctExtendUntilSourceDies =
+        MasteredUltraInstinctDodge.ExtendUntilSourceDies == true and MasteredUltraInstinctSource ~= nil
+    MasteredUltraInstinctPendingDodge = nil
+    MasteredUltraInstinctSkyY = MasteredUltraInstinctVirtualRootPosition.Y + M.Config.SkyAltitude
+    MasteredUltraInstinctCameraSubject = MasteredUltraInstinctCreateCameraSubject(MasteredUltraInstinctVirtualRootPosition)
+    MasteredUltraInstinctHideRealCharacter(MasteredUltraInstinctCharacter)
+    MasteredUltraInstinctCreateAura()
+    MasteredUltraInstinctWatchSourceDeath(MasteredUltraInstinctSource)
+
+    local MasteredUltraInstinctCamera = workspace.CurrentCamera
+    if MasteredUltraInstinctCamera then
+        MasteredUltraInstinctCamera.CameraSubject = MasteredUltraInstinctCameraSubject
+    end
+    MasteredUltraInstinctStartSkyLift(MasteredUltraInstinctRoot, MasteredUltraInstinctToken)
+    MasteredUltraInstinctPlayLocalSound(M.Config.ActivationSoundId)
 end
 
--- ============================================================================
--- API PÚBLICA PARA EL HUB
--- ============================================================================
-function M.Configure(overrides)
-	assert(type(overrides) == "table", "Configure espera una tabla")
-	mergeConfig(M.Config, overrides)
-	rebuildDodgeIndex()
+MasteredUltraInstinctDeactivate = function(MasteredUltraInstinctReturnToClone)
+    if not MasteredUltraInstinctDefenseActive then
+        return
+    end
+    MasteredUltraInstinctDefenseActive = false
+    MasteredUltraInstinctActivationToken += 1
+    MasteredUltraInstinctDestroySkyForces()
+    MasteredUltraInstinctClearSourceDeathWatch()
+
+    local MasteredUltraInstinctCharacter = MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character
+    local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+    if MasteredUltraInstinctReturnToClone
+        and MasteredUltraInstinctRoot
+        and MasteredUltraInstinctHumanoid
+        and MasteredUltraInstinctHumanoid.Health > 0
+        and MasteredUltraInstinctVirtualRootPosition then
+        local MasteredUltraInstinctLandingPosition = MasteredUltraInstinctGroundPosition(
+            MasteredUltraInstinctVirtualRootPosition,
+            MasteredUltraInstinctCharacter
+        )
+        local MasteredUltraInstinctYaw = 0
+        if MasteredUltraInstinctCloneRoot then
+            local _, MasteredUltraInstinctCloneYaw = MasteredUltraInstinctCloneRoot.CFrame:ToOrientation()
+            MasteredUltraInstinctYaw = MasteredUltraInstinctCloneYaw
+        end
+        pcall(function()
+            MasteredUltraInstinctHumanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+            MasteredUltraInstinctRoot.CFrame = CFrame.new(MasteredUltraInstinctLandingPosition)
+                * CFrame.Angles(0, MasteredUltraInstinctYaw, 0)
+            MasteredUltraInstinctRoot.AssemblyLinearVelocity = Vector3.zero
+            MasteredUltraInstinctRoot.AssemblyAngularVelocity = Vector3.zero
+            task.defer(function()
+                if MasteredUltraInstinctHumanoid.Parent then
+                    MasteredUltraInstinctHumanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+                    MasteredUltraInstinctHumanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                end
+            end)
+        end)
+    end
+
+    local MasteredUltraInstinctCamera = workspace.CurrentCamera
+    if MasteredUltraInstinctCamera and MasteredUltraInstinctHumanoid and MasteredUltraInstinctHumanoid.Parent then
+        MasteredUltraInstinctCamera.CameraSubject = MasteredUltraInstinctHumanoid
+    end
+    MasteredUltraInstinctRestoreRealCharacter()
+    MasteredUltraInstinctDestroyClone()
+    MasteredUltraInstinctDestroyCameraSubject()
+    MasteredUltraInstinctVirtualRootPosition = nil
+    MasteredUltraInstinctSkyY = nil
+    MasteredUltraInstinctActiveDodgeName = nil
+    MasteredUltraInstinctActiveDuration = 0
+    MasteredUltraInstinctActiveSource = nil
+    MasteredUltraInstinctExtendUntilSourceDies = false
+    MasteredUltraInstinctPlayLocalSound(M.Config.DeactivationSoundId)
 end
 
-function M.SetDodges(dodges)
-	assert(type(dodges) == "table", "SetDodges espera una tabla")
-	M.Config.Dodges = dodges
-	rebuildDodgeIndex()
+local function MasteredUltraInstinctMoveClone(MasteredUltraInstinctDeltaTime, MasteredUltraInstinctCharacter)
+    if not M.Config.AllowCloneMovement or not MasteredUltraInstinctVirtualRootPosition then
+        return
+    end
+    local MasteredUltraInstinctCamera = workspace.CurrentCamera
+    if not MasteredUltraInstinctCamera then
+        return
+    end
+    local MasteredUltraInstinctLook = MasteredUltraInstinctCamera.CFrame.LookVector
+    local MasteredUltraInstinctRight = MasteredUltraInstinctCamera.CFrame.RightVector
+    local MasteredUltraInstinctForwardFlat = Vector3.new(MasteredUltraInstinctLook.X, 0, MasteredUltraInstinctLook.Z)
+    local MasteredUltraInstinctRightFlat = Vector3.new(MasteredUltraInstinctRight.X, 0, MasteredUltraInstinctRight.Z)
+    if MasteredUltraInstinctForwardFlat.Magnitude > 0 then MasteredUltraInstinctForwardFlat = MasteredUltraInstinctForwardFlat.Unit end
+    if MasteredUltraInstinctRightFlat.Magnitude > 0 then MasteredUltraInstinctRightFlat = MasteredUltraInstinctRightFlat.Unit end
+    local MasteredUltraInstinctMovement = Vector3.zero
+    if MasteredUltraInstinctUserInputService:IsKeyDown(Enum.KeyCode.W) then MasteredUltraInstinctMovement += MasteredUltraInstinctForwardFlat end
+    if MasteredUltraInstinctUserInputService:IsKeyDown(Enum.KeyCode.S) then MasteredUltraInstinctMovement -= MasteredUltraInstinctForwardFlat end
+    if MasteredUltraInstinctUserInputService:IsKeyDown(Enum.KeyCode.D) then MasteredUltraInstinctMovement += MasteredUltraInstinctRightFlat end
+    if MasteredUltraInstinctUserInputService:IsKeyDown(Enum.KeyCode.A) then MasteredUltraInstinctMovement -= MasteredUltraInstinctRightFlat end
+    if MasteredUltraInstinctMovement.Magnitude <= 0 then
+        return
+    end
+    local MasteredUltraInstinctProposed = MasteredUltraInstinctVirtualRootPosition
+        + MasteredUltraInstinctMovement.Unit * M.Config.CloneWalkSpeed * MasteredUltraInstinctDeltaTime
+    local MasteredUltraInstinctGrounded = MasteredUltraInstinctGroundPosition(MasteredUltraInstinctProposed, MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctYDelta = math.clamp(
+        MasteredUltraInstinctGrounded.Y - MasteredUltraInstinctVirtualRootPosition.Y,
+        -M.Config.MaxGroundStepPerSecond * MasteredUltraInstinctDeltaTime,
+        M.Config.MaxGroundStepPerSecond * MasteredUltraInstinctDeltaTime
+    )
+    MasteredUltraInstinctVirtualRootPosition = Vector3.new(
+        MasteredUltraInstinctProposed.X,
+        MasteredUltraInstinctVirtualRootPosition.Y + MasteredUltraInstinctYDelta,
+        MasteredUltraInstinctProposed.Z
+    )
 end
 
-function M.Start(overrides)
-	if enabled then
-		M.Stop()
-	end
-	if overrides then
-		M.Configure(overrides)
-	else
-		rebuildDodgeIndex()
-	end
+local function MasteredUltraInstinctUpdateCloneAndCamera()
+    if not MasteredUltraInstinctVirtualRootPosition then
+        return
+    end
+    local MasteredUltraInstinctCamera = workspace.CurrentCamera
+    local MasteredUltraInstinctYaw = 0
+    if MasteredUltraInstinctCamera then
+        local MasteredUltraInstinctLook = MasteredUltraInstinctCamera.CFrame.LookVector
+        if Vector3.new(MasteredUltraInstinctLook.X, 0, MasteredUltraInstinctLook.Z).Magnitude > 0.01 then
+            MasteredUltraInstinctYaw = math.atan2(-MasteredUltraInstinctLook.X, -MasteredUltraInstinctLook.Z)
+        end
+    end
+    if MasteredUltraInstinctCloneModel and MasteredUltraInstinctCloneRoot then
+        MasteredUltraInstinctCloneModel:PivotTo(
+            CFrame.new(MasteredUltraInstinctVirtualRootPosition) * CFrame.Angles(0, MasteredUltraInstinctYaw, 0)
+        )
+    end
+    if MasteredUltraInstinctCameraSubject then
+        MasteredUltraInstinctCameraSubject.CFrame = CFrame.new(
+            MasteredUltraInstinctVirtualRootPosition + Vector3.new(0, M.Config.CloneHeadOffset, 0)
+        )
+    end
+    if MasteredUltraInstinctSkyPosition and MasteredUltraInstinctSkyY then
+        MasteredUltraInstinctSkyPosition.Position = Vector3.new(
+            MasteredUltraInstinctVirtualRootPosition.X,
+            MasteredUltraInstinctSkyY,
+            MasteredUltraInstinctVirtualRootPosition.Z
+        )
+    end
+end
 
-	localPlayer = Players.LocalPlayer
-	assert(localPlayer, "UltraInstinct4DDodge debe ejecutarse desde un LocalScript")
-	enabled = true
+local function MasteredUltraInstinctTrigger(MasteredUltraInstinctDodge, MasteredUltraInstinctPlayer)
+    if not MasteredUltraInstinctEnabled or not MasteredUltraInstinctDodge then
+        return
+    end
+    local MasteredUltraInstinctNow = os.clock()
+    local MasteredUltraInstinctKey = tostring(MasteredUltraInstinctPlayer and MasteredUltraInstinctPlayer.UserId or 0)
+        .. ":" .. MasteredUltraInstinctDodge.Name
+    if MasteredUltraInstinctNow - (MasteredUltraInstinctLastTriggerAt[MasteredUltraInstinctKey] or -math.huge)
+        < M.Config.SameAnimationCooldown then
+        return
+    end
+    MasteredUltraInstinctLastTriggerAt[MasteredUltraInstinctKey] = MasteredUltraInstinctNow
+    MasteredUltraInstinctMarkThreat(MasteredUltraInstinctPlayer, MasteredUltraInstinctDodge)
 
-	for _, player in ipairs(Players:GetPlayers()) do
-		watchRemotePlayer(player)
-	end
-	playerAddedConnection = Players.PlayerAdded:Connect(watchRemotePlayer)
-	playerRemovingConnection = Players.PlayerRemoving:Connect(disconnectWatch)
-	localCharacterRemovingConnection = localPlayer.CharacterRemoving:Connect(function()
-		deactivate4D(false)
-	end)
-	heartbeatConnection = RunService.Heartbeat:Connect(onHeartbeat)
+    if MasteredUltraInstinctDefenseActive then
+        if M.Config.RefreshOnRepeatedTrigger then
+            MasteredUltraInstinctActiveUntil = math.max(
+                MasteredUltraInstinctActiveUntil,
+                MasteredUltraInstinctNow + MasteredUltraInstinctDodge.Duration
+            )
+        end
+        return
+    end
+    if MasteredUltraInstinctPendingDodge then
+        return
+    end
+    if MasteredUltraInstinctDodge.Delay <= 0 then
+        MasteredUltraInstinctBegin(MasteredUltraInstinctDodge, MasteredUltraInstinctPlayer)
+        return
+    end
+    MasteredUltraInstinctPendingDodge = MasteredUltraInstinctDodge.Name
+    MasteredUltraInstinctPendingToken += 1
+    local MasteredUltraInstinctToken = MasteredUltraInstinctPendingToken
+    task.delay(MasteredUltraInstinctDodge.Delay, function()
+        if MasteredUltraInstinctToken ~= MasteredUltraInstinctPendingToken then
+            return
+        end
+        MasteredUltraInstinctPendingDodge = nil
+        if MasteredUltraInstinctEnabled and not MasteredUltraInstinctDefenseActive then
+            MasteredUltraInstinctBegin(MasteredUltraInstinctDodge, MasteredUltraInstinctPlayer)
+        end
+    end)
+end
+
+local function MasteredUltraInstinctOnAnimation(MasteredUltraInstinctPlayer, MasteredUltraInstinctTrack)
+    local MasteredUltraInstinctAnimation = MasteredUltraInstinctTrack and MasteredUltraInstinctTrack.Animation
+    local MasteredUltraInstinctId = MasteredUltraInstinctAnimation
+        and MasteredUltraInstinctAssetNumber(MasteredUltraInstinctAnimation.AnimationId)
+    if MasteredUltraInstinctId ~= "" then
+        MasteredUltraInstinctTrigger(MasteredUltraInstinctDodgeByAnimationId[MasteredUltraInstinctId], MasteredUltraInstinctPlayer)
+    end
+end
+
+local function MasteredUltraInstinctDisconnectWatch(MasteredUltraInstinctPlayer)
+    local MasteredUltraInstinctWatch = MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer]
+    if MasteredUltraInstinctWatch then
+        MasteredUltraInstinctDisconnect(MasteredUltraInstinctWatch.CharacterAdded)
+        MasteredUltraInstinctDisconnect(MasteredUltraInstinctWatch.AnimationPlayed)
+        MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer] = nil
+    end
+    local MasteredUltraInstinctThreat = MasteredUltraInstinctThreats[MasteredUltraInstinctPlayer]
+    if MasteredUltraInstinctThreat then
+        MasteredUltraInstinctDismissThreat(MasteredUltraInstinctThreat)
+    end
+    if MasteredUltraInstinctActiveSource == MasteredUltraInstinctPlayer then
+        MasteredUltraInstinctSourceDied = true
+    end
+end
+
+local function MasteredUltraInstinctHookCharacter(MasteredUltraInstinctPlayer, MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctWatch = MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer]
+    if not MasteredUltraInstinctWatch then
+        return
+    end
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctWatch.AnimationPlayed)
+    MasteredUltraInstinctWatch.AnimationPlayed = nil
+    task.spawn(function()
+        local MasteredUltraInstinctHumanoid = MasteredUltraInstinctCharacter:WaitForChild("Humanoid", 5)
+        if not MasteredUltraInstinctEnabled
+            or MasteredUltraInstinctPlayer.Character ~= MasteredUltraInstinctCharacter
+            or MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer] ~= MasteredUltraInstinctWatch
+            or not MasteredUltraInstinctHumanoid then
+            return
+        end
+        local MasteredUltraInstinctAnimator = MasteredUltraInstinctHumanoid:FindFirstChildOfClass("Animator")
+            or MasteredUltraInstinctHumanoid:WaitForChild("Animator", 5)
+        if not MasteredUltraInstinctEnabled or MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer] ~= MasteredUltraInstinctWatch then
+            return
+        end
+        MasteredUltraInstinctAnimator = MasteredUltraInstinctAnimator or MasteredUltraInstinctHumanoid
+        MasteredUltraInstinctWatch.AnimationPlayed = MasteredUltraInstinctAnimator.AnimationPlayed:Connect(function(MasteredUltraInstinctTrack)
+            MasteredUltraInstinctOnAnimation(MasteredUltraInstinctPlayer, MasteredUltraInstinctTrack)
+        end)
+    end)
+end
+
+local function MasteredUltraInstinctWatchRemotePlayer(MasteredUltraInstinctPlayer)
+    if MasteredUltraInstinctPlayer == MasteredUltraInstinctLocalPlayer
+        or MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer] then
+        return
+    end
+    local MasteredUltraInstinctWatch = {}
+    MasteredUltraInstinctPlayerWatches[MasteredUltraInstinctPlayer] = MasteredUltraInstinctWatch
+    MasteredUltraInstinctWatch.CharacterAdded = MasteredUltraInstinctPlayer.CharacterAdded:Connect(function(MasteredUltraInstinctCharacter)
+        MasteredUltraInstinctHookCharacter(MasteredUltraInstinctPlayer, MasteredUltraInstinctCharacter)
+    end)
+    if MasteredUltraInstinctPlayer.Character then
+        MasteredUltraInstinctHookCharacter(MasteredUltraInstinctPlayer, MasteredUltraInstinctPlayer.Character)
+    end
+end
+
+local function MasteredUltraInstinctHeartbeat(MasteredUltraInstinctDeltaTime)
+    local MasteredUltraInstinctNow = os.clock()
+    for _, MasteredUltraInstinctThreat in pairs(MasteredUltraInstinctThreats) do
+        if MasteredUltraInstinctThreat.ExpiresAt <= MasteredUltraInstinctNow
+            and MasteredUltraInstinctThreat.Player ~= MasteredUltraInstinctActiveSource then
+            MasteredUltraInstinctDismissThreat(MasteredUltraInstinctThreat)
+        end
+    end
+    if MasteredUltraInstinctNow - MasteredUltraInstinctLastHudUpdate >= 0.1 then
+        MasteredUltraInstinctLastHudUpdate = MasteredUltraInstinctNow
+        MasteredUltraInstinctUpdateThreatHud(MasteredUltraInstinctNow)
+    end
+
+    if not MasteredUltraInstinctDefenseActive then
+        return
+    end
+    local MasteredUltraInstinctCharacter = MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character
+    local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctCharacter)
+    local MasteredUltraInstinctHumanoid = MasteredUltraInstinctGetHumanoid(MasteredUltraInstinctCharacter)
+    if not MasteredUltraInstinctCharacter
+        or not MasteredUltraInstinctRoot
+        or not MasteredUltraInstinctHumanoid
+        or MasteredUltraInstinctHumanoid.Health <= 0 then
+        MasteredUltraInstinctDeactivate(false)
+        return
+    end
+    if MasteredUltraInstinctNow >= MasteredUltraInstinctActiveUntil then
+        if MasteredUltraInstinctExtendUntilSourceDies and not MasteredUltraInstinctSourceDied then
+            MasteredUltraInstinctActiveUntil = MasteredUltraInstinctNow + MasteredUltraInstinctActiveDuration
+        else
+            MasteredUltraInstinctDeactivate(true)
+        end
+        return
+    end
+    MasteredUltraInstinctMoveClone(MasteredUltraInstinctDeltaTime, MasteredUltraInstinctCharacter)
+    MasteredUltraInstinctUpdateCloneAndCamera()
+    if MasteredUltraInstinctNow - MasteredUltraInstinctLastAuraUpdate >= M.Config.Aura.UpdateInterval then
+        MasteredUltraInstinctLastAuraUpdate = MasteredUltraInstinctNow
+        MasteredUltraInstinctUpdateAura(MasteredUltraInstinctNow)
+    end
+end
+
+local function MasteredUltraInstinctStopWatchingEveryone()
+    local MasteredUltraInstinctWatched = {}
+    for MasteredUltraInstinctPlayer in pairs(MasteredUltraInstinctPlayerWatches) do
+        table.insert(MasteredUltraInstinctWatched, MasteredUltraInstinctPlayer)
+    end
+    for _, MasteredUltraInstinctPlayer in ipairs(MasteredUltraInstinctWatched) do
+        MasteredUltraInstinctDisconnectWatch(MasteredUltraInstinctPlayer)
+    end
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctPlayerAddedConnection)
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctPlayerRemovingConnection)
+    MasteredUltraInstinctPlayerAddedConnection = nil
+    MasteredUltraInstinctPlayerRemovingConnection = nil
+    table.clear(MasteredUltraInstinctLastTriggerAt)
+end
+
+function M.Configure(MasteredUltraInstinctOverrides)
+    assert(type(MasteredUltraInstinctOverrides) == "table", "Configure expects a table")
+    MasteredUltraInstinctMergeConfig(M.Config, MasteredUltraInstinctOverrides)
+    MasteredUltraInstinctRebuildDodgeIndex()
+end
+
+function M.SetDodges(MasteredUltraInstinctDodges)
+    assert(type(MasteredUltraInstinctDodges) == "table", "SetDodges expects a table")
+    M.Config.Dodges = MasteredUltraInstinctDodges
+    MasteredUltraInstinctRebuildDodgeIndex()
+end
+
+function M.Start(MasteredUltraInstinctOverrides)
+    if MasteredUltraInstinctEnabled then
+        M.Stop()
+    end
+    if MasteredUltraInstinctOverrides then
+        M.Configure(MasteredUltraInstinctOverrides)
+    else
+        MasteredUltraInstinctRebuildDodgeIndex()
+    end
+    MasteredUltraInstinctLocalPlayer = MasteredUltraInstinctPlayers.LocalPlayer
+    assert(MasteredUltraInstinctLocalPlayer, "MasteredUltraInstinct4DDodge must run on the client")
+    MasteredUltraInstinctEnabled = true
+    MasteredUltraInstinctBuildHud()
+    for _, MasteredUltraInstinctPlayer in ipairs(MasteredUltraInstinctPlayers:GetPlayers()) do
+        MasteredUltraInstinctWatchRemotePlayer(MasteredUltraInstinctPlayer)
+    end
+    MasteredUltraInstinctPlayerAddedConnection = MasteredUltraInstinctPlayers.PlayerAdded:Connect(MasteredUltraInstinctWatchRemotePlayer)
+    MasteredUltraInstinctPlayerRemovingConnection = MasteredUltraInstinctPlayers.PlayerRemoving:Connect(MasteredUltraInstinctDisconnectWatch)
+    MasteredUltraInstinctCharacterRemovingConnection = MasteredUltraInstinctLocalPlayer.CharacterRemoving:Connect(function()
+        MasteredUltraInstinctDeactivate(false)
+    end)
+    MasteredUltraInstinctHeartbeatConnection = MasteredUltraInstinctRunService.Heartbeat:Connect(MasteredUltraInstinctHeartbeat)
+    MasteredUltraInstinctRenderConnection = MasteredUltraInstinctRunService.RenderStepped:Connect(MasteredUltraInstinctRenderThreatLines)
 end
 
 function M.Stop()
-	if not enabled then
-		return
-	end
-
-	pendingActivationToken += 1
-	pendingDodgeName = nil
-	if active then
-		deactivate4D(true)
-	end
-	enabled = false
-	stopWatchingEveryone()
-	disconnect(heartbeatConnection)
-	disconnect(localCharacterRemovingConnection)
-	heartbeatConnection = nil
-	localCharacterRemovingConnection = nil
+    MasteredUltraInstinctPendingToken += 1
+    MasteredUltraInstinctPendingDodge = nil
+    if MasteredUltraInstinctDefenseActive then
+        MasteredUltraInstinctDeactivate(true)
+    end
+    MasteredUltraInstinctEnabled = false
+    MasteredUltraInstinctStopWatchingEveryone()
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctHeartbeatConnection)
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctRenderConnection)
+    MasteredUltraInstinctDisconnect(MasteredUltraInstinctCharacterRemovingConnection)
+    MasteredUltraInstinctHeartbeatConnection = nil
+    MasteredUltraInstinctRenderConnection = nil
+    MasteredUltraInstinctCharacterRemovingConnection = nil
+    for _, MasteredUltraInstinctThreat in pairs(MasteredUltraInstinctThreats) do
+        MasteredUltraInstinctDismissThreat(MasteredUltraInstinctThreat)
+    end
+    if MasteredUltraInstinctHud then
+        MasteredUltraInstinctHud:Destroy()
+    end
+    MasteredUltraInstinctHud = nil
+    MasteredUltraInstinctHudCards = nil
+    MasteredUltraInstinctHudLines = nil
+    MasteredUltraInstinctLastHudUpdate = 0
+    MasteredUltraInstinctLastAuraUpdate = 0
 end
 
-function M.TriggerDodge(dodgeName)
-	local dodge = nil
-	for _, candidate in pairs(dodgeByAnimationId) do
-		if candidate.Name == dodgeName then
-			dodge = candidate
-			break
-		end
-	end
-	triggerDodge(dodge, nil)
+function M.TriggerDodge(MasteredUltraInstinctDodgeName)
+    for _, MasteredUltraInstinctDodge in pairs(MasteredUltraInstinctDodgeByAnimationId) do
+        if MasteredUltraInstinctDodge.Name == MasteredUltraInstinctDodgeName then
+            MasteredUltraInstinctTrigger(MasteredUltraInstinctDodge, nil)
+            return true
+        end
+    end
+    return false
+end
+
+function M.IsDefenseActive()
+    return MasteredUltraInstinctDefenseActive
 end
 
 function M.IsActive()
-	return active
+    return M.IsDefenseActive()
 end
 
 function M.GetActiveDodge()
-	return activeDodgeName
+    return MasteredUltraInstinctActiveDodgeName
 end
+
+function M.GetMarkedThreats()
+    local MasteredUltraInstinctResult = {}
+    local MasteredUltraInstinctOrigin = MasteredUltraInstinctVirtualRootPosition
+        or (MasteredUltraInstinctGetRoot(MasteredUltraInstinctLocalPlayer and MasteredUltraInstinctLocalPlayer.Character) or {}).Position
+    for _, MasteredUltraInstinctThreat in ipairs(MasteredUltraInstinctThreatList()) do
+        local MasteredUltraInstinctRoot = MasteredUltraInstinctGetRoot(MasteredUltraInstinctThreat.Player.Character)
+        table.insert(MasteredUltraInstinctResult, {
+            player = MasteredUltraInstinctThreat.Player,
+            name = MasteredUltraInstinctThreat.Player.Name,
+            displayName = MasteredUltraInstinctThreat.Player.DisplayName,
+            ability = MasteredUltraInstinctThreat.DodgeName,
+            distance = MasteredUltraInstinctRoot and MasteredUltraInstinctOrigin
+                and (MasteredUltraInstinctRoot.Position - MasteredUltraInstinctOrigin).Magnitude
+                or nil,
+            isActiveSource = MasteredUltraInstinctThreat.Player == MasteredUltraInstinctActiveSource,
+        })
+    end
+    return MasteredUltraInstinctResult
+end
+
+function M.GetThreatState()
+    return {
+        defenseActive = MasteredUltraInstinctDefenseActive,
+        activeDodge = MasteredUltraInstinctActiveDodgeName,
+        activeSource = MasteredUltraInstinctActiveSource,
+        markedThreats = M.GetMarkedThreats(),
+    }
+end
+
+-- Stable hub-facing API. Keep this reference rather than reaching into module
+-- locals so other modules can query status without changing this script.
+M.API = {
+    GetMarkedThreats = function()
+        return M.GetMarkedThreats()
+    end,
+    IsDefenseActive = function()
+        return M.IsDefenseActive()
+    end,
+    GetThreatState = function()
+        return M.GetThreatState()
+    end,
+}
 
 return M
