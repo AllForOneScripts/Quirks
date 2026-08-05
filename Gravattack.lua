@@ -7,7 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 -- ==========================================
--- PARÁMETROS DE GRAVEDAD Y MOVIMIENTO
+-- PARÁMETROS
 -- ==========================================
 local GRAVEDAD_NORMAL = 196.2
 local GRAVEDAD_CERO = 0
@@ -19,8 +19,12 @@ local IMPULSO_EXPLOSIVO_XZ = 120
 local VELOCIDAD_CAIDA_LENTA = -15
 local ACELERACION_CAIDA = 0.75
 
+local DISTANCIA_OBJETIVO_SLAM = 30
+local TIEMPO_PEGADO_CABEZA = 0.22
+local VELOCIDAD_DESCENSO_SLAM = -140
+
 -- ==========================================
--- VARIABLES DE ESTADO Y REFERENCIAS
+-- ESTADO
 -- ==========================================
 local _conns = {}
 local _isActive = false
@@ -36,12 +40,13 @@ local lastSlamEndTime = 0
 
 local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar, animPlataforma
+
 local plataformaActiva = nil
 local alturaPlataforma = nil
 local loopPlataformaConn = nil
 
 -- ==========================================
--- SISTEMA DE ANIMACIONES
+-- ANIMACIONES
 -- ==========================================
 local function LoadAnim(id, priority, looped)
 	if not animator then return nil end
@@ -67,7 +72,7 @@ local function DetenerAnimacionesCustom(fadeTime)
 end
 
 -- ==========================================
--- BUCLE DE ANIMACIÓN DE PLATAFORMA
+-- ANIMACIÓN DE PLATAFORMA
 -- ==========================================
 local function IniciarLoopAnimPlataforma()
 	if not animPlataforma then return end
@@ -125,8 +130,22 @@ local function IniciarLoopAnimPlataforma()
 end
 
 -- ==========================================
--- SISTEMA DE PLATAFORMA INVISIBLE
+-- PLATAFORMA
 -- ==========================================
+local function VolverAModoVuelo()
+	if not rootPart then return end
+
+	isFloating = true
+	workspace.Gravity = GRAVEDAD_CERO
+
+	local vel = rootPart.AssemblyLinearVelocity
+	rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+
+	if animVuelo and not animVuelo.IsPlaying then
+		animVuelo:Play(0.2)
+	end
+end
+
 local function DestruirPlataforma()
 	isPlatformMode = false
 	alturaPlataforma = nil
@@ -143,10 +162,6 @@ local function DestruirPlataforma()
 
 	if animPlataforma and animPlataforma.IsPlaying then
 		animPlataforma:Stop(0.2)
-	end
-
-	if isFloating and not isSlamming and animVuelo then
-		animVuelo:Play(0.2)
 	end
 end
 
@@ -167,7 +182,7 @@ local function CrearPlataforma()
 		+ (rootPart.Size.Y / 2)
 		+ (plataformaActiva.Size.Y / 2)
 
-	-- La altura queda fijada al crearla: solo seguirá X/Z.
+	-- Esta altura no cambia: la plataforma solo se mueve en X/Z.
 	alturaPlataforma = rootPart.Position.Y - altura
 
 	plataformaActiva.CFrame = CFrame.new(
@@ -187,112 +202,181 @@ local function CrearPlataforma()
 end
 
 -- ==========================================
--- TELETRANSPORTE OFENSIVO (SLAM)
+-- BUSCAR SUELO Y OBJETIVO
 -- ==========================================
-local function AplastarContraElSuelo()
-	DestruirPlataforma()
-
-	if isSlamming or not rootPart or not _isActive then return end
-
-	local rayOrigin = rootPart.Position
-	local rayDirection = Vector3.new(0, -2000, 0)
+local function BuscarSueloDebajo()
+	if not rootPart then return nil end
 
 	local rayParams = RaycastParams.new()
-	rayParams.FilterDescendantsInstances = { character }
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { character }
+	rayParams.RespectCanCollide = true
 
-	local rayResult = workspace:Raycast(rayOrigin, rayDirection, rayParams)
+	local origen = rootPart.Position + Vector3.new(0, 3, 0)
+	return workspace:Raycast(origen, Vector3.new(0, -10000, 0), rayParams)
+end
 
-	if rayResult then
-		isSlamming = true
-		DetenerAnimacionesCustom(0.1)
+local function BuscarObjetivoDebajo()
+	if not rootPart then return nil end
 
-		local impactoBase = rayResult.Position
-		local objetivo = nil
-		local menorDistancia = 30
+	local objetivo = nil
+	local menorDistancia = DISTANCIA_OBJETIVO_SLAM
 
-		for _, otroJugador in ipairs(Players:GetPlayers()) do
-			if otroJugador ~= player and otroJugador.Character then
-				local rootEnemigo = otroJugador.Character:FindFirstChild("HumanoidRootPart")
-				local humEnemigo = otroJugador.Character:FindFirstChild("Humanoid")
+	for _, otroJugador in ipairs(Players:GetPlayers()) do
+		if otroJugador ~= player and otroJugador.Character then
+			local enemigoRoot = otroJugador.Character:FindFirstChild("HumanoidRootPart")
+			local enemigoHumanoid = otroJugador.Character:FindFirstChildOfClass("Humanoid")
 
-				if rootEnemigo and humEnemigo and humEnemigo.Health > 0 then
-					local distXZ = (
-						Vector3.new(impactoBase.X, 0, impactoBase.Z)
-						- Vector3.new(rootEnemigo.Position.X, 0, rootEnemigo.Position.Z)
-					).Magnitude
+			if enemigoRoot and enemigoHumanoid and enemigoHumanoid.Health > 0 then
+				local diferenciaY = rootPart.Position.Y - enemigoRoot.Position.Y
 
-					local difY = math.abs(impactoBase.Y - rootEnemigo.Position.Y)
+				local distanciaXZ = (
+					Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+					- Vector3.new(enemigoRoot.Position.X, 0, enemigoRoot.Position.Z)
+				).Magnitude
 
-					if distXZ <= menorDistancia and difY <= 50 then
-						objetivo = rootEnemigo
-						menorDistancia = distXZ
-					end
+				-- Solo elige a alguien que esté debajo de ti.
+				if diferenciaY > 2
+					and diferenciaY < 150
+					and distanciaXZ < menorDistancia then
+
+					objetivo = enemigoRoot
+					menorDistancia = distanciaXZ
 				end
 			end
 		end
-
-		if objetivo then
-			if animImpacto then animImpacto:Play(0.1) end
-
-			local tiempoAgarre = 0.2
-			local t = 0
-			local agarreConn
-
-			agarreConn = RunService.Heartbeat:Connect(function(dt)
-				if not _isActive then
-					if agarreConn then agarreConn:Disconnect() end
-					return
-				end
-
-				t += dt
-
-				if t >= tiempoAgarre or not objetivo or not objetivo.Parent then
-					agarreConn:Disconnect()
-					isSlamming = false
-					lastSlamEndTime = tick()
-					DetenerAnimacionesCustom(0.2)
-				else
-					local alturaAgarre = (objetivo.Size.Y / 2) + 1.5
-
-					rootPart.CFrame = CFrame.new(
-						objetivo.Position + Vector3.new(0, alturaAgarre, 0)
-					)
-
-					rootPart.AssemblyLinearVelocity = Vector3.zero
-				end
-			end)
-
-			table.insert(_conns, agarreConn)
-		else
-			local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
-
-			rootPart.CFrame = CFrame.new(
-				impactoBase + Vector3.new(0, alturaPiernas, 0)
-			)
-
-			rootPart.AssemblyLinearVelocity = Vector3.zero
-
-			task.delay(0.1, function()
-				if not _isActive then return end
-
-				isSlamming = false
-				lastSlamEndTime = tick()
-				DetenerAnimacionesCustom(0.2)
-			end)
-		end
-
-		if isFloating then
-			isFloating = false
-		end
-
-		holdTimer = 0
-		workspace.Gravity = GRAVEDAD_NORMAL
 	end
+
+	return objetivo
 end
 
 -- ==========================================
--- INICIALIZACIÓN DE PERSONAJE
+-- SLAM
+-- ==========================================
+local function PegarALaCabeza(objetivoRoot)
+	if not objetivoRoot or not objetivoRoot.Parent then return end
+
+	if animImpacto then
+		animImpacto:Play(0.1)
+	end
+
+	local tiempo = 0
+	local conexion
+
+	conexion = RunService.Heartbeat:Connect(function(dt)
+		if not _isActive
+			or not rootPart
+			or not humanoid
+			or not objetivoRoot
+			or not objetivoRoot.Parent then
+
+			if conexion then
+				conexion:Disconnect()
+			end
+
+			isSlamming = false
+			lastSlamEndTime = tick()
+			return
+		end
+
+		tiempo += dt
+
+		if tiempo >= TIEMPO_PEGADO_CABEZA then
+			conexion:Disconnect()
+
+			-- Al soltarlo, continúa descendiendo para completar el golpe.
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				objetivoRoot.AssemblyLinearVelocity.X,
+				VELOCIDAD_DESCENSO_SLAM,
+				objetivoRoot.AssemblyLinearVelocity.Z
+			)
+
+			isSlamming = false
+			lastSlamEndTime = tick()
+			return
+		end
+
+		local cabeza = objetivoRoot.Parent:FindFirstChild("Head")
+		local posicionCabeza = cabeza and cabeza.Position
+			or (objetivoRoot.Position + Vector3.new(0, objetivoRoot.Size.Y, 0))
+
+		-- Mantiene tus pies sobre su cabeza mientras el objetivo se mueve.
+		local alturaSobreCabeza = humanoid.HipHeight
+			+ (rootPart.Size.Y / 2)
+			+ 0.15
+
+		rootPart.CFrame = CFrame.new(
+			posicionCabeza + Vector3.new(0, alturaSobreCabeza, 0)
+		)
+
+		rootPart.AssemblyLinearVelocity = Vector3.new(
+			objetivoRoot.AssemblyLinearVelocity.X,
+			-20,
+			objetivoRoot.AssemblyLinearVelocity.Z
+		)
+	end)
+
+	table.insert(_conns, conexion)
+end
+
+local function AplastarContraElSuelo()
+	if isSlamming or not rootPart or not humanoid or not _isActive then
+		return
+	end
+
+	isSlamming = true
+	DestruirPlataforma()
+	DetenerAnimacionesCustom(0.1)
+
+	isFloating = false
+	holdTimer = 0
+	workspace.Gravity = GRAVEDAD_NORMAL
+
+	-- Primero intenta fijarse a un jugador que esté debajo.
+	local objetivo = BuscarObjetivoDebajo()
+
+	if objetivo then
+		PegarALaCabeza(objetivo)
+		return
+	end
+
+	-- Si no hay objetivo, se teletransporta al suelo.
+	local rayResult = BuscarSueloDebajo()
+
+	if not rayResult then
+		rootPart.AssemblyLinearVelocity = Vector3.new(0, -120, 0)
+		humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+
+		task.delay(0.15, function()
+			if _isActive then
+				isSlamming = false
+				lastSlamEndTime = tick()
+			end
+		end)
+
+		return
+	end
+
+	local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
+
+	rootPart.CFrame = CFrame.new(
+		rayResult.Position + Vector3.new(0, alturaPiernas, 0)
+	)
+
+	rootPart.AssemblyLinearVelocity = Vector3.zero
+	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+
+	task.delay(0.1, function()
+		if not _isActive then return end
+
+		isSlamming = false
+		lastSlamEndTime = tick()
+		DetenerAnimacionesCustom(0.2)
+	end)
+end
+
+-- ==========================================
+-- PERSONAJE
 -- ==========================================
 local function SetupCharacter(newCharacter)
 	DestruirPlataforma()
@@ -334,7 +418,7 @@ local function SetupCharacter(newCharacter)
 end
 
 -- ==========================================
--- API PRINCIPAL
+-- API
 -- ==========================================
 function M.Start(Keys)
 	if Keys then
@@ -399,20 +483,13 @@ function M.Start(Keys)
 				CrearPlataforma()
 			else
 				DestruirPlataforma()
+				VolverAModoVuelo()
 			end
 
 		elseif input.KeyCode == Enum.KeyCode.LeftControl
 			or input.KeyCode == Enum.KeyCode.RightControl then
 
-			local state = humanoid:GetState()
-
-			if state == Enum.HumanoidStateType.Jumping
-				or state == Enum.HumanoidStateType.Freefall
-				or isFloating
-				or isPlatformMode then
-
-				AplastarContraElSuelo()
-			end
+			AplastarContraElSuelo()
 		end
 	end)
 
@@ -445,7 +522,7 @@ function M.Start(Keys)
 			or state == Enum.HumanoidStateType.Freefall
 		)
 
-		-- PLATAFORMA: se mueve contigo lateralmente, pero no sube.
+		-- MODO PLATAFORMA
 		if isPlatformMode and plataformaActiva then
 			workspace.Gravity = GRAVEDAD_NORMAL
 
@@ -473,14 +550,10 @@ function M.Start(Keys)
 				holdTimer = 0
 			end
 
-		-- MODALIDAD FLOTAR NORMAL / EXPLOSIVA
+		-- MODO FLOTAR
 		else
-			if not inAir then
-				if isFloating then
-					isFloating = false
-					DetenerAnimacionesCustom(0.3)
-				end
-
+			-- No apaga el vuelo solo porque el Humanoid detecte Running.
+			if not inAir and not isFloating then
 				workspace.Gravity = GRAVEDAD_NORMAL
 
 				if not isHoldingSpace then
