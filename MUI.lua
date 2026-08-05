@@ -1,11 +1,3 @@
---[[
-    MUI4DDodge.lua
-    Client module for a Roblox experience you control.
-
-    Detects configured remote animation tracks, warns locally about their
-    source, and activates a temporary Mastered Ultra Instinct 4D defense.
-]]
-
 local M = {}
 
 local MUIPlayers = game:GetService("Players")
