@@ -9,12 +9,13 @@ local M = {}
 local Players          = cloneref(game:GetService("Players"))
 local RunService       = cloneref(game:GetService("RunService"))
 local UserInputService = cloneref(game:GetService("UserInputService"))
+local TweenService     = cloneref(game:GetService("TweenService"))
 local Debris           = game:GetService("Debris")
 
 local camera = workspace.CurrentCamera
 
 local OCFG = {
-    SAFE_DIST = 20, WALL_BUFFER = 8,
+    SAFE_DIST = 35, WALL_BUFFER = 8,
     DASH_FORCE_BASE = 65, MAX_VELOCITY = 120, ROTATION_SMOOTH = 0.85,
 
     AERIAL_DETECT_DIST       = 35,
@@ -43,7 +44,7 @@ local OCFG = {
     ORBIT_SPEED      = 6,
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
-    CLONE_VISUAL_Y_OFFSET = 1.5, -- Elevación extra para evitar que las piernas atraviesen el suelo
+    CLONE_VISUAL_Y_OFFSET = 0.25,
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
@@ -80,6 +81,10 @@ local omniHeartbeat = nil;  local omniInputBegin = nil
 local omniInputEnd = nil;   local omniCharConn = nil
 local omniCloneModel = nil; local omniCloneHighlight = nil
 local omniCloneOrigColors = {}; local omniCloneJumpOffset = 0; local omniCloneJumpVel = 0
+local omni4DPinned = false; local omniPinGui = nil
+local omniLockModuleRef = nil
+local omniPublicState = { threats = {}, primary = nil, distances = {}, is4D = false, is4DPinned = false, mode4D = "off" }
+local omniLastPublicUpdate = 0
 
 -- Variables para movimiento errático en alerta
 local erraticTimer = 0
@@ -190,11 +195,14 @@ local function omniFollowGround(prevPos, desiredXZ, dt, char)
     -- Raycast para obtener altura del suelo en la nueva posición
     local groundY = omniGetGroundHeight(newPos, char)
     if groundY then
-        -- Limitar velocidad de descenso/ascenso para evitar tirones
         local diff = groundY - prevPos.Y
-        local maxDelta = OCFG.MAX_VERTICAL_SPEED * dt
-        local newY = prevPos.Y + math.clamp(diff, -maxDelta, maxDelta)
-        newPos = Vector3.new(newPos.X, newY, newPos.Z)
+        -- No escala paredes; al bajar, ajusta al suelo de inmediato para que
+        -- no quede suspendido ni se hunda visualmente en una pendiente.
+        if diff > OCFG.CLIMB_STEP_MAX then
+            newPos = Vector3.new(newPos.X, prevPos.Y, newPos.Z)
+        else
+            newPos = Vector3.new(newPos.X, groundY, newPos.Z)
+        end
     else
         -- Si no hay suelo, mantener Y actual (puede estar en el aire)
         newPos = Vector3.new(newPos.X, prevPos.Y, newPos.Z)
@@ -254,10 +262,60 @@ local function omniThreatLevel(originPos, tHRP, tHum)
     return math.clamp(distT*0.5 + hp*0.25 + math.clamp(spd/40,0,1)*0.25, 0, 1)
 end
 
+local function omniGetLockTarget()
+    local lock = omniLockModuleRef
+    if type(lock) ~= "table" then lock = rawget(getgenv(), "AFO_LOCK_API") end
+    if type(lock) ~= "table" or type(lock.IsLockActive) ~= "function" or type(lock.GetTarget) ~= "function" then return nil end
+    local ok, active = pcall(lock.IsLockActive)
+    if not ok or active ~= true then return nil end
+    local okTarget, target = pcall(lock.GetTarget)
+    return okTarget and target or nil
+end
+
+local function omniBuildThreats(myHRP)
+    local locked = omniGetLockTarget()
+    local threats = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= _lplr and p.Character then
+            local hrp, hum = omniGetHRP(p.Character), p.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 then
+                local distance = (hrp.Position - myHRP.Position).Magnitude
+                if distance < 100 then
+                    table.insert(threats, { HRP = hrp, Hum = hum, Player = p, Distance = distance,
+                        Score = omniThreatLevel(myHRP.Position, hrp, hum), IsLocked = p == locked })
+                end
+            end
+        end
+    end
+    table.sort(threats, function(a, b)
+        if math.abs(a.Score - b.Score) < 0.001 then
+            if a.IsLocked ~= b.IsLocked then return a.IsLocked end
+            return a.Distance < b.Distance
+        end
+        return a.Score > b.Score
+    end)
+    return threats
+end
+
+local function omniUpdatePublicState(threats)
+    if tick() - omniLastPublicUpdate < 0.1 then return end
+    omniLastPublicUpdate = tick()
+    table.clear(omniPublicState.threats); table.clear(omniPublicState.distances)
+    for i, t in ipairs(threats) do
+        omniPublicState.threats[i] = { player = t.Player, name = t.Player.Name, distance = t.Distance, score = t.Score, locked = t.IsLocked }
+        omniPublicState.distances[i] = t.Distance
+    end
+    omniPublicState.primary = omniPublicState.threats[1]
+    omniPublicState.is4D = omniInSky
+    omniPublicState.is4DPinned = omni4DPinned
+    omniPublicState.mode4D = omni4DPinned and "pinned" or (omniInSky and "4d" or "off")
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  CLON
 -- ═══════════════════════════════════════════════════════════════════════════
 local function omniDestroyDecoy()
+    if omniPinGui then omniPinGui:Destroy(); omniPinGui = nil end
     if omniCloneHighlight then omniCloneHighlight.Parent = nil; omniCloneHighlight = nil end
     if omniCloneModel then omniCloneModel:Destroy(); omniCloneModel = nil end
     omniCloneOrigColors = {}; omniCloneJumpOffset = 0; omniCloneJumpVel = 0
@@ -314,6 +372,8 @@ local function omniCreateDecoy(pos)
     if cloneHRP then
         clone:SetPrimaryPartCFrame(cloneHRP.CFrame)
         clone.PrimaryPart = cloneHRP
+        local _, ry = cloneHRP.CFrame:ToEulerAnglesYXZ()
+        clone:PivotTo(CFrame.new(pos) * CFrame.Angles(0, ry, 0))
     end
 
     local hl = Instance.new("Highlight", clone)
@@ -337,6 +397,31 @@ local function omniDestroyCamSubject()
     if omniCamSubjectPart then omniCamSubjectPart:Destroy(); omniCamSubjectPart = nil end
 end
 
+local function omniSetPinned(value)
+    if omni4DPinned == value then return end
+    omni4DPinned = value
+    if not value then
+        if omniPinGui then
+            local scale = omniPinGui:FindFirstChildOfClass("UIScale")
+            if scale then TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Scale = 0}):Play() end
+            local gui = omniPinGui; omniPinGui = nil
+            task.delay(0.17, function() pcall(function() gui:Destroy() end) end)
+        end
+        return
+    end
+    local adornee = omniCloneModel and (omniCloneModel:FindFirstChild("Head") or omniCloneModel.PrimaryPart)
+    if not adornee then return end
+    local gui = Instance.new("BillboardGui")
+    gui.Name = "Omni4DPinnedLock"; gui.Adornee = adornee; gui.Size = UDim2.fromOffset(42, 42)
+    gui.StudsOffset = Vector3.new(0, 3.2, 0); gui.AlwaysOnTop = true; gui.Parent = omniCloneModel
+    local image = Instance.new("ImageLabel", gui)
+    image.BackgroundTransparency = 1; image.Size = UDim2.fromScale(1, 1)
+    image.Image = "rbxassetid://15117261700"; image.ImageColor3 = Color3.new(1, 1, 1)
+    local scale = Instance.new("UIScale", gui); scale.Scale = 0
+    TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+    omniPinGui = gui
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  MODO 4D
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -348,7 +433,8 @@ local function omniActivate4D()
     omniInSky = true; omniOrbiting = false; omniOrbitAngle = 0
     omniOrbitTimer = 0; omniLastCamCF = nil
     omniFootOffset  = omniHRPFootOffset(char)
-    omniGroundPos   = hrp.Position
+    local groundY = omniGetGroundHeight(hrp.Position, char)
+    omniGroundPos   = Vector3.new(hrp.Position.X, groundY or hrp.Position.Y, hrp.Position.Z)
     omniSkyWorldY   = omniGroundPos.Y + OCFG.SKY_ALTITUDE
 
     omniCreateDecoy(omniGroundPos)
@@ -395,6 +481,9 @@ end
 
 local function omniDeactivate4D()
     if not omniInSky then return end
+    local wasPinned = omni4DPinned
+    omniSetPinned(false)
+    if wasPinned then task.wait(0.18) end
     omniInSky = false; omniOrbiting = false
 
     if omniSkyBV  then omniSkyBV:Destroy();  omniSkyBV  = nil end
@@ -755,31 +844,18 @@ local function omniStart()
                 end
             end
 
+            omniUpdatePublicState(omniBuildThreats(myHRP))
             omniUpdateESP(omniGroundPos)
             return
         end
 
         -- Fuera del modo 4D
         omniUpdateESP(myHRP and myHRP.Position)
+        if myHRP then omniUpdatePublicState(omniBuildThreats(myHRP)) else omniUpdatePublicState({}) end
         if not omniModeX or not myHRP or (hum and hum.Health <= 0) then return end
 
-        local threats   = {}
-        local mainThreat = nil
-        local minDist    = math.huge
-
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= _lplr and p.Character then
-                local tHRP = omniGetHRP(p.Character)
-                local tHum = p.Character:FindFirstChildOfClass("Humanoid")
-                if tHRP and tHum and tHum.Health > 0 then
-                    local dist = (tHRP.Position - myHRP.Position).Magnitude
-                    if dist < 100 then
-                        table.insert(threats, {HRP = tHRP, Hum = tHum, Player = p})
-                        if dist < minDist then minDist = dist; mainThreat = tHRP end
-                    end
-                end
-            end
-        end
+        local threats = omniBuildThreats(myHRP)
+        local mainThreat = threats[1] and threats[1].HRP or nil
 
         local aerialHandled = omniHandleAerial(myHRP, hum, threats)
 
@@ -801,6 +877,15 @@ local function omniStart()
 
     omniInputBegin = trackConnection(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not enabled then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and omniInSky then
+            if omni4DPinned then
+                omniSetPinned(false)
+                omniDeactivate4D()
+            else
+                omniSetPinned(true)
+            end
+            return
+        end
         if input.KeyCode == _keys.OmniBlock then
             omniModeX = true
             if omniRmbHeld and not omniInSky then omniModeY = true; omniActivate4D() end
@@ -817,19 +902,19 @@ local function omniStart()
     omniInputEnd = trackConnection(UserInputService.InputEnded:Connect(function(input)
         if input.KeyCode == _keys.OmniBlock then
             omniModeX = false; omniClearESP()
-            if omniInSky then omniModeY = false; omniDeactivate4D() end
+            if omniInSky and not omni4DPinned then omniModeY = false; omniDeactivate4D() end
         end
         if input.KeyCode == _keys.Omni4D then
-            if omniInSky then omniModeY = false; omniDeactivate4D() end
+            if omniInSky and not omni4DPinned then omniModeY = false; omniDeactivate4D() end
         end
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
             omniRmbHeld = false
-            if omniInSky then omniModeY = false; omniDeactivate4D() end
+            if omniInSky and not omni4DPinned then omniModeY = false; omniDeactivate4D() end
         end
     end))
 
     omniCharConn = trackConnection(_lplr.CharacterRemoving:Connect(function()
-        omniModeX = false; omniModeY = false; omniRmbHeld = false
+        omniModeX = false; omniModeY = false; omniRmbHeld = false; omni4DPinned = false
         if omniInSky then
             omniInSky = false; omniOrbiting = false
             if omniSkyBV  then omniSkyBV:Destroy();  omniSkyBV  = nil end
@@ -871,5 +956,19 @@ end
 function M.Is4DActive()
     return omniInSky
 end
+
+function M.Is4DPinned()
+    return omni4DPinned
+end
+
+function M.SetLockModule(lockModule)
+    omniLockModuleRef = type(lockModule) == "table" and lockModule or nil
+end
+
+function M.GetThreatState()
+    return omniPublicState
+end
+
+getgenv().AFO_OMNIBLOCK_API = M
 
 return M
