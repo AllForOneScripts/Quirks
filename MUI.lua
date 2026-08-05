@@ -1,3 +1,11 @@
+--[[
+    MUI4DDodge.lua
+    Client module for a Roblox experience you control.
+
+    Detects configured remote animation tracks, warns locally about their
+    source, and activates a temporary Mastered Ultra Instinct 4D defense.
+]]
+
 local M = {}
 
 local MUIPlayers = game:GetService("Players")
@@ -1372,6 +1380,11 @@ function M.Start(MUIOverrides)
     if MUIEnabled then
         M.Stop()
     end
+    -- Accept Start(LocalPlayer, optionalKey) too, so lightweight hub readers
+    -- that follow the Lock module convention can reuse this module safely.
+    if typeof(MUIOverrides) == "Instance" and MUIOverrides:IsA("Player") then
+        MUIOverrides = nil
+    end
     if MUIOverrides then
         M.Configure(MUIOverrides)
     else
@@ -1471,6 +1484,23 @@ function M.GetThreatState()
     }
 end
 
+-- Compatibility status shape for generic hub readers. Here "target" means the
+-- most recently marked threat, not a camera-lock target.
+function M.GetStatus()
+    local MUIThreats = M.GetMarkedThreats()
+    local MUIPrimary = MUIThreats[1]
+    return {
+        systemEnabled = MUIEnabled,
+        defenseActive = MUIDefenseActive,
+        lockActive = MUIDefenseActive, -- Kept for readers built around Lock.lua.
+        target = MUIPrimary and MUIPrimary.player or nil,
+        targetName = MUIPrimary and (MUIPrimary.displayName or MUIPrimary.name) or nil,
+        distance = MUIPrimary and MUIPrimary.distance or nil,
+        activeDodge = MUIActiveDodgeName,
+        markedThreats = MUIThreats,
+    }
+end
+
 -- Stable hub-facing API. Keep this reference rather than reaching into module
 -- locals so other modules can query status without changing this script.
 M.API = {
@@ -1483,6 +1513,18 @@ M.API = {
     GetThreatState = function()
         return M.GetThreatState()
     end,
+    GetStatus = function()
+        return M.GetStatus()
+    end,
 }
 
+-- Optional executor-facing alias; normal ModuleScript consumers still use
+-- require(...), so this remains harmless in a standard Roblox client.
+if type(getgenv) == "function" then
+    pcall(function()
+        getgenv().AFO_MUI_API = M
+    end)
+end
+
 return M
+
