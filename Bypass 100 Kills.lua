@@ -1,40 +1,76 @@
 local M = {}
-local _conn = nil
-local _teleporting = false
+
+local connections = {}
+local teleporting = false
+local TARGET_ID = "9066167010"
+
+local function disconnectAll()
+	for _, connection in ipairs(connections) do
+		connection:Disconnect()
+	end
+	table.clear(connections)
+end
+
+local function isTargetSound(sound)
+	local id = sound.SoundId:match("%d+")
+	return id == TARGET_ID
+end
 
 function M.Start(lplr, TeleportService, placeId)
-    _teleporting = false
-    local function check(instance)
-        if not instance:IsA("Sound") then return end
-        local targetId = "9066167010"
-        if not (instance.SoundId == "rbxassetid://"..targetId or (instance.SoundId:match("%d+") or "") == targetId) then return end
-        local function go()
-            if _teleporting then return end
-            _teleporting = true
-            TeleportService:Teleport(placeId, lplr)
-        end
-        if instance.IsPlaying then go(); return end
-        instance:GetPropertyChangedSignal("IsPlaying"):Connect(function()
-            if instance.IsPlaying then go() end
-        end)
-        instance.Played:Connect(go)
-    end
-    local function scan(root)
-        for _, d in ipairs(root:GetDescendants()) do check(d) end
-    end
-    scan(workspace)
-    scan(game:GetService("SoundService"))
-    scan(lplr)
-    _conn = workspace.DescendantAdded:Connect(check)
-    lplr.CharacterAdded:Connect(function(char)
-        task.wait(0.5); scan(char)
-        char.DescendantAdded:Connect(check)
-    end)
+	M.Stop()
+
+	local function teleport()
+		if teleporting then return end
+		teleporting = true
+		TeleportService:Teleport(placeId, lplr)
+	end
+
+	local function check(instance)
+		if not instance:IsA("Sound") or not isTargetSound(instance) then
+			return
+		end
+
+		if instance.IsPlaying then
+			teleport()
+			return
+		end
+
+		table.insert(connections, instance:GetPropertyChangedSignal("IsPlaying"):Connect(function()
+			if instance.IsPlaying then
+				teleport()
+			end
+		end))
+	end
+
+	local function scan(root)
+		check(root)
+		for _, descendant in ipairs(root:GetDescendants()) do
+			check(descendant)
+		end
+	end
+
+	local function watch(root)
+		scan(root)
+		table.insert(connections, root.DescendantAdded:Connect(check))
+	end
+
+	watch(workspace)
+	watch(game:GetService("SoundService"))
+	watch(lplr)
+
+	table.insert(connections, lplr.CharacterAdded:Connect(function(character)
+		task.defer(scan, character)
+		table.insert(connections, character.DescendantAdded:Connect(check))
+	end))
+
+	if lplr.Character then
+		scan(lplr.Character)
+	end
 end
 
 function M.Stop()
-    _teleporting = false
-    if _conn then _conn:Disconnect(); _conn = nil end
+	teleporting = false
+	disconnectAll()
 end
 
 return M
