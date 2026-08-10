@@ -6,9 +6,6 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
--- ==========================================
--- PARÁMETROS
--- ==========================================
 local GRAVEDAD_NORMAL = 196.2
 local GRAVEDAD_CERO = 0
 
@@ -23,9 +20,6 @@ local DISTANCIA_OBJETIVO_SLAM = 30
 local TIEMPO_PEGADO_CABEZA = 0.22
 local VELOCIDAD_DESCENSO_SLAM = -140
 
--- ==========================================
--- ESTADO
--- ==========================================
 local _conns = {}
 local _isActive = false
 local _keys = { Platform = Enum.KeyCode.C }
@@ -45,9 +39,6 @@ local plataformaActiva = nil
 local alturaPlataforma = nil
 local loopPlataformaConn = nil
 
--- ==========================================
--- ANIMACIONES
--- ==========================================
 local function LoadAnim(id, priority, looped)
 	if not animator then return nil end
 
@@ -71,9 +62,6 @@ local function DetenerAnimacionesCustom(fadeTime)
 	if animPlataforma and animPlataforma.IsPlaying then animPlataforma:Stop(fadeTime) end
 end
 
--- ==========================================
--- ANIMACIÓN DE PLATAFORMA
--- ==========================================
 local function IniciarLoopAnimPlataforma()
 	if not animPlataforma then return end
 
@@ -129,9 +117,6 @@ local function IniciarLoopAnimPlataforma()
 	end)
 end
 
--- ==========================================
--- PLATAFORMA
--- ==========================================
 local function VolverAModoVuelo()
 	if not rootPart then return end
 
@@ -182,7 +167,6 @@ local function CrearPlataforma()
 		+ (rootPart.Size.Y / 2)
 		+ (plataformaActiva.Size.Y / 2)
 
-	-- Esta altura no cambia: la plataforma solo se mueve en X/Z.
 	alturaPlataforma = rootPart.Position.Y - altura
 
 	plataformaActiva.CFrame = CFrame.new(
@@ -201,9 +185,6 @@ local function CrearPlataforma()
 	IniciarLoopAnimPlataforma()
 end
 
--- ==========================================
--- BUSCAR SUELO Y OBJETIVO
--- ==========================================
 local function BuscarSueloDebajo()
 	if not rootPart then return nil end
 
@@ -213,7 +194,12 @@ local function BuscarSueloDebajo()
 	rayParams.RespectCanCollide = true
 
 	local origen = rootPart.Position + Vector3.new(0, 3, 0)
-	return workspace:Raycast(origen, Vector3.new(0, -10000, 0), rayParams)
+
+	return workspace:Raycast(
+		origen,
+		Vector3.new(0, -10000, 0),
+		rayParams
+	)
 end
 
 local function BuscarObjetivoDebajo()
@@ -235,7 +221,6 @@ local function BuscarObjetivoDebajo()
 					- Vector3.new(enemigoRoot.Position.X, 0, enemigoRoot.Position.Z)
 				).Magnitude
 
-				-- Solo elige a alguien que esté debajo de ti.
 				if diferenciaY > 2
 					and diferenciaY < 150
 					and distanciaXZ < menorDistancia then
@@ -250,9 +235,6 @@ local function BuscarObjetivoDebajo()
 	return objetivo
 end
 
--- ==========================================
--- SLAM
--- ==========================================
 local function PegarALaCabeza(objetivoRoot)
 	if not objetivoRoot or not objetivoRoot.Parent then return end
 
@@ -284,7 +266,6 @@ local function PegarALaCabeza(objetivoRoot)
 		if tiempo >= TIEMPO_PEGADO_CABEZA then
 			conexion:Disconnect()
 
-			-- Al soltarlo, continúa descendiendo para completar el golpe.
 			rootPart.AssemblyLinearVelocity = Vector3.new(
 				objetivoRoot.AssemblyLinearVelocity.X,
 				VELOCIDAD_DESCENSO_SLAM,
@@ -300,7 +281,6 @@ local function PegarALaCabeza(objetivoRoot)
 		local posicionCabeza = cabeza and cabeza.Position
 			or (objetivoRoot.Position + Vector3.new(0, objetivoRoot.Size.Y, 0))
 
-		-- Mantiene tus pies sobre su cabeza mientras el objetivo se mueve.
 		local alturaSobreCabeza = humanoid.HipHeight
 			+ (rootPart.Size.Y / 2)
 			+ 0.15
@@ -332,7 +312,6 @@ local function AplastarContraElSuelo()
 	holdTimer = 0
 	workspace.Gravity = GRAVEDAD_NORMAL
 
-	-- Primero intenta fijarse a un jugador que esté debajo.
 	local objetivo = BuscarObjetivoDebajo()
 
 	if objetivo then
@@ -340,7 +319,6 @@ local function AplastarContraElSuelo()
 		return
 	end
 
-	-- Si no hay objetivo, se teletransporta al suelo.
 	local rayResult = BuscarSueloDebajo()
 
 	if not rayResult then
@@ -375,9 +353,6 @@ local function AplastarContraElSuelo()
 	end)
 end
 
--- ==========================================
--- PERSONAJE
--- ==========================================
 local function SetupCharacter(newCharacter)
 	DestruirPlataforma()
 
@@ -417,9 +392,6 @@ local function SetupCharacter(newCharacter)
 	table.insert(_conns, healthConn)
 end
 
--- ==========================================
--- API
--- ==========================================
 function M.Start(Keys)
 	if Keys then
 		_keys = Keys
@@ -503,9 +475,6 @@ function M.Start(Keys)
 
 	table.insert(_conns, inputEndedConn)
 
-	-- ==========================================
-	-- BUCLE PRINCIPAL
-	-- ==========================================
 	local renderConn = RunService.RenderStepped:Connect(function(dt)
 		if not _isActive
 			or isSlamming
@@ -552,8 +521,13 @@ function M.Start(Keys)
 
 		-- MODO FLOTAR
 		else
-			-- No apaga el vuelo solo porque el Humanoid detecte Running.
-			if not inAir and not isFloating then
+			-- Esta es la corrección: el vuelo se apaga al tocar suelo.
+			if not inAir then
+				if isFloating then
+					isFloating = false
+					DetenerAnimacionesCustom(0.3)
+				end
+
 				workspace.Gravity = GRAVEDAD_NORMAL
 
 				if not isHoldingSpace then
