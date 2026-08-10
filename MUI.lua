@@ -30,6 +30,8 @@ M.Config = {
     LiftSpeed = 900,
     LiftTimeout = 4,
     HoldForce = 9e8,
+    SkySnapTolerance = 42,
+    SkySafetyGrace = 0.35,
     SameAnimationCooldown = 0.20,
     RefreshOnRepeatedTrigger = true,
 
@@ -63,6 +65,7 @@ M.Config = {
     ThreatLineOuterThickness = 18,
     ThreatLineInnerThickness = 8,
     ThreatFarLightRange = 72,
+    ForceDismissKey = Enum.KeyCode.X,
 }
 
 -- All state is private and prefixed to make it easy to identify in a hub.
@@ -80,6 +83,7 @@ local MUIExtendUntilSourceDies = false
 local MUISourceDied = false
 local MUISourceCharacter = nil
 local MUISourceDeathConnections = {}
+local MUIActiveSources = {}
 
 local MUIDodgeByAnimationId = {}
 local MUILastTriggerAt = {}
@@ -93,6 +97,7 @@ local MUIRenderConnection = nil
 local MUIPlayerAddedConnection = nil
 local MUIPlayerRemovingConnection = nil
 local MUICharacterRemovingConnection = nil
+local MUIInputConnection = nil
 
 local MUICloneModel = nil
 local MUICloneRoot = nil
@@ -117,6 +122,9 @@ local MUIHudCards = nil
 local MUIHudLines = nil
 local MUILastHudUpdate = 0
 local MUILastAuraUpdate = 0
+local MUISkySafetyStartedAt = 0
+local MUIHudDismissButton = nil
+local MUIForceDismissAll
 
 local function MUIDisconnect(MUIConnection)
     if MUIConnection then
@@ -144,6 +152,33 @@ end
 local function MUIGetHumanoid(MUICharacter)
     return MUICharacter
         and MUICharacter:FindFirstChildOfClass("Humanoid")
+end
+
+local function MUIRegisterActiveSource(MUIPlayer, MUIDodge)
+    if not MUIPlayer or MUIPlayer == MUILocalPlayer then return end
+    MUIActiveSources[MUIPlayer] = {
+        Character = MUIPlayer.Character,
+        Extends = MUIDodge.ExtendUntilSourceDies == true,
+    }
+end
+
+local function MUIHasLiveExtendingSource()
+    local MUIHasLiveSource = false
+    for MUIPlayer, MUIEntry in pairs(MUIActiveSources) do
+        local MUICharacter = MUIEntry.Character
+        local MUIHumanoid = MUIGetHumanoid(MUICharacter)
+        local MUIAlive = MUIPlayer.Parent == MUIPlayers
+            and MUIPlayer.Character == MUICharacter
+            and MUIHumanoid ~= nil
+            and MUIHumanoid.Health > 0
+            and MUIHumanoid:GetState() ~= Enum.HumanoidStateType.Dead
+        if not MUIAlive then
+            MUIActiveSources[MUIPlayer] = nil
+        elseif MUIEntry.Extends then
+            MUIHasLiveSource = true
+        end
+    end
+    return MUIHasLiveSource
 end
 
 local function MUIGetFootOffset(MUICharacter)
@@ -675,6 +710,25 @@ local function MUIBuildHud()
     MUIHudLines.BackgroundTransparency = 1
     MUIHudLines.Size = UDim2.fromScale(1, 1)
     MUIHudLines.Parent = MUIHud
+
+    MUIHudDismissButton = Instance.new("TextButton")
+    MUIHudDismissButton.Name = "MUIForceDismiss"
+    MUIHudDismissButton.AnchorPoint = Vector2.new(1, 0)
+    MUIHudDismissButton.Position = UDim2.new(1, -M.Config.ThreatHudRightOffset, 0, M.Config.ThreatHudTopOffset - 30)
+    MUIHudDismissButton.Size = UDim2.fromOffset(26, 26)
+    MUIHudDismissButton.BackgroundColor3 = Color3.fromRGB(90, 16, 18)
+    MUIHudDismissButton.BackgroundTransparency = 0.08
+    MUIHudDismissButton.BorderSizePixel = 0
+    MUIHudDismissButton.Font = Enum.Font.GothamBlack
+    MUIHudDismissButton.Text = "X"
+    MUIHudDismissButton.TextColor3 = Color3.fromRGB(255, 225, 225)
+    MUIHudDismissButton.TextSize = 14
+    MUIHudDismissButton.Visible = false
+    MUIHudDismissButton.Parent = MUIHud
+    Instance.new("UICorner", MUIHudDismissButton).CornerRadius = UDim.new(0, 6)
+    MUIHudDismissButton.Activated:Connect(function()
+        if MUIForceDismissAll then MUIForceDismissAll() end
+    end)
 end
 
 local function MUISetText(MUIObject, MUIText)
@@ -962,6 +1016,9 @@ end
 local function MUIUpdateThreatHud(MUINow)
     local MUIList = MUIThreatList()
     local MUICount = #MUIList
+    if MUIHudDismissButton then
+        MUIHudDismissButton.Visible = MUICount > 0 or MUIDefenseActive
+    end
     local MUICardWidth = math.max(118, 238 - math.max(0, MUICount - 1) * 22)
     local MUICardHeight = math.max(74, 108 - math.max(0, MUICount - 1) * 7)
     local MUIOriginRoot = MUIDefenseActive
@@ -1123,7 +1180,7 @@ local function MUIStartSkyLift(MUIRoot, MUIToken)
     MUISkyVelocity = Instance.new("BodyVelocity")
     MUISkyVelocity.Name = "MUILift"
     MUISkyVelocity.Velocity = Vector3.new(0, M.Config.LiftSpeed, 0)
-    MUISkyVelocity.MaxForce = Vector3.new(0, M.Config.HoldForce, 0)
+    MUISkyVelocity.MaxForce = Vector3.new(M.Config.HoldForce, M.Config.HoldForce, M.Config.HoldForce)
     MUISkyVelocity.Parent = MUIRoot
 
     task.spawn(function()
@@ -1158,6 +1215,32 @@ local function MUIStartSkyLift(MUIRoot, MUIToken)
         MUISkyPosition.D = 2500
         MUISkyPosition.Parent = MUIRoot
     end)
+end
+
+local function MUIEnforceSkySafety(MUIRoot, MUIHumanoid)
+    if not MUIDefenseActive or not MUISkyY or not MUIVirtualRootPosition then return end
+    local MUIDesired = Vector3.new(MUIVirtualRootPosition.X, MUISkyY, MUIVirtualRootPosition.Z)
+    if MUISkyPosition then
+        MUISkyPosition.Position = MUIDesired
+    end
+    -- The sky position is the first-priority safety state.  A grab, knockback,
+    -- or stale external force cannot pull the real rig away from it.
+    local MUIOffset = MUIRoot.Position - MUIDesired
+    local MUISnapped = os.clock() - MUISkySafetyStartedAt >= M.Config.SkySafetyGrace
+        and MUIOffset.Magnitude > M.Config.SkySnapTolerance
+    if MUISnapped then
+        MUIRoot.CFrame = CFrame.new(MUIDesired) * (MUIRoot.CFrame - MUIRoot.CFrame.Position)
+    end
+    -- Do not cancel the initial lift force. Once held (or emergency-snapped),
+    -- zero every external impulse before it can drag the defender away.
+    if MUISkyPosition or MUISnapped then
+        MUIRoot.AssemblyLinearVelocity = Vector3.zero
+    end
+    MUIRoot.AssemblyAngularVelocity = Vector3.zero
+    if MUIHumanoid then
+        MUIHumanoid.PlatformStand = false
+        MUIHumanoid.Sit = false
+    end
 end
 
 local MUIDeactivate
@@ -1197,10 +1280,13 @@ local function MUIBegin(MUIDodge, MUISource)
     MUIActiveDuration = MUIDodge.Duration
     MUIActiveUntil = os.clock() + MUIDodge.Duration
     MUIActiveSource = MUISource
+    table.clear(MUIActiveSources)
+    MUIRegisterActiveSource(MUISource, MUIDodge)
     MUIExtendUntilSourceDies =
         MUIDodge.ExtendUntilSourceDies == true and MUISource ~= nil
     MUIPendingDodge = nil
     MUISkyY = MUIVirtualRootPosition.Y + M.Config.SkyAltitude
+    MUISkySafetyStartedAt = os.clock()
     MUICameraSubject = MUICreateCameraSubject(MUIVirtualRootPosition)
     MUIHideRealCharacter(MUICharacter)
     MUICreateAura()
@@ -1268,8 +1354,23 @@ MUIDeactivate = function(MUIReturnToClone)
     MUIActiveDodgeName = nil
     MUIActiveDuration = 0
     MUIActiveSource = nil
+    table.clear(MUIActiveSources)
     MUIExtendUntilSourceDies = false
     MUIPlayLocalSound(M.Config.DeactivationSoundId)
+end
+
+MUIForceDismissAll = function()
+    MUIPendingToken += 1
+    MUIPendingDodge = nil
+    local MUIList = MUIThreatList()
+    for _, MUIThreat in ipairs(MUIList) do
+        MUIDismissThreat(MUIThreat)
+    end
+    table.clear(MUIActiveSources)
+    MUISourceDied = true
+    if MUIDefenseActive then
+        MUIDeactivate(true)
+    end
 end
 
 local function MUIMoveClone(MUIDeltaTime, MUICharacter)
@@ -1376,6 +1477,10 @@ local function MUITrigger(MUIDodge, MUIPlayer)
     MUIMarkThreat(MUIPlayer, MUIDodge)
 
     if MUIDefenseActive then
+        MUIRegisterActiveSource(MUIPlayer, MUIDodge)
+        if MUIDodge.ExtendUntilSourceDies == true and MUIPlayer then
+            MUIExtendUntilSourceDies = true
+        end
         if M.Config.RefreshOnRepeatedTrigger then
             MUIActiveUntil = math.max(
                 MUIActiveUntil,
@@ -1498,9 +1603,11 @@ local function MUIHeartbeat(MUIDeltaTime)
         MUIDeactivate(false)
         return
     end
+    -- Safety enforcement runs before clone/UI work every frame.
+    MUIEnforceSkySafety(MUIRoot, MUIHumanoid)
     MUIRefreshSourceDeath()
     if MUINow >= MUIActiveUntil then
-        if MUIExtendUntilSourceDies and not MUISourceDied then
+        if MUIExtendUntilSourceDies and MUIHasLiveExtendingSource() then
             MUIActiveUntil = MUINow + MUIActiveDuration
         else
             MUIDeactivate(true)
@@ -1571,6 +1678,12 @@ function M.Start(MUIOverrides)
     end)
     MUIHeartbeatConnection = MUIRunService.Heartbeat:Connect(MUIHeartbeat)
     MUIRenderConnection = MUIRunService.RenderStepped:Connect(MUIRenderThreatLines)
+    MUIInputConnection = MUIUserInputService.InputBegan:Connect(function(MUIInput)
+        if MUIUserInputService:GetFocusedTextBox() then return end
+        if MUIInput.KeyCode == M.Config.ForceDismissKey then
+            MUIForceDismissAll()
+        end
+    end)
 end
 
 function M.Stop()
@@ -1584,9 +1697,11 @@ function M.Stop()
     MUIDisconnect(MUIHeartbeatConnection)
     MUIDisconnect(MUIRenderConnection)
     MUIDisconnect(MUICharacterRemovingConnection)
+    MUIDisconnect(MUIInputConnection)
     MUIHeartbeatConnection = nil
     MUIRenderConnection = nil
     MUICharacterRemovingConnection = nil
+    MUIInputConnection = nil
     for _, MUIThreat in pairs(MUIThreats) do
         MUIDismissThreat(MUIThreat)
     end
@@ -1596,6 +1711,7 @@ function M.Stop()
     MUIHud = nil
     MUIHudCards = nil
     MUIHudLines = nil
+    MUIHudDismissButton = nil
     MUILastHudUpdate = 0
     MUILastAuraUpdate = 0
 end
