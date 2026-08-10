@@ -6,6 +6,9 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
+-- ==========================================
+-- PARÁMETROS
+-- ==========================================
 local GRAVEDAD_NORMAL = 196.2
 local GRAVEDAD_CERO = 0
 
@@ -20,6 +23,9 @@ local DISTANCIA_OBJETIVO_SLAM = 30
 local TIEMPO_PEGADO_CABEZA = 0.22
 local VELOCIDAD_DESCENSO_SLAM = -140
 
+-- ==========================================
+-- ESTADO
+-- ==========================================
 local _conns = {}
 local _isActive = false
 local _keys = { Platform = Enum.KeyCode.C }
@@ -39,6 +45,9 @@ local plataformaActiva = nil
 local alturaPlataforma = nil
 local loopPlataformaConn = nil
 
+-- ==========================================
+-- ANIMACIONES
+-- ==========================================
 local function LoadAnim(id, priority, looped)
 	if not animator then return nil end
 
@@ -62,6 +71,9 @@ local function DetenerAnimacionesCustom(fadeTime)
 	if animPlataforma and animPlataforma.IsPlaying then animPlataforma:Stop(fadeTime) end
 end
 
+-- ==========================================
+-- ANIMACIÓN DE PLATAFORMA
+-- ==========================================
 local function IniciarLoopAnimPlataforma()
 	if not animPlataforma then return end
 
@@ -117,20 +129,9 @@ local function IniciarLoopAnimPlataforma()
 	end)
 end
 
-local function VolverAModoVuelo()
-	if not rootPart then return end
-
-	isFloating = true
-	workspace.Gravity = GRAVEDAD_CERO
-
-	local vel = rootPart.AssemblyLinearVelocity
-	rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
-
-	if animVuelo and not animVuelo.IsPlaying then
-		animVuelo:Play(0.2)
-	end
-end
-
+-- ==========================================
+-- PLATAFORMA
+-- ==========================================
 local function DestruirPlataforma()
 	isPlatformMode = false
 	alturaPlataforma = nil
@@ -147,6 +148,12 @@ local function DestruirPlataforma()
 
 	if animPlataforma and animPlataforma.IsPlaying then
 		animPlataforma:Stop(0.2)
+	end
+
+	-- No cambia isFloating:
+	-- si ya estabas volando antes de la plataforma, continuarás volando.
+	if isFloating and not isSlamming and animVuelo then
+		animVuelo:Play(0.2)
 	end
 end
 
@@ -167,6 +174,7 @@ local function CrearPlataforma()
 		+ (rootPart.Size.Y / 2)
 		+ (plataformaActiva.Size.Y / 2)
 
+	-- La plataforma sigue X/Z, pero conserva su altura original.
 	alturaPlataforma = rootPart.Position.Y - altura
 
 	plataformaActiva.CFrame = CFrame.new(
@@ -185,6 +193,9 @@ local function CrearPlataforma()
 	IniciarLoopAnimPlataforma()
 end
 
+-- ==========================================
+-- SUELO Y OBJETIVOS
+-- ==========================================
 local function BuscarSueloDebajo()
 	if not rootPart then return nil end
 
@@ -235,6 +246,9 @@ local function BuscarObjetivoDebajo()
 	return objetivo
 end
 
+-- ==========================================
+-- SLAM
+-- ==========================================
 local function PegarALaCabeza(objetivoRoot)
 	if not objetivoRoot or not objetivoRoot.Parent then return end
 
@@ -353,6 +367,9 @@ local function AplastarContraElSuelo()
 	end)
 end
 
+-- ==========================================
+-- PERSONAJE
+-- ==========================================
 local function SetupCharacter(newCharacter)
 	DestruirPlataforma()
 
@@ -392,6 +409,9 @@ local function SetupCharacter(newCharacter)
 	table.insert(_conns, healthConn)
 end
 
+-- ==========================================
+-- API
+-- ==========================================
 function M.Start(Keys)
 	if Keys then
 		_keys = Keys
@@ -454,8 +474,8 @@ function M.Start(Keys)
 			if isPlatformMode then
 				CrearPlataforma()
 			else
+				-- No activa ni desactiva el vuelo: conserva el estado previo.
 				DestruirPlataforma()
-				VolverAModoVuelo()
 			end
 
 		elseif input.KeyCode == Enum.KeyCode.LeftControl
@@ -475,6 +495,9 @@ function M.Start(Keys)
 
 	table.insert(_conns, inputEndedConn)
 
+	-- ==========================================
+	-- BUCLE PRINCIPAL
+	-- ==========================================
 	local renderConn = RunService.RenderStepped:Connect(function(dt)
 		if not _isActive
 			or isSlamming
@@ -521,7 +544,7 @@ function M.Start(Keys)
 
 		-- MODO FLOTAR
 		else
-			-- Esta es la corrección: el vuelo se apaga al tocar suelo.
+			-- El suelo SÍ desactiva el vuelo.
 			if not inAir then
 				if isFloating then
 					isFloating = false
