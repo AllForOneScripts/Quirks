@@ -48,7 +48,7 @@ local OCFG = {
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
     -- Ajuste estético mínimo: conserva los pies prácticamente al ras del suelo.
-    CLONE_VISUAL_Y_OFFSET = -0.08,
+    CLONE_VISUAL_Y_OFFSET = -1.5,
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
