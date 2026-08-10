@@ -48,7 +48,8 @@ local OCFG = {
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
     -- Ajuste estético mínimo: conserva los pies prácticamente al ras del suelo.
-    CLONE_VISUAL_Y_OFFSET = -1.5,
+    -- Margen mínimo para evitar z-fighting; no es un ajuste manual de altura.
+    CLONE_GROUND_EPSILON = 0.03,
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
@@ -88,6 +89,7 @@ local omniHeartbeat = nil;  local omniInputBegin = nil
 local omniInputEnd = nil;   local omniCharConn = nil
 local omniCloneModel = nil; local omniCloneHighlight = nil
 local omniCloneOrigColors = {}; local omniCloneJumpOffset = 0; local omniCloneJumpVel = 0
+local omniCloneTracks = {}
 local omni4DPinned = false; local omniPinGui = nil
 local omniLockModuleRef = nil
 local omniPublicState = { threats = {}, primary = nil, distances = {}, is4D = false, is4DPinned = false, mode4D = "off" }
@@ -134,14 +136,81 @@ local function omniGetCloneFootOffset(clone, primaryPart)
     if not clone or not primaryPart then return 3 end
 
     local lowestY = math.huge
+    local footParts = {
+        LeftFoot = true, RightFoot = true,
+        LeftLowerLeg = true, RightLowerLeg = true,
+        ["Left Leg"] = true, ["Right Leg"] = true,
+    }
     for _, part in ipairs(clone:GetDescendants()) do
-        if part:IsA("BasePart") then
-            local localY = primaryPart.CFrame:PointToObjectSpace(part.Position).Y
-            lowestY = math.min(lowestY, localY - part.Size.Y * 0.5)
+        -- Los accesorios o las manos no deben definir el contacto con el suelo.
+        if part:IsA("BasePart") and footParts[part.Name] then
+            local half = part.Size * 0.5
+            for _, sx in ipairs({-1, 1}) do
+                for _, sy in ipairs({-1, 1}) do
+                    for _, sz in ipairs({-1, 1}) do
+                        local corner = part.CFrame:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
+                        lowestY = math.min(lowestY, primaryPart.CFrame:PointToObjectSpace(corner).Y)
+                    end
+                end
+            end
         end
     end
 
     return lowestY == math.huge and 3 or -lowestY
+end
+
+-- Replica en el clon todos los AnimationTrack que estén activos en el rig real.
+-- El Animate del clon se elimina al crearlo, así que no hay pistas duplicadas.
+local function omniSyncCloneAnimations()
+    local char = _lplr and _lplr.Character
+    local clone = omniCloneModel
+    local sourceHum = char and char:FindFirstChildOfClass("Humanoid")
+    local cloneHum = clone and clone:FindFirstChildOfClass("Humanoid")
+    if not sourceHum or not cloneHum then return end
+
+    local sourceAnimator = sourceHum:FindFirstChildOfClass("Animator")
+    local cloneAnimator = cloneHum:FindFirstChildOfClass("Animator")
+    if not sourceAnimator then return end
+    if not cloneAnimator then
+        cloneAnimator = Instance.new("Animator")
+        cloneAnimator.Parent = cloneHum
+    end
+
+    local seen = {}
+    for _, sourceTrack in ipairs(sourceAnimator:GetPlayingAnimationTracks()) do
+        local animation = sourceTrack.Animation
+        local id = animation and animation.AnimationId
+        if id and id ~= "" then
+            seen[id] = true
+            local cloneTrack = omniCloneTracks[id]
+            if not cloneTrack then
+                local ok, track = pcall(function()
+                    return cloneAnimator:LoadAnimation(animation)
+                end)
+                if ok and track then
+                    cloneTrack = track
+                    omniCloneTracks[id] = cloneTrack
+                    cloneTrack.Priority = sourceTrack.Priority
+                    cloneTrack:Play(0)
+                end
+            end
+            if cloneTrack then
+                cloneTrack.Priority = sourceTrack.Priority
+                cloneTrack:AdjustSpeed(sourceTrack.Speed)
+                cloneTrack:AdjustWeight(sourceTrack.WeightCurrent, 0)
+                if math.abs(cloneTrack.TimePosition - sourceTrack.TimePosition) > 0.08 then
+                    cloneTrack.TimePosition = sourceTrack.TimePosition
+                end
+            end
+        end
+    end
+
+    for id, track in pairs(omniCloneTracks) do
+        if not seen[id] then
+            track:Stop(0.12)
+            omniCloneTracks[id] = nil
+        end
+    end
 end
 
 local function omniPlaySound(id)
@@ -368,7 +437,8 @@ local function omniDestroyDecoy()
     if omniPinGui then omniPinGui:Destroy(); omniPinGui = nil end
     if omniCloneHighlight then omniCloneHighlight.Parent = nil; omniCloneHighlight = nil end
     if omniCloneModel then omniCloneModel:Destroy(); omniCloneModel = nil end
-    omniCloneOrigColors = {}; omniCloneJumpOffset = 0; omniCloneJumpVel = 0; omniCloneFootOffset = 3
+    omniCloneOrigColors = {}; omniCloneTracks = {}
+    omniCloneJumpOffset = 0; omniCloneJumpVel = 0; omniCloneFootOffset = 3
 end
 
 local function omniApplyCloneColor(isOrbiting)
@@ -424,7 +494,14 @@ local function omniCreateDecoy(pos)
         clone.PrimaryPart = cloneHRP
         omniCloneFootOffset = omniGetCloneFootOffset(clone, cloneHRP)
         local _, ry = cloneHRP.CFrame:ToEulerAnglesYXZ()
-        clone:PivotTo(CFrame.new(pos + Vector3.new(0, omniCloneFootOffset + OCFG.CLONE_VISUAL_Y_OFFSET, 0)) * CFrame.Angles(0, ry, 0))
+        -- pos.Y es el HRP del rig real. Convertirlo a suelo evita sumar
+        -- dos veces la altura de los pies y que el clon quede flotando.
+        local groundSurfaceY = pos.Y - omniFootOffset
+        clone:PivotTo(CFrame.new(
+            pos.X,
+            groundSurfaceY + omniCloneFootOffset + OCFG.CLONE_GROUND_EPSILON,
+            pos.Z
+        ) * CFrame.Angles(0, ry, 0))
     end
 
     local hl = Instance.new("Highlight", clone)
@@ -864,13 +941,18 @@ local function omniStart()
 
                 -- Actualizar posición del clon usando PrimaryPart
                 if omniCloneModel and omniCloneModel.PrimaryPart then
+                    omniSyncCloneAnimations()
+                    -- Una animación puede bajar un pie; recalcular el soporte
+                    -- mantiene el cuerpo sobre el suelo sin usar offsets fijos.
+                    omniCloneFootOffset = omniGetCloneFootOffset(omniCloneModel, omniCloneModel.PrimaryPart)
                     local flat = Vector3.new(camLook.X, 0, camLook.Z)
                     local yaw  = flat.Magnitude > 0.01
                         and math.atan2(-flat.X, -flat.Z)
                         or  select(2, omniCloneModel.PrimaryPart.CFrame:ToEulerAnglesYXZ())
+                    local groundSurfaceY = omniGroundPos.Y - omniFootOffset
                     local clonePos = Vector3.new(
                         omniGroundPos.X,
-                        omniGroundPos.Y + omniCloneFootOffset + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0),
+                        groundSurfaceY + omniCloneFootOffset + omniCloneJumpOffset + OCFG.CLONE_GROUND_EPSILON,
                         omniGroundPos.Z)
                     local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
                     omniCloneModel:PivotTo(newCF)
