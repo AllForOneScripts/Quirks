@@ -44,7 +44,7 @@ local OCFG = {
     ORBIT_SPEED      = 6,
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
-    CLONE_VISUAL_Y_OFFSET = 0.25,
+    CLONE_VISUAL_Y_OFFSET = 0,
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
@@ -74,6 +74,9 @@ local omniModeX = false; local omniModeY = false; local omniRmbHeld = false
 local omniInSky = false;  local omniESP = {};      local omniSkyBV = nil; local omniSkyBP2 = nil
 local omniSkyWorldY = 0;  local omniGroundPos = Vector3.new()
 local omniFootOffset = 3
+-- Distancia desde la PrimaryPart del clon hasta su punto visual más bajo.
+-- No se debe reutilizar omniFootOffset: en R6 el HRP está por encima de los pies.
+local omniCloneFootOffset = 3
 local omniOrbiting = false; local omniOrbitAngle = 0
 local omniOrbitTimer = 0;   local omniLastHealth = 100
 local omniLastCamCF = nil;  local omniCamSubjectPart = nil
@@ -121,6 +124,20 @@ local function omniHRPFootOffset(char)
     local hrp = omniGetHRP(char)
     if hum and hrp then return hum.HipHeight + hrp.Size.Y / 2 end
     return 3
+end
+
+local function omniGetCloneFootOffset(clone, primaryPart)
+    if not clone or not primaryPart then return 3 end
+
+    local lowestY = math.huge
+    for _, part in ipairs(clone:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local localY = primaryPart.CFrame:PointToObjectSpace(part.Position).Y
+            lowestY = math.min(lowestY, localY - part.Size.Y * 0.5)
+        end
+    end
+
+    return lowestY == math.huge and 3 or -lowestY
 end
 
 local function omniPlaySound(id)
@@ -318,7 +335,7 @@ local function omniDestroyDecoy()
     if omniPinGui then omniPinGui:Destroy(); omniPinGui = nil end
     if omniCloneHighlight then omniCloneHighlight.Parent = nil; omniCloneHighlight = nil end
     if omniCloneModel then omniCloneModel:Destroy(); omniCloneModel = nil end
-    omniCloneOrigColors = {}; omniCloneJumpOffset = 0; omniCloneJumpVel = 0
+    omniCloneOrigColors = {}; omniCloneJumpOffset = 0; omniCloneJumpVel = 0; omniCloneFootOffset = 3
 end
 
 local function omniApplyCloneColor(isOrbiting)
@@ -372,8 +389,9 @@ local function omniCreateDecoy(pos)
     if cloneHRP then
         clone:SetPrimaryPartCFrame(cloneHRP.CFrame)
         clone.PrimaryPart = cloneHRP
+        omniCloneFootOffset = omniGetCloneFootOffset(clone, cloneHRP)
         local _, ry = cloneHRP.CFrame:ToEulerAnglesYXZ()
-        clone:PivotTo(CFrame.new(pos) * CFrame.Angles(0, ry, 0))
+        clone:PivotTo(CFrame.new(pos + Vector3.new(0, omniCloneFootOffset, 0)) * CFrame.Angles(0, ry, 0))
     end
 
     local hl = Instance.new("Highlight", clone)
@@ -808,7 +826,10 @@ local function omniStart()
                     local yaw  = flat.Magnitude > 0.01
                         and math.atan2(-flat.X, -flat.Z)
                         or  select(2, omniCloneModel.PrimaryPart.CFrame:ToEulerAnglesYXZ())
-                    local clonePos = Vector3.new(omniGroundPos.X, omniGroundPos.Y + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0), omniGroundPos.Z)
+                    local clonePos = Vector3.new(
+                        omniGroundPos.X,
+                        omniGroundPos.Y + omniCloneFootOffset + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0),
+                        omniGroundPos.Z)
                     local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
                     omniCloneModel:SetPrimaryPartCFrame(newCF)
                 end
