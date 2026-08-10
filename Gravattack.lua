@@ -22,6 +22,8 @@ local ACELERACION_CAIDA = 0.75
 local DISTANCIA_OBJETIVO_SLAM = 30
 local TIEMPO_PEGADO_CABEZA = 0.22
 local VELOCIDAD_DESCENSO_SLAM = -140
+-- Ajuste del agarre: copia la posición baja del TP de Passive Bang.
+local AJUSTE_ALTURA_CABEZA_SLAM = -3.5
 
 -- ==========================================
 -- ESTADO
@@ -298,6 +300,7 @@ local function PegarALaCabeza(objetivoRoot)
 		local alturaSobreCabeza = humanoid.HipHeight
 			+ (rootPart.Size.Y / 2)
 			+ 0.15
+			+ AJUSTE_ALTURA_CABEZA_SLAM
 
 		rootPart.CFrame = CFrame.new(
 			posicionCabeza + Vector3.new(0, alturaSobreCabeza, 0)
@@ -322,11 +325,14 @@ local function AplastarContraElSuelo()
 	DestruirPlataforma()
 	DetenerAnimacionesCustom(0.1)
 
+	-- El ZAAASH a un jugador solo se usa al presionar Ctrl mientras vuelas.
+	-- No exige una altura mínima: basta con que el objetivo esté debajo.
+	local estabaVolando = isFloating
 	isFloating = false
 	holdTimer = 0
 	workspace.Gravity = GRAVEDAD_NORMAL
 
-	local objetivo = BuscarObjetivoDebajo()
+	local objetivo = estabaVolando and BuscarObjetivoDebajo() or nil
 
 	if objetivo then
 		PegarALaCabeza(objetivo)
