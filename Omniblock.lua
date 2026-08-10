@@ -283,14 +283,43 @@ local function omniThreatLevel(originPos, tHRP, tHum)
     return math.clamp(distT*0.5 + hp*0.25 + math.clamp(spd/40,0,1)*0.25, 0, 1)
 end
 
+-- El Lock Reader expone GetStatus(); IsLockActive/GetTarget son opcionales.
+-- Siempre devuelve un Player, que es lo que omniBuildThreats compara.
 local function omniGetLockTarget()
     local lock = omniLockModuleRef
     if type(lock) ~= "table" then lock = rawget(getgenv(), "AFO_LOCK_API") end
-    if type(lock) ~= "table" or type(lock.IsLockActive) ~= "function" or type(lock.GetTarget) ~= "function" then return nil end
-    local ok, active = pcall(lock.IsLockActive)
-    if not ok or active ~= true then return nil end
-    local okTarget, target = pcall(lock.GetTarget)
-    return okTarget and target or nil
+    if type(lock) ~= "table" or type(lock.GetStatus) ~= "function" then return nil end
+
+    local okStatus, status = pcall(lock.GetStatus)
+    if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
+        return nil
+    end
+
+    local target
+    if type(lock.GetTarget) == "function" then
+        local okTarget, value = pcall(lock.GetTarget)
+        if okTarget then target = value end
+    end
+    target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
+        or status.player or status.target
+
+    if typeof(target) == "Instance" then
+        if target:IsA("Player") then return target end
+        if target:IsA("Model") then return Players:GetPlayerFromCharacter(target) end
+        if target:IsA("BasePart") then return Players:GetPlayerFromCharacter(target.Parent) end
+    end
+
+    -- Esta es la ruta normal del Lock Reader proporcionado.
+    local targetName = status.targetName
+    if type(targetName) == "string" then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Name == targetName or player.DisplayName == targetName then
+                return player
+            end
+        end
+    end
+
+    return nil
 end
 
 local function omniBuildThreats(myHRP)
