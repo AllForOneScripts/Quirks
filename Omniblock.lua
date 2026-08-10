@@ -54,7 +54,13 @@ local OCFG = {
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
 
-    CLIMB_STEP_MAX     = 1.8,
+    -- El clon no usa colisión lateral: puede atravesar paredes. El suelo se
+    -- resuelve con rayos verticales para que no atraviese plataformas por abajo.
+    GROUND_SCAN_UP      = 160,
+    GROUND_SCAN_DOWN    = 420,
+    GROUND_NORMAL_MIN   = 0.35,
+    -- Sólo corrige quedar bajo una plataforma cercana; impide trepar edificios.
+    MAX_AUTO_RECOVERY_RISE = 24,
     DESCEND_STEP_MAX   = 2.2,
     GROUND_PROBE_AHEAD = 1.5,
     MAX_VERTICAL_SPEED = 24,
@@ -299,9 +305,50 @@ local function omniGetGroundHeight(pos, char)
     if char then table.insert(excl, char) end
     if omniCloneModel then table.insert(excl, omniCloneModel) end
     rp.FilterDescendantsInstances = excl
-    local origin = Vector3.new(pos.X, pos.Y + 5, pos.Z)
-    local hit = workspace:Raycast(origin, Vector3.new(0, -50, 0), rp)
-    if hit then return hit.Position.Y + omniFootOffset end
+    -- Sonda normal: conserva el piso actual y no confunde un techo distante
+    -- con el suelo al caminar dentro de edificios.
+    local nearOrigin = Vector3.new(pos.X, pos.Y + 5, pos.Z)
+    local nearHit = workspace:Raycast(nearOrigin, Vector3.new(0, -70, 0), rp)
+    if nearHit and nearHit.Normal.Y >= OCFG.GROUND_NORMAL_MIN then
+        return nearHit.Position.Y + omniFootOffset
+    end
+
+    -- Si el primer contacto es el reverso de una plataforma, el clon ya está
+    -- debajo de ella. Para una BasePart se toma primero la parte superior de
+    -- esa misma pieza, evitando saltar a techos de otro nivel.
+    if nearHit and nearHit.Instance:IsA("BasePart") then
+        local part = nearHit.Instance
+        local topY = part.Position.Y + part.Size.Y * 0.5 + 0.1
+        local topOrigin = Vector3.new(pos.X, topY, pos.Z)
+        local topHit = workspace:Raycast(topOrigin, Vector3.new(0, -math.max(part.Size.Y + 1, 3), 0), rp)
+        if topHit and topHit.Instance == part and topHit.Normal.Y >= OCFG.GROUND_NORMAL_MIN then
+            local recoveredY = topHit.Position.Y + omniFootOffset
+            if recoveredY - pos.Y <= OCFG.MAX_AUTO_RECOVERY_RISE then
+                return recoveredY
+            end
+        end
+    end
+
+    -- Recuperación final para Terrain o geometría irregular: sólo ocurre si
+    -- no hay piso local. No se hacen comprobaciones horizontales, así que las
+    -- paredes siguen siendo atravesables.
+    local origin = Vector3.new(pos.X, pos.Y + OCFG.GROUND_SCAN_UP, pos.Z)
+    local direction = Vector3.new(0, -OCFG.GROUND_SCAN_DOWN, 0)
+    for _ = 1, 8 do
+        local hit = workspace:Raycast(origin, direction, rp)
+        if not hit then break end
+        if hit.Normal.Y >= OCFG.GROUND_NORMAL_MIN then
+            local recoveredY = hit.Position.Y + omniFootOffset
+            if recoveredY - pos.Y <= OCFG.MAX_AUTO_RECOVERY_RISE then
+                return recoveredY
+            end
+            break
+        end
+        local used = (hit.Position - origin).Magnitude + 0.05
+        if used >= direction.Magnitude then break end
+        origin = hit.Position + direction.Unit * 0.05
+        direction = Vector3.new(0, -(direction.Magnitude - used), 0)
+    end
     return nil
 end
 
@@ -313,13 +360,10 @@ local function omniFollowGround(prevPos, desiredXZ, dt, char)
     local groundY = omniGetGroundHeight(newPos, char)
     if groundY then
         local diff = groundY - prevPos.Y
-        -- No escala paredes; al bajar, ajusta al suelo de inmediato para que
-        -- no quede suspendido ni se hunda visualmente en una pendiente.
-        if diff > OCFG.CLIMB_STEP_MAX then
-            newPos = Vector3.new(newPos.X, prevPos.Y, newPos.Z)
-        else
-            newPos = Vector3.new(newPos.X, groundY, newPos.Z)
-        end
+        -- No hay bloqueo lateral. Si el sondeo detecta piso sobre el clon,
+        -- se eleva de inmediato: evita que termine bajo el mapa al cruzar una
+        -- pared o una plataforma elevada.
+        newPos = Vector3.new(newPos.X, groundY, newPos.Z)
     else
         -- Si no hay suelo, mantener Y actual (puede estar en el aire)
         newPos = Vector3.new(newPos.X, prevPos.Y, newPos.Z)
@@ -947,11 +991,14 @@ local function omniStart()
                 if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right  end
                 if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right  end
 
+                local proposed = prevGroundPos
                 if move.Magnitude > 0 then
-                    local proposed = prevGroundPos + move.Unit * OCFG.DECOY_WALK_SPEED * dt
-                    omniGroundPos = omniFollowGround(prevGroundPos,
-                        Vector3.new(proposed.X, prevGroundPos.Y, proposed.Z), dt, char)
+                    proposed = prevGroundPos + move.Unit * OCFG.DECOY_WALK_SPEED * dt
                 end
+                -- También corrige verticalmente sin WASD, por si el mapa o una
+                -- plataforma se carga encima del clon mientras está quieto.
+                omniGroundPos = omniFollowGround(prevGroundPos,
+                    Vector3.new(proposed.X, prevGroundPos.Y, proposed.Z), dt, char)
 
                 -- Salto del clon
                 if UserInputService:IsKeyDown(Enum.KeyCode.Space) and omniCloneJumpVel == 0 and omniCloneJumpOffset == 0 then
