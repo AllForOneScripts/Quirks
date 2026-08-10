@@ -20,8 +20,8 @@ local _leftDown = false
 local _rightDown = false
 local _rescore = 0
 
--- Estado del TP de caída. Durante el breve anclaje mantiene los pies sobre
--- la cabeza; después suelta el personaje con velocidad vertical descendente.
+-- Estado del TP de caída. Durante el breve anclaje mantiene al personaje al
+-- costado de la cabeza; después lo suelta con velocidad vertical descendente.
 local _dropTargetRoot
 local _dropStickUntil = 0
 local _dropCompletedFor
@@ -46,6 +46,9 @@ local PB = {
     FALL_HEAD_STICK_TIME = 0.22,
     FALL_STICK_VELOCITY = -20,
     FALL_RELEASE_VELOCITY = -140,
+    -- Anclaje recto y bajo: el HRP queda dentro de la hitbox superior del
+    -- objetivo, sin desplazarlo a un lado ni situarlo sobre su cabeza.
+    FALL_HEAD_HEIGHT_ADJUSTMENT = -3.5,
 }
 
 local function resetDrop()
@@ -194,8 +197,9 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
         local head = targetRoot.Parent:FindFirstChild("Head")
         local headPosition = head and head.Position or (targetRoot.Position + Vector3.new(0, targetRoot.Size.Y, 0))
         local footHeight = myHumanoid.HipHeight + (myRoot.Size.Y / 2) + 0.15
+        local height = footHeight + PB.FALL_HEAD_HEIGHT_ADJUSTMENT
 
-        myRoot.CFrame = CFrame.new(headPosition + Vector3.new(0, footHeight, 0))
+        myRoot.CFrame = CFrame.new(headPosition + Vector3.new(0, height, 0))
         myRoot.AssemblyLinearVelocity = Vector3.new(
             targetRoot.AssemblyLinearVelocity.X,
             PB.FALL_STICK_VELOCITY,
