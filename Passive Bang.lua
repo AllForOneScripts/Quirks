@@ -124,23 +124,53 @@ local function getLockApi()
     return nil
 end
 
+-- Lock.lua expone GetStatus() (el Reader solo garantiza ese método), no
+-- necesariamente IsLockActive() ni GetTarget(). Se aceptan ambas variantes
+-- para seguir siendo compatible con versiones antiguas del módulo.
 local function getLockTarget()
     local lock = getLockApi()
-    if not lock
-        or type(lock.IsLockActive) ~= "function"
-        or type(lock.GetTarget) ~= "function" then
+    if not lock or type(lock.GetStatus) ~= "function" then return nil end
+
+    local okStatus, status = pcall(lock.GetStatus)
+    if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
         return nil
     end
 
-    local okActive, active = pcall(lock.IsLockActive)
-    if not okActive or active ~= true then return nil end
+    local target
+    if type(lock.GetTarget) == "function" then
+        local okTarget, result = pcall(lock.GetTarget)
+        if okTarget then target = result end
+    end
 
-    local okTarget, target = pcall(lock.GetTarget)
-    if not okTarget then return nil end
+    -- Las distintas revisiones de Lock.lua pueden devolver el Player, el
+    -- Character, el HRP o solamente targetName dentro de GetStatus().
+    target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
+        or status.player or status.target
+    if typeof(target) == "Instance" then
+        if target:IsA("Player") then
+            local root = getLiveRoot(target)
+            if root then return target, root end
+        elseif target:IsA("Model") then
+            local player = Players:GetPlayerFromCharacter(target)
+            local root = target:FindFirstChild("HumanoidRootPart")
+            if player and root then return player, root end
+        elseif target:IsA("BasePart") then
+            local player = Players:GetPlayerFromCharacter(target.Parent)
+            if player then return player, target end
+        end
+    end
 
-    local root = getLiveRoot(target)
-    if not root then return nil end
-    return target, root
+    local targetName = status.targetName
+    if type(targetName) == "string" then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Name == targetName or player.DisplayName == targetName then
+                local root = getLiveRoot(player)
+                if root then return player, root end
+            end
+        end
+    end
+
+    return nil
 end
 
 local function getPredictedPosition(targetRoot)
