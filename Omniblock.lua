@@ -213,6 +213,33 @@ local function omniSyncCloneAnimations()
     end
 end
 
+-- Algunos juegos mezclan o sustituyen pistas internamente. Copiar el Transform
+-- final de los Motor6D replica la pose visible, incluso con animaciones custom.
+local function omniSyncClonePose()
+    local char = _lplr and _lplr.Character
+    local clone = omniCloneModel
+    if not char or not clone then return end
+
+    for _, sourceMotor in ipairs(char:GetDescendants()) do
+        if sourceMotor:IsA("Motor6D") then
+            local names = {}
+            local node = sourceMotor
+            while node and node ~= char do
+                table.insert(names, 1, node.Name)
+                node = node.Parent
+            end
+
+            local target = clone
+            for _, name in ipairs(names) do
+                target = target and target:FindFirstChild(name)
+            end
+            if target and target:IsA("Motor6D") then
+                target.Transform = sourceMotor.Transform
+            end
+        end
+    end
+end
+
 local function omniPlaySound(id)
     local snd = Instance.new("Sound", workspace)
     snd.SoundId = id; snd.Volume = 1.5; snd:Play(); Debris:AddItem(snd, 6)
@@ -480,18 +507,24 @@ local function omniCreateDecoy(pos)
     for _, v in pairs(clone:GetDescendants()) do
         if v:IsA("BasePart") then
             omniCloneOrigColors[v] = {Color = v.Color, Material = v.Material}
-            v.Anchored = true; v.CanCollide = false
+            v.Anchored = false
+            v.CanCollide = false; v.CanTouch = false; v.CanQuery = false
+            v.Massless = true
         end
+    end
+
+    -- Sólo el root queda anclado. Si se anclan las extremidades, los Motor6D
+    -- no pueden aplicar la pose de las animaciones.
+    local hrp = omniGetHRP(char)
+    local cloneHRP = clone:FindFirstChild("HumanoidRootPart") or clone:FindFirstChild("Torso")
+    if cloneHRP then
+        clone.PrimaryPart = cloneHRP
+        cloneHRP.Anchored = true
     end
     clone.Parent = workspace
     omniCloneModel = clone
 
-    -- Establecer la PrimaryPart para poder usar SetPrimaryPartCFrame
-    local hrp = omniGetHRP(char)
-    local cloneHRP = clone:FindFirstChild("HumanoidRootPart") or clone:FindFirstChild("Torso")
     if cloneHRP then
-        clone:SetPrimaryPartCFrame(cloneHRP.CFrame)
-        clone.PrimaryPart = cloneHRP
         omniCloneFootOffset = omniGetCloneFootOffset(clone, cloneHRP)
         local _, ry = cloneHRP.CFrame:ToEulerAnglesYXZ()
         -- pos.Y es el HRP del rig real. Convertirlo a suelo evita sumar
@@ -942,6 +975,7 @@ local function omniStart()
                 -- Actualizar posición del clon usando PrimaryPart
                 if omniCloneModel and omniCloneModel.PrimaryPart then
                     omniSyncCloneAnimations()
+                    omniSyncClonePose()
                     -- Una animación puede bajar un pie; recalcular el soporte
                     -- mantiene el cuerpo sobre el suelo sin usar offsets fijos.
                     omniCloneFootOffset = omniGetCloneFootOffset(omniCloneModel, omniCloneModel.PrimaryPart)
