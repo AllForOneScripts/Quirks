@@ -39,7 +39,8 @@ local OCFG = {
     DECOY_WALK_SPEED = 202.5,
     -- El salto previo alcanzaba ~4.9 studs; 40 de velocidad inicial alcanza ~10 studs.
     DECOY_JUMP_VELOCITY = 40,
-    DECOY_JUMP_GRAVITY  = 80,
+    DECOY_JUMP_GRAVITY  = 80, -- respaldo si el módulo gravitacional no está cargado
+    CLONE_NORMAL_GRAVITY = 196.2, -- sólo para la simulación visual del clon
     SKY_ALTITUDE     = 1500,
     SKY_LIFT_SPEED   = 600,
     SKY_HOLD_FORCE   = 9e8,
@@ -96,6 +97,9 @@ local omniInputEnd = nil;   local omniCharConn = nil
 local omniCloneModel = nil; local omniCloneHighlight = nil
 local omniCloneOrigColors = {}; local omniCloneJumpOffset = 0; local omniCloneJumpVel = 0
 local omniCloneTracks = {}
+local omniCloneGravity = OCFG.DECOY_JUMP_GRAVITY
+local omniCloneNormalGravity = OCFG.CLONE_NORMAL_GRAVITY
+local omniCloneWasAirborne = false
 local omni4DPinned = false; local omniPinGui = nil
 local omniLockModuleRef = nil
 local omniPublicState = { threats = {}, primary = nil, distances = {}, is4D = false, is4DPinned = false, mode4D = "off" }
@@ -163,6 +167,22 @@ local function omniGetCloneFootOffset(clone, primaryPart)
     end
 
     return lowestY == math.huge and 3 or -lowestY
+end
+
+-- Lee el campo gravitacional opcional sin acoplar este módulo a él. Si no está
+-- presente, workspace.Gravity sigue siendo la fuente de verdad.
+local function omniReadGravityProfile()
+    local current = workspace.Gravity
+    local normal = omniCloneNormalGravity
+    local gravityApi = rawget(getgenv(), "AFO_GRAVITY_API")
+    if type(gravityApi) == "table" and type(gravityApi.GetGravityState) == "function" then
+        local ok, state = pcall(gravityApi.GetGravityState)
+        if ok and type(state) == "table" then
+            if type(state.currentGravity) == "number" then current = state.currentGravity end
+            if type(state.normalGravity) == "number" then normal = state.normalGravity end
+        end
+    end
+    return math.max(current, 0), math.max(normal, 0)
 end
 
 -- Replica en el clon todos los AnimationTrack que estén activos en el rig real.
@@ -510,6 +530,9 @@ local function omniDestroyDecoy()
     if omniCloneModel then omniCloneModel:Destroy(); omniCloneModel = nil end
     omniCloneOrigColors = {}; omniCloneTracks = {}
     omniCloneJumpOffset = 0; omniCloneJumpVel = 0; omniCloneFootOffset = 3
+    omniCloneGravity = OCFG.DECOY_JUMP_GRAVITY
+    omniCloneNormalGravity = OCFG.CLONE_NORMAL_GRAVITY
+    omniCloneWasAirborne = false
 end
 
 local function omniApplyCloneColor(isOrbiting)
@@ -545,6 +568,9 @@ local function omniCreateDecoy(pos)
     local ok, clone = pcall(function() return char:Clone() end)
     pcall(function() char.Archivable = false end)
     if not ok or not clone then return end
+    -- El clon toma el valor que el personaje tiene al iniciar 4D. Es una
+    -- gravedad local de simulación: no modifica workspace.Gravity.
+    omniCloneGravity, omniCloneNormalGravity = omniReadGravityProfile()
     for _, v in pairs(clone:GetDescendants()) do
         if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then v:Destroy() end
     end
@@ -580,6 +606,10 @@ local function omniCreateDecoy(pos)
             pos.Z
         ) * CFrame.Angles(0, ry, 0))
     end
+
+    -- El clon se crea ya apoyado en el suelo; desde ese instante su simulación
+    -- local vuelve a gravedad normal. Nunca modifica workspace.Gravity.
+    omniCloneGravity = omniCloneNormalGravity
 
     local hl = Instance.new("Highlight", clone)
     hl.FillColor = Color3.fromRGB(200,220,255); hl.OutlineColor = Color3.fromRGB(180,200,255)
@@ -1003,17 +1033,24 @@ local function omniStart()
                 -- Salto del clon
                 if UserInputService:IsKeyDown(Enum.KeyCode.Space) and omniCloneJumpVel == 0 and omniCloneJumpOffset == 0 then
                     omniCloneJumpVel = OCFG.DECOY_JUMP_VELOCITY
+                    omniCloneWasAirborne = true
                 end
                 if omniCloneJumpVel ~= 0 then
                     -- Se calcula la siguiente altura antes de mover el modelo y se
                     -- corta exactamente en cero: nunca se envía el clon bajo el suelo.
                     local nextJumpOffset = omniCloneJumpOffset
                         + omniCloneJumpVel * dt
-                        - 0.5 * OCFG.DECOY_JUMP_GRAVITY * dt * dt
-                    omniCloneJumpVel = omniCloneJumpVel - OCFG.DECOY_JUMP_GRAVITY * dt
+                        - 0.5 * omniCloneGravity * dt * dt
+                    omniCloneJumpVel = omniCloneJumpVel - omniCloneGravity * dt
                     if nextJumpOffset <= 0 then
                         omniCloneJumpOffset = 0
                         omniCloneJumpVel = 0
+                        -- Al aterrizar, el siguiente salto usa la gravedad
+                        -- normal indicada por el ajustador de campo.
+                        if omniCloneWasAirborne then
+                            omniCloneGravity = omniCloneNormalGravity
+                            omniCloneWasAirborne = false
+                        end
                     else
                         omniCloneJumpOffset = nextJumpOffset
                     end
@@ -1161,6 +1198,11 @@ function M.Start(Keys, lplr)
     if enabled then M.Stop() end
     _keys   = Keys
     _lplr   = lplr
+    -- Gravattack restaura workspace.Gravity al salir de vuelo. Si se inicia
+    -- Omni en ese momento, conservamos ese valor como gravedad normal local.
+    if workspace.Gravity > 0 then
+        omniCloneNormalGravity = workspace.Gravity
+    end
     enabled = true
     omniStart()
 end
