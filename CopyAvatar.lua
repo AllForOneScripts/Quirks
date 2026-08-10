@@ -514,7 +514,7 @@ function M.Start(firstArgument, secondArgument)
 	resetButton.TextColor3 = Color3.new(1, 1, 1)
 	resetButton.Font = Enum.Font.GothamBold
 	resetButton.TextSize = 14
-	resetButton.Text = "↻"
+	resetButton.Text = "🔄"
 	resetButton.BorderSizePixel = 0
 	resetButton.Parent = mainFrame
 
