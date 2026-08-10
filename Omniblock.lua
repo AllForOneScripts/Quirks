@@ -36,7 +36,10 @@ local OCFG = {
     NEON_DANGER  = Color3.fromRGB(255,30,120),
     OUTLINE_ALPHA = 0.65, GLOW_EXTRA = 5,
 
-    DECOY_WALK_SPEED = 135,
+    DECOY_WALK_SPEED = 202.5,
+    -- El salto previo alcanzaba ~4.9 studs; 40 de velocidad inicial alcanza ~10 studs.
+    DECOY_JUMP_VELOCITY = 40,
+    DECOY_JUMP_GRAVITY  = 80,
     SKY_ALTITUDE     = 1500,
     SKY_LIFT_SPEED   = 600,
     SKY_HOLD_FORCE   = 9e8,
@@ -44,7 +47,8 @@ local OCFG = {
     ORBIT_SPEED      = 6,
     ORBIT_DURATION   = 4,
     DECOY_HEAD_Y     = 3,
-    CLONE_VISUAL_Y_OFFSET = 0,
+    -- Ajuste estético mínimo: conserva los pies prácticamente al ras del suelo.
+    CLONE_VISUAL_Y_OFFSET = -0.08,
     
     SND_ACTIVATE     = "rbxassetid://121724991975758",
     SND_DEACTIVATE   = "rbxassetid://128617187053393",
@@ -391,7 +395,7 @@ local function omniCreateDecoy(pos)
         clone.PrimaryPart = cloneHRP
         omniCloneFootOffset = omniGetCloneFootOffset(clone, cloneHRP)
         local _, ry = cloneHRP.CFrame:ToEulerAnglesYXZ()
-        clone:PivotTo(CFrame.new(pos + Vector3.new(0, omniCloneFootOffset, 0)) * CFrame.Angles(0, ry, 0))
+        clone:PivotTo(CFrame.new(pos + Vector3.new(0, omniCloneFootOffset + OCFG.CLONE_VISUAL_Y_OFFSET, 0)) * CFrame.Angles(0, ry, 0))
     end
 
     local hl = Instance.new("Highlight", clone)
@@ -811,13 +815,22 @@ local function omniStart()
                 end
 
                 -- Salto del clon
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space) and omniCloneJumpVel == 0 then
-                    omniCloneJumpVel = 28
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) and omniCloneJumpVel == 0 and omniCloneJumpOffset == 0 then
+                    omniCloneJumpVel = OCFG.DECOY_JUMP_VELOCITY
                 end
-                if omniCloneJumpVel ~= 0 or omniCloneJumpOffset ~= 0 then
-                    omniCloneJumpVel   = omniCloneJumpVel   - 80 * dt
-                    omniCloneJumpOffset = omniCloneJumpOffset + omniCloneJumpVel * dt
-                    if omniCloneJumpOffset < 0 then omniCloneJumpOffset = 0; omniCloneJumpVel = 0 end
+                if omniCloneJumpVel ~= 0 then
+                    -- Se calcula la siguiente altura antes de mover el modelo y se
+                    -- corta exactamente en cero: nunca se envía el clon bajo el suelo.
+                    local nextJumpOffset = omniCloneJumpOffset
+                        + omniCloneJumpVel * dt
+                        - 0.5 * OCFG.DECOY_JUMP_GRAVITY * dt * dt
+                    omniCloneJumpVel = omniCloneJumpVel - OCFG.DECOY_JUMP_GRAVITY * dt
+                    if nextJumpOffset <= 0 then
+                        omniCloneJumpOffset = 0
+                        omniCloneJumpVel = 0
+                    else
+                        omniCloneJumpOffset = nextJumpOffset
+                    end
                 end
 
                 -- Actualizar posición del clon usando PrimaryPart
@@ -831,7 +844,7 @@ local function omniStart()
                         omniGroundPos.Y + omniCloneFootOffset + omniCloneJumpOffset + (OCFG.CLONE_VISUAL_Y_OFFSET or 0),
                         omniGroundPos.Z)
                     local newCF = CFrame.new(clonePos) * CFrame.Angles(0, yaw, 0)
-                    omniCloneModel:SetPrimaryPartCFrame(newCF)
+                    omniCloneModel:PivotTo(newCF)
                 end
 
                 -- Actualizar cámara
