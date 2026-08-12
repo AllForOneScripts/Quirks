@@ -143,14 +143,6 @@ task.spawn(function()
     skyBP.D = 2500
 end)
 
-local heightMaintainer = RunService.Heartbeat:Connect(function()
-    if in4DMode and root then
-        if math.abs(root.Position.Y - skyWorldY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
-        end
-    end
-end)
-
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
 
@@ -552,7 +544,6 @@ for _, motor in ipairs(char:GetDescendants()) do
 end
 
 in4DMode = false
-if heightMaintainer then heightMaintainer:Disconnect() end
 if skyBV then skyBV:Destroy() end
 if skyBP then skyBP:Destroy() end
 
