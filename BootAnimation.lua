@@ -321,18 +321,24 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
+-- ==========================================================
+-- ACTUALIZACIÓN DE CLON MEJORADA (Copia exacta de tu avatar actual)
+-- ==========================================================
 local function UpdateCloneAppearance()
-    if not cloneChar or not char then return end
+    local sourceChar = player.Character -- Usar el personaje actual en este preciso instante
+    if not cloneChar or not sourceChar then return end
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     
+    -- 1. Limpiar ABSOLUTAMENTE todo lo visual del clon
     for _, v in ipairs(cloneChar:GetChildren()) do
-        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") then
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") then
+    -- 2. Copiar todo el set de ropa, cuerpo y accesorios
+    for _, item in ipairs(sourceChar:GetChildren()) do
+        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             local cloneItem = item:Clone()
             
             if cloneItem:IsA("Accessory") then
@@ -341,7 +347,6 @@ local function UpdateCloneAppearance()
                     handle.LocalTransparencyModifier = 0
                     handle.Transparency = 0
                     
-                    -- Limpiamos los Welds originales que seguían apuntando a tu personaje real
                     for _, weld in ipairs(handle:GetChildren()) do
                         if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld:IsA("ManualWeld") then
                             weld:Destroy()
@@ -349,7 +354,6 @@ local function UpdateCloneAppearance()
                     end
                 end
                 
-                -- Usamos el sistema nativo para adherir correctamente el accesorio al clon
                 if cloneHum then
                     local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
                     local newWeld = handle and handle:FindFirstChild("AccessoryWeld")
@@ -365,13 +369,37 @@ local function UpdateCloneAppearance()
         end
     end
     
-    local sHead = char:FindFirstChild("Head")
-    local tHead = cloneChar:FindFirstChild("Head")
-    if sHead and tHead then
-        for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
-        for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
+    -- 3. Sincronizar BaseParts (por si CopyAvatar te cambia la cara, mallas, colores base, etc.)
+    for _, part in ipairs(sourceChar:GetChildren()) do
+        if part:IsA("BasePart") then
+            local clonePart = cloneChar:FindFirstChild(part.Name)
+            if clonePart then
+                -- Evitar copiar transparencias excesivas si el personaje original lo volvimos invisible
+                if part.Transparency < 1 then
+                    clonePart.Transparency = part.Transparency
+                end
+                clonePart.Color = part.Color
+                clonePart.Material = part.Material
+                clonePart.LocalTransparencyModifier = 0
+                
+                -- Limpiar caras o mallas antiguas del clon (ej: HeadMesh, Face)
+                for _, v in ipairs(clonePart:GetChildren()) do
+                    if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Texture") then
+                        v:Destroy()
+                    end
+                end
+                
+                -- Copiarlas desde el personaje que ya tiene el CopyAvatar aplicado
+                for _, v in ipairs(part:GetChildren()) do
+                    if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Texture") then
+                        v:Clone().Parent = clonePart
+                    end
+                end
+            end
+        end
     end
 end
+-- ==========================================================
 
 local function PlayKeyframeSequence(Model, KFS, Speed)
     Speed = Speed or 1
