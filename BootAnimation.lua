@@ -12,6 +12,7 @@ local connections = {}
 
 local gui
 local mainFrame
+local fadeFrame
 local playerImage
 local isOpen = false
 local setPanelOpen
@@ -73,75 +74,56 @@ local function loadAvatarImage(userId, currentRequest)
 	end)
 end
 
-local function findHandleAttachment(handle)
-	for _, child in ipairs(handle:GetChildren()) do
-		if child:IsA("Attachment") then
-			return child
-		end
+-- Función para manejar el pantallazo negro
+local function doFade(toBlack)
+	if not fadeFrame or not fadeFrame.Parent then return end
+	
+	fadeFrame.Visible = true
+	local targetTransparency = toBlack and 0 or 1
+	local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	
+	local tween = TweenService:Create(fadeFrame, tweenInfo, {
+		BackgroundTransparency = targetTransparency
+	})
+	
+	tween:Play()
+	tween.Completed:Wait() -- Espera a que termine la animación
+	
+	if not toBlack then
+		fadeFrame.Visible = false
 	end
-	return nil
-end
-
-local function findCharacterAttachment(character, attachmentName)
-	for _, descendant in ipairs(character:GetDescendants()) do
-		if descendant:IsA("Attachment")
-			and descendant.Name == attachmentName
-			and descendant.Parent:IsA("BasePart") then
-			return descendant
-		end
-	end
-	return nil
 end
 
 local function manualAttachAccessory(accessory, character)
 	local handle = accessory:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then return false end
 
-	if not handle or not handle:IsA("BasePart") then
-		return false
-	end
-
-	-- 1. SOPORTE PARA LAYERED CLOTHING (ROPA 3D)
+	-- Si es ropa 3D (Layered Clothing)
 	if handle:FindFirstChildOfClass("WrapLayer") then
 		accessory.Parent = character
 		return true
 	end
 
-	local handleAttachment = findHandleAttachment(handle)
-	if not handleAttachment then
-		return false
-	end
+	local handleAttachment = handle:FindFirstChildOfClass("Attachment")
+	if not handleAttachment then return false end
 
-	local characterAttachment = findCharacterAttachment(character, handleAttachment.Name)
-
-	-- 2. FALLBACK DE ATTACHMENTS (Soluciona incompatibilidades R15 -> R6)
-	if not characterAttachment then
-		-- Si no encuentra el exacto, lo redirige al más cercano
-		local fallbackNames = {
-			HairAttachment = "HairAttachment",
-			HatAttachment = "HatAttachment",
-			FaceFrontAttachment = "FaceCenterAttachment",
-			FaceCenterAttachment = "FaceCenterAttachment",
-			NeckAttachment = "HatAttachment",
-			ShoulderAttachment = "HatAttachment",
-			WaistBackAttachment = "WaistCenterAttachment",
-			WaistFrontAttachment = "WaistCenterAttachment"
-		}
-		
-		local fallbackName = fallbackNames[handleAttachment.Name] or "HatAttachment"
-		characterAttachment = findCharacterAttachment(character, fallbackName)
-		
-		-- Último recurso: anclar a la cabeza si existe
-		if not characterAttachment then
-			local head = character:FindFirstChild("Head")
-			if head then
-				characterAttachment = head:FindFirstChildOfClass("Attachment")
-			end
+	local characterAttachment = nil
+	for _, descendant in ipairs(character:GetDescendants()) do
+		if descendant:IsA("Attachment") and descendant.Name == handleAttachment.Name and descendant.Parent:IsA("BasePart") then
+			characterAttachment = descendant
+			break
 		end
 	end
 
+	-- Si no encuentra attachment, lo ancla a la cabeza
 	if not characterAttachment then
-		return false
+		local head = character:FindFirstChild("Head")
+		if head then
+			characterAttachment = head:FindFirstChildOfClass("Attachment")
+		end
 	end
+
+	if not characterAttachment then return false end
 
 	accessory.Parent = character
 	handle.Anchored = false
@@ -150,16 +132,11 @@ local function manualAttachAccessory(accessory, character)
 	handle.LocalTransparencyModifier = 0
 
 	local oldWeld = handle:FindFirstChild("AccessoryWeld")
-	if oldWeld then
-		oldWeld:Destroy()
-	end
+	if oldWeld then oldWeld:Destroy() end
 
-	-- 3. EL "TRIPLE CÁLCULO" MATEMÁTICAMENTE PERFECTO
-	handle.CFrame =
-		characterAttachment.Parent.CFrame
-		* characterAttachment.CFrame
-		* handleAttachment.CFrame:Inverse()
-
+	-- 2. UNA SOLA INSTANCIA DE CÁLCULO
+	-- Ya no multiplicamos CFrame. Al darle a un Weld los datos C0 y C1, 
+	-- el motor de físicas de Roblox encaja el ítem matemáticamente por nosotros.
 	local weld = Instance.new("Weld")
 	weld.Name = "AccessoryWeld"
 	weld.Part0 = handle
@@ -178,134 +155,102 @@ local function applyAvatar(username, isReset)
 	local currentRequest = requestId
 
 	task.spawn(function()
-		local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-		if currentRequest ~= requestId then return end
-
-		local humanoid = character:WaitForChild("Humanoid", 10)
-		if not humanoid or currentRequest ~= requestId then return end
-
 		local userId = getUserId(username)
 		if not userId or currentRequest ~= requestId then return end
 
 		loadAvatarImage(userId, currentRequest)
 
-		local success, appearanceModel = pcall(function()
-			return Players:GetCharacterAppearanceAsync(userId)
+		-- 3. INICIAR PANTALLAZO NEGRO
+		doFade(true)
+		
+		if currentRequest ~= requestId then return end -- Se canceló por otra petición
+
+		local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+		local humanoid = character:WaitForChild("Humanoid", 10)
+		if not humanoid or currentRequest ~= requestId then 
+			doFade(false)
+			return 
+		end
+
+		-- 1. INTENTO DE CLON PERFECTO (El método nativo)
+		local successNative, description = pcall(function()
+			return Players:GetHumanoidDescriptionFromUserId(userId)
 		end)
 
-		if not success or not appearanceModel or currentRequest ~= requestId then
-			if appearanceModel then appearanceModel:Destroy() end
-			return
+		local appliedNative = false
+		if successNative and description then
+			-- HumanoidDescription copia escalas, animaciones, colores y ropa a la perfección
+			local s = pcall(function()
+				humanoid:ApplyDescription(description)
+			end)
+			if s then appliedNative = true end
 		end
 
-		-- Limpieza de character
-		for _, child in ipairs(character:GetChildren()) do
-			if child:IsA("Accessory")
-				or child:IsA("Hat")
-				or child:IsA("Shirt")
-				or child:IsA("Pants")
-				or child:IsA("ShirtGraphic")
-				or child:IsA("CharacterMesh") then
-				child:Destroy()
-			end
-		end
+		-- FALLBACK: Si falla el método nativo (por restricciones de seguridad del cliente), usamos el manual
+		if not appliedNative then
+			local success, appearanceModel = pcall(function()
+				return Players:GetCharacterAppearanceAsync(userId)
+			end)
 
-		local head = character:FindFirstChild("Head")
-		if head then
-			for _, child in ipairs(head:GetChildren()) do
-				if child:IsA("DataModelMesh") or child:IsA("Decal") then
-					child:Destroy()
-				end
-			end
-			local defaultMesh = Instance.new("SpecialMesh")
-			defaultMesh.MeshType = Enum.MeshType.Head
-			defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
-			defaultMesh.Parent = head
-		end
-
-		local loadedFace = false
-
-		for _, item in ipairs(appearanceModel:GetChildren()) do
-			if currentRequest ~= requestId then
-				appearanceModel:Destroy()
-				return
-			end
-
-			if item:IsA("Accessory") then
-				local accessory = item:Clone()
-
-				local added = pcall(function()
-					humanoid:AddAccessory(accessory)
-				end)
-
-				-- 4. DAR TIEMPO AL MOTOR PARA CREAR EL WELD NATIVO (Defer)
-				task.defer(function()
-					local handle = accessory:FindFirstChild("Handle")
-					if handle and accessory.Parent == character then
-						if not handle:FindFirstChild("AccessoryWeld") then
-							manualAttachAccessory(accessory, character)
-						end
+			if success and appearanceModel then
+				-- Limpiar el personaje actual
+				for _, child in ipairs(character:GetChildren()) do
+					if child:IsA("Accessory") or child:IsA("Hat") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") or child:IsA("CharacterMesh") then
+						child:Destroy()
 					end
-				end)
+				end
 
-			elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
-				item:Clone().Parent = character
-
-			elseif item:IsA("BodyColors") then
-				local oldColors = character:FindFirstChildOfClass("BodyColors")
-				if oldColors then oldColors:Destroy() end
-				item:Clone().Parent = character
-
-			elseif item:IsA("Decal") and item.Name:lower() == "face" then
+				local head = character:FindFirstChild("Head")
 				if head then
-					loadedFace = true
-					local face = item:Clone()
-					local faceId = string.match(item.Texture, "%d+")
-					if faceId then
-						face.Texture = "rbxthumb://type=Asset&id=" .. faceId .. "&w=420&h=420"
-					end
-					face.Parent = head
-				end
-
-			elseif item.Name == "R6" and item:IsA("Folder") then
-				for _, r6Item in ipairs(item:GetChildren()) do
-					if r6Item:IsA("CharacterMesh") then
-						r6Item:Clone().Parent = character
-					elseif r6Item:IsA("DataModelMesh") and head then
-						for _, oldMesh in ipairs(head:GetChildren()) do
-							if oldMesh:IsA("DataModelMesh") then
-								oldMesh:Destroy()
-							end
+					for _, child in ipairs(head:GetChildren()) do
+						if child:IsA("DataModelMesh") or child:IsA("Decal") then
+							child:Destroy()
 						end
-						r6Item:Clone().Parent = head
+					end
+					local defaultMesh = Instance.new("SpecialMesh")
+					defaultMesh.MeshType = Enum.MeshType.Head
+					defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+					defaultMesh.Parent = head
+				end
+
+				-- Aplicar los nuevos ítems
+				for _, item in ipairs(appearanceModel:GetChildren()) do
+					if item:IsA("Accessory") then
+						local accessory = item:Clone()
+						local handle = accessory:FindFirstChild("Handle")
+						
+						local added = pcall(function() humanoid:AddAccessory(accessory) end)
+						
+						-- Verificamos si se añadió correctamente nativamente
+						task.defer(function()
+							if handle and accessory.Parent == character then
+								if not handle:FindFirstChild("AccessoryWeld") then
+									manualAttachAccessory(accessory, character)
+								end
+							end
+						end)
+					elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+						if item:IsA("BodyColors") then
+							local old = character:FindFirstChildOfClass("BodyColors")
+							if old then old:Destroy() end
+						end
+						item:Clone().Parent = character
+					elseif item:IsA("Decal") and item.Name:lower() == "face" and head then
+						local face = item:Clone()
+						local faceId = string.match(item.Texture, "%d+")
+						if faceId then face.Texture = "rbxthumb://type=Asset&id=" .. faceId .. "&w=420&h=420" end
+						face.Parent = head
 					end
 				end
-			elseif item:IsA("CharacterMesh") then
-				item:Clone().Parent = character
+				appearanceModel:Destroy()
 			end
 		end
 
-		appearanceModel:Destroy()
-
-		if currentRequest ~= requestId then return end
-
-		if isReset then
-			if head and not head:FindFirstChildOfClass("Decal") then
-				local defaultFace = Instance.new("Decal")
-				defaultFace.Name = "face"
-				defaultFace.Face = Enum.NormalId.Front
-				defaultFace.Texture = "rbxasset://textures/face.png"
-				defaultFace.Parent = head
-			end
-			return
-		end
-
-		if humanoid.RigType == Enum.HumanoidRigType.R6 and head and not loadedFace then
-			local errorFace = Instance.new("Decal")
-			errorFace.Name = "face"
-			errorFace.Face = Enum.NormalId.Front
-			errorFace.Texture = "rbxthumb://type=Asset&id=7084675103&w=420&h=420"
-			errorFace.Parent = head
+		task.wait(0.2) -- Breve respiro para que el motor cargue todo (evita tirones visuales)
+		
+		if currentRequest == requestId then
+			-- FINALIZAR PANTALLAZO NEGRO
+			doFade(false)
 		end
 	end)
 end
@@ -319,9 +264,7 @@ end
 function M.SetKey(keyCode)
 	if typeof(keyCode) ~= "EnumItem" then return end
 	toggleKey = keyCode
-	if keys then
-		keys.CopyAvatar = keyCode
-	end
+	if keys then keys.CopyAvatar = keyCode end
 end
 
 function M.Open()
@@ -345,6 +288,7 @@ function M.Stop(restoreAvatar)
 
 	gui = nil
 	mainFrame = nil
+	fadeFrame = nil
 	playerImage = nil
 	setPanelOpen = nil
 	isOpen = false
@@ -363,10 +307,7 @@ function M.Start(firstArgument, secondArgument)
 		localPlayer = secondArgument or Players.LocalPlayer
 	end
 
-	if not localPlayer then
-		warn("[CopyAvatar] No se encontró LocalPlayer.")
-		return false
-	end
+	if not localPlayer then return false end
 
 	if keys then
 		local configuredKey = keys.CopyAvatar or keys.Toggle
@@ -382,7 +323,6 @@ function M.Start(firstArgument, secondArgument)
 
 	local playerGui = localPlayer:WaitForChild("PlayerGui")
 	local oldGui = playerGui:FindFirstChild("AFO_AvatarChanger")
-
 	if oldGui then oldGui:Destroy() end
 
 	active = true
@@ -395,6 +335,17 @@ function M.Start(firstArgument, secondArgument)
 	gui.IgnoreGuiInset = true
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.Parent = playerGui
+
+	-- Pantallazo Negro (ZIndex bajo para que tape el juego pero no tu GUI)
+	fadeFrame = Instance.new("Frame")
+	fadeFrame.Name = "FadeTransition"
+	fadeFrame.Size = UDim2.fromScale(1, 1)
+	fadeFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+	fadeFrame.BackgroundTransparency = 1
+	fadeFrame.BorderSizePixel = 0
+	fadeFrame.ZIndex = 5
+	fadeFrame.Visible = false
+	fadeFrame.Parent = gui
 
 	mainFrame = Instance.new("Frame")
 	mainFrame.Name = "MainPanel"
@@ -426,7 +377,6 @@ function M.Start(firstArgument, secondArgument)
 	closeButton.Text = "X"
 	closeButton.BorderSizePixel = 0
 	closeButton.Parent = mainFrame
-
 	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
 
 	local title = Instance.new("TextLabel")
@@ -454,7 +404,6 @@ function M.Start(firstArgument, secondArgument)
 	textBox.BorderSizePixel = 0
 	textBox.ClearTextOnFocus = true
 	textBox.Parent = mainFrame
-
 	Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 4)
 
 	local boxStroke = Instance.new("UIStroke")
@@ -474,7 +423,6 @@ function M.Start(firstArgument, secondArgument)
 	applyButton.Text = "Apply"
 	applyButton.BorderSizePixel = 0
 	applyButton.Parent = mainFrame
-
 	Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
 
 	local resetButton = Instance.new("TextButton")
@@ -488,7 +436,6 @@ function M.Start(firstArgument, secondArgument)
 	resetButton.Text = "🔄"
 	resetButton.BorderSizePixel = 0
 	resetButton.Parent = mainFrame
-
 	Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 4)
 
 	local imageContainer = Instance.new("Frame")
@@ -499,7 +446,6 @@ function M.Start(firstArgument, secondArgument)
 	imageContainer.BorderSizePixel = 0
 	imageContainer.ZIndex = 11
 	imageContainer.Parent = mainFrame
-
 	Instance.new("UICorner", imageContainer).CornerRadius = UDim.new(1, 0)
 
 	playerImage = Instance.new("ImageLabel")
@@ -509,25 +455,18 @@ function M.Start(firstArgument, secondArgument)
 	playerImage.Image = ""
 	playerImage.ZIndex = 12
 	playerImage.Parent = imageContainer
-
 	Instance.new("UICorner", playerImage).CornerRadius = UDim.new(1, 0)
 
-	local tweenInfo = TweenInfo.new(
-		0.5,
-		Enum.EasingStyle.Quart,
-		Enum.EasingDirection.Out
-	)
+	local tweenInfoMain = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 	setPanelOpen = function(open)
 		if not active or not mainFrame or not mainFrame.Parent then return end
 		isOpen = open
 		local position = isOpen and UDim2.new(1, -20, 0, 190) or UDim2.new(1, 300, 0, 190)
-		TweenService:Create(mainFrame, tweenInfo, { Position = position }):Play()
+		TweenService:Create(mainFrame, tweenInfoMain, { Position = position }):Play()
 	end
 
-	local function togglePanel()
-		setPanelOpen(not isOpen)
-	end
+	local function togglePanel() setPanelOpen(not isOpen) end
 
 	local function startNewAvatar(username)
 		if username and username ~= "" then
@@ -542,14 +481,9 @@ function M.Start(firstArgument, secondArgument)
 		end
 	end))
 
-	table.insert(connections, applyButton.MouseButton1Click:Connect(function()
-		startNewAvatar(textBox.Text)
-	end))
-
+	table.insert(connections, applyButton.MouseButton1Click:Connect(function() startNewAvatar(textBox.Text) end))
 	table.insert(connections, textBox.FocusLost:Connect(function(enterPressed)
-		if enterPressed then
-			startNewAvatar(textBox.Text)
-		end
+		if enterPressed then startNewAvatar(textBox.Text) end
 	end))
 
 	table.insert(connections, resetButton.MouseButton1Click:Connect(function()
@@ -557,14 +491,10 @@ function M.Start(firstArgument, secondArgument)
 		resetToOriginal()
 	end))
 
-	table.insert(connections, closeButton.MouseButton1Click:Connect(function()
-		M.Stop(true)
-	end))
+	table.insert(connections, closeButton.MouseButton1Click:Connect(function() M.Stop(true) end))
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not gameProcessed and input.KeyCode == toggleKey then
-			togglePanel()
-		end
+		if not gameProcessed and input.KeyCode == toggleKey then togglePanel() end
 	end))
 
 	startNewAvatar("Wiftor")
