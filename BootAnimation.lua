@@ -146,7 +146,10 @@ end)
 local heightMaintainer = RunService.Heartbeat:Connect(function()
     if in4DMode and root then
         if math.abs(root.Position.Y - skyWorldY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+            -- Usar PivotTo en lugar de CFrame directo
+            local rPos = root.Position
+            local rRot = root.CFrame.Rotation
+            char:PivotTo(CFrame.new(rPos.X, skyWorldY, rPos.Z) * rRot)
         end
     end
 end)
@@ -321,20 +324,15 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
--- ==========================================
--- FIX: UpdateCloneAppearance corregido
--- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
     
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
@@ -348,7 +346,6 @@ local function UpdateCloneAppearance()
                 handle.Transparency = 0
             end
             
-            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
             local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
             if cloneItem:FindFirstChild("Handle") then
                 local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
@@ -359,7 +356,6 @@ local function UpdateCloneAppearance()
         end
     end
     
-    -- 3. Copiamos la cara (Decals)
     local sHead = char:FindFirstChild("Head")
     local tHead = cloneChar:FindFirstChild("Head")
     if sHead and tHead then
@@ -446,25 +442,19 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
--- ==========================================
--- FIX: Lógica del pantallazo negro sincronizado
--- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
-    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
+    fade.BackgroundTransparency = 0 
     
-    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
     UpdateCloneAppearance()
     
-    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -557,16 +547,45 @@ if skyBV then skyBV:Destroy() end
 if skyBP then skyBP:Destroy() end
 
 root.Anchored = false
-root.CFrame = targetCF
+hum.PlatformStand = true
+
+-- ====== NUEVO SISTEMA DE DESCENSO PARA BYPASSEAR ANTICHEAT ======
+local returnBP = Instance.new("BodyPosition", root)
+returnBP.Name = "ReturnBP_Smooth"
+returnBP.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+returnBP.Position = targetCF.Position
+returnBP.P = 150000 -- Fuerza suficientemente alta para caer rapido sin ser detectado como teleport
+returnBP.D = 3000
+
+local returnBG = Instance.new("BodyGyro", root)
+returnBG.Name = "ReturnBG_Smooth"
+returnBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+returnBG.CFrame = targetCF
+returnBG.P = 100000
+
+local descendStart = tick()
+while tick() - descendStart < 2.5 do
+    if root.Parent and (root.Position - targetCF.Position).Magnitude < 10 then 
+        break 
+    end
+    RunService.Heartbeat:Wait()
+end
+
+pcall(function() returnBP:Destroy() end)
+pcall(function() returnBG:Destroy() end)
+
+-- Ajuste final mínimo usando PivotTo para evitar la manipulación directa de CFrame.
+-- Al estar a pocos studs de distancia, el anticheat lo ignorará.
+char:PivotTo(targetCF)
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
+-- ================================================================
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 landBV.Parent = root
 
-hum.PlatformStand = true
 task.defer(function()
     pcall(function() landBV:Destroy() end)
     if hum and hum.Parent then
