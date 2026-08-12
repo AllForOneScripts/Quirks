@@ -116,14 +116,29 @@ end
 local in4DMode = true
 local skyWorldY = originalGroundY + 1500
 
+-- ==========================================
+-- FIX: Físicas de Ascenso Anti-Cheat y Postura Fuerte
+-- ==========================================
 hum.PlatformStand = true
 root.Anchored = false 
 
-local skyBV = Instance.new("BodyVelocity", root)
-skyBV.Name = "SkyBV_4D"
-skyBV.Velocity = Vector3.new(0, 600, 0)
-skyBV.MaxForce = Vector3.new(0, 9e8, 0)
-local skyBP = nil
+-- BodyGyro para mantener al personaje rígido y de pie (nada de caerse al suelo)
+local postureGyro = Instance.new("BodyGyro")
+postureGyro.Name = "Posture_4D"
+postureGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+postureGyro.P = 100000
+postureGyro.D = 1000
+postureGyro.CFrame = root.CFrame -- Congela la rotación original mirando firme
+postureGyro.Parent = root
+
+-- BodyPosition para subir al cielo de manera física pero extremadamente rápida
+local skyBP = Instance.new("BodyPosition")
+skyBP.Name = "SkyBP_4D"
+skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
+skyBP.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+skyBP.P = 60000
+skyBP.D = 2500
+skyBP.Parent = root
 
 task.spawn(function()
     local t0 = tick()
@@ -131,28 +146,8 @@ task.spawn(function()
         if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
         task.wait(0.05)
     end
-    if not in4DMode then return end
-    if skyBV then skyBV:Destroy(); skyBV = nil end
-    if not root or not root.Parent then return end
-    
-    skyBP = Instance.new("BodyPosition", root)
-    skyBP.Name = "SkyBP_4D"
-    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
-    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    skyBP.P = 60000
-    skyBP.D = 2500
 end)
-
-local heightMaintainer = RunService.Heartbeat:Connect(function()
-    if in4DMode and root then
-        if math.abs(root.Position.Y - skyWorldY) > 5 then
-            -- Usar PivotTo en lugar de CFrame directo
-            local rPos = root.Position
-            local rRot = root.CFrame.Rotation
-            char:PivotTo(CFrame.new(rPos.X, skyWorldY, rPos.Z) * rRot)
-        end
-    end
-end)
+-- (El heightMaintainer con CFrame fue eliminado para evitar flags del AC. BodyPosition mantendrá la altura sola de manera limpia)
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -451,7 +446,7 @@ task.delay(8.5, function()
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0 
+    fade.BackgroundTransparency = 0
     
     UpdateCloneAppearance()
     
@@ -541,51 +536,31 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
+-- ==========================================
+-- FIX: Descenso físico suavizado al acabar la cinemática
+-- ==========================================
 in4DMode = false
-if heightMaintainer then heightMaintainer:Disconnect() end
-if skyBV then skyBV:Destroy() end
-if skyBP then skyBP:Destroy() end
+
+if skyBP and root then
+    -- Primero hacemos que el BodyPosition baje físicamente al personaje al target
+    skyBP.Position = targetPos
+    task.wait(0.15) -- Damos tiempo súper corto a las físicas para simular el trayecto
+    skyBP:Destroy()
+end
+if postureGyro then postureGyro:Destroy() end
 
 root.Anchored = false
-hum.PlatformStand = true
-
--- ====== NUEVO SISTEMA DE DESCENSO PARA BYPASSEAR ANTICHEAT ======
-local returnBP = Instance.new("BodyPosition", root)
-returnBP.Name = "ReturnBP_Smooth"
-returnBP.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-returnBP.Position = targetCF.Position
-returnBP.P = 150000 -- Fuerza suficientemente alta para caer rapido sin ser detectado como teleport
-returnBP.D = 3000
-
-local returnBG = Instance.new("BodyGyro", root)
-returnBG.Name = "ReturnBG_Smooth"
-returnBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-returnBG.CFrame = targetCF
-returnBG.P = 100000
-
-local descendStart = tick()
-while tick() - descendStart < 2.5 do
-    if root.Parent and (root.Position - targetCF.Position).Magnitude < 10 then 
-        break 
-    end
-    RunService.Heartbeat:Wait()
-end
-
-pcall(function() returnBP:Destroy() end)
-pcall(function() returnBG:Destroy() end)
-
--- Ajuste final mínimo usando PivotTo para evitar la manipulación directa de CFrame.
--- Al estar a pocos studs de distancia, el anticheat lo ignorará.
-char:PivotTo(targetCF)
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
--- ================================================================
+-- Usamos PivotTo de forma limpia (menos agresivo que modificar root.CFrame directo en muchos Anticheats)
+char:PivotTo(targetCF)
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 landBV.Parent = root
 
+hum.PlatformStand = true
 task.defer(function()
     pcall(function() landBV:Destroy() end)
     if hum and hum.Parent then
