@@ -1,505 +1,656 @@
-local M = {}
+if getgenv()._GarouAnimRunning then
+    return
+end
+getgenv()._GarouAnimRunning = true
+local function LiberarCinematica()
+    getgenv()._GarouAnimRunning = false
+end
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
 local ContentProvider = game:GetService("ContentProvider")
+local player = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+local pGui = player:WaitForChild("PlayerGui")
 
-local localPlayer
-local keys
-local active = false
-local connections = {}
+local flashGui = Instance.new("ScreenGui")
+flashGui.IgnoreGuiInset = true
+flashGui.ResetOnSpawn = false
+flashGui.DisplayOrder = 9999
+local flashFrame = Instance.new("Frame", flashGui)
+flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
+flashFrame.Size = UDim2.new(1, 0, 1, 0)
+flashGui.Parent = pGui
 
-local gui
-local mainFrame
-local fadeFrame
-local playerImage
-local isOpen = false
-local setPanelOpen
+RunService.RenderStepped:Wait()
 
-local toggleKey = Enum.KeyCode.F4
-local lastUsername = nil
-local requestId = 0
+local char = player.Character or player.CharacterAdded:Wait()
+local hum = char:WaitForChild("Humanoid")
+local root = char:WaitForChild("HumanoidRootPart")
 
-local C_PURPLE = Color3.fromRGB(110, 30, 180)
-local C_BLACK = Color3.fromRGB(6, 4, 12)
-local C_TEXT = Color3.fromRGB(220, 190, 255)
-local C_SUB = Color3.fromRGB(200, 170, 255)
+local cameraWatchdog = RunService.Heartbeat:Connect(function()
+    if cam.CameraType ~= Enum.CameraType.Scriptable then
+        cam.CameraType = Enum.CameraType.Scriptable
+    end
+end)
 
-local function disconnectAll()
-	for _, connection in ipairs(connections) do
-		if connection and connection.Connected then
-			connection:Disconnect()
-		end
-	end
-	table.clear(connections)
+local oldCF = root.CFrame
+local oldAutoRotate = hum.AutoRotate
+hum.AutoRotate = false
+local originalRootPos = root.Position
+local originalGroundY = originalRootPos.Y
+
+pcall(function() char.Archivable = true end)
+local cloneChar = char:Clone()
+pcall(function() char.Archivable = false end)
+
+if not cloneChar then
+    flashGui:Destroy()
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
+    LiberarCinematica()
+    return
 end
 
-local function getUserId(username)
-	local targetPlayer = Players:FindFirstChild(username)
-	if targetPlayer then
-		return targetPlayer.UserId
-	end
-
-	local success, userId = pcall(
-		Players.GetUserIdFromNameAsync,
-		Players,
-		username
-	)
-	if success then
-		return userId
-	end
-
-	return nil
+for _, v in ipairs(cloneChar:GetDescendants()) do
+    if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then
+        v:Destroy()
+    end
 end
 
-local function loadAvatarImage(userId, currentRequest)
-	task.spawn(function()
-		local success, image = pcall(function()
-			return Players:GetUserThumbnailAsync(
-				userId,
-				Enum.ThumbnailType.AvatarBust,
-				Enum.ThumbnailSize.Size420x420
-			)
-		end)
+local cloneAnimator = cloneChar:FindFirstChildOfClass("Animator")
+if cloneAnimator then cloneAnimator:Destroy() end
+local cloneAnimate = cloneChar:FindFirstChild("Animate")
+if cloneAnimate then cloneAnimate.Disabled = true end
 
-		if currentRequest ~= requestId then return end
-
-		if success and image and playerImage and playerImage.Parent then
-			playerImage.Image = image
-			pcall(function()
-				ContentProvider:PreloadAsync({ playerImage })
-			end)
-		end
-	end)
+local cloneRoot = cloneChar:FindFirstChild("HumanoidRootPart") or cloneChar:FindFirstChild("Torso")
+if cloneRoot then
+    cloneChar.PrimaryPart = cloneRoot
+    for _, part in ipairs(cloneChar:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+            part.CanTouch = false
+            part.Massless = true
+        end
+    end
+    cloneRoot.Anchored = true
 end
 
--- Función para manejar el pantallazo negro
-local function doFade(toBlack)
-	if not fadeFrame or not fadeFrame.Parent then return end
-	
-	fadeFrame.Visible = true
-	local targetTransparency = toBlack and 0 or 1
-	local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	
-	local tween = TweenService:Create(fadeFrame, tweenInfo, {
-		BackgroundTransparency = targetTransparency
-	})
-	
-	tween:Play()
-	tween.Completed:Wait() -- Espera a que termine la animación
-	
-	if not toBlack then
-		fadeFrame.Visible = false
-	end
+local CINEMATIC_CF = CFrame.new(876.2, 1882, -397.6, -0.56, 0, 0.82, 0, 1, 0, -0.82, 0, -0.56)
+cloneChar:PivotTo(CINEMATIC_CF)
+cloneChar.Parent = workspace
+
+if cloneChar:FindFirstChild("Humanoid") then
+    cloneChar.Humanoid.NameDisplayDistance = 0
+end
+
+_G.cloneRoot = cloneRoot
+_G.cloneChar = cloneChar
+
+local originalParts = {}
+for _, part in ipairs(char:GetDescendants()) do
+    if part:IsA("BasePart") then
+        originalParts[part] = {
+            LocalTransparencyModifier = part.LocalTransparencyModifier,
+            Transparency = part.Transparency
+        }
+        part.LocalTransparencyModifier = 1  
+    end
+end
+for _, acc in ipairs(char:GetChildren()) do
+    if acc:IsA("Accessory") then
+        local handle = acc:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            if not originalParts[handle] then
+                originalParts[handle] = {
+                    LocalTransparencyModifier = handle.LocalTransparencyModifier,
+                    Transparency = handle.Transparency
+                }
+            end
+            handle.LocalTransparencyModifier = 1
+        end
+    end
+end
+
+local in4DMode = true
+local skyWorldY = originalGroundY + 1500
+
+hum.PlatformStand = true
+root.Anchored = false 
+
+local skyBV = Instance.new("BodyVelocity", root)
+skyBV.Name = "SkyBV_4D"
+skyBV.Velocity = Vector3.new(0, 600, 0)
+skyBV.MaxForce = Vector3.new(0, 9e8, 0)
+local skyBP = nil
+
+task.spawn(function()
+    local t0 = tick()
+    while tick() - t0 < 10 and in4DMode do
+        if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
+        task.wait(0.05)
+    end
+    if not in4DMode then return end
+    if skyBV then skyBV:Destroy(); skyBV = nil end
+    if not root or not root.Parent then return end
+    
+    skyBP = Instance.new("BodyPosition", root)
+    skyBP.Name = "SkyBP_4D"
+    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
+    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    skyBP.P = 60000
+    skyBP.D = 2500
+end)
+
+local heightMaintainer = RunService.Heartbeat:Connect(function()
+    if in4DMode and root then
+        if math.abs(root.Position.Y - skyWorldY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+        end
+    end
+end)
+
+local animateScript = char:FindFirstChild("Animate")
+if animateScript then animateScript.Disabled = true end
+
+local animator = hum:FindFirstChildOfClass("Animator")
+if animator then
+    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+        track:Stop(0)
+    end
+end
+
+local hiddenHighlights = {}
+local function HideHighlights()
+    table.clear(hiddenHighlights)
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("Highlight") and desc.Enabled then
+            hiddenHighlights[desc] = true
+            desc.Enabled = false
+        end
+    end
+end
+local function RestoreHighlights()
+    for highlight, _ in pairs(hiddenHighlights) do
+        if highlight and highlight.Parent then
+            pcall(function() highlight.Enabled = true end)
+        end
+    end
+    table.clear(hiddenHighlights)
+end
+HideHighlights()
+
+local function GetCustomResource(fileName, url)
+    if not isfile(fileName) then writefile(fileName, game:HttpGet(url)) end
+    return getcustomasset(fileName)
+end
+local AnimAssetURL = "https://github.com/ian49972/RBXMS/raw/refs/heads/main/CosmicG.rbxmx"
+local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
+
+local function findHandleAttachment(handle)
+    for _, child in ipairs(handle:GetChildren()) do
+        if child:IsA("Attachment") then return child end
+    end
+    return nil
+end
+
+local function findCharacterAttachment(character, attachmentName)
+    for _, descendant in ipairs(character:GetDescendants()) do
+        if descendant:IsA("Attachment") and descendant.Name == attachmentName and descendant.Parent:IsA("BasePart") then
+            return descendant
+        end
+    end
+    return nil
 end
 
 local function manualAttachAccessory(accessory, character)
-	local handle = accessory:FindFirstChild("Handle")
-	if not handle or not handle:IsA("BasePart") then return false end
+    local handle = accessory:FindFirstChild("Handle")
+    if not handle or not handle:IsA("BasePart") then return false end
+    local handleAttachment = findHandleAttachment(handle)
+    if not handleAttachment then return false end
+    local characterAttachment = findCharacterAttachment(character, handleAttachment.Name)
+    if not characterAttachment then return false end
 
-	-- Si es ropa 3D (Layered Clothing)
-	if handle:FindFirstChildOfClass("WrapLayer") then
-		accessory.Parent = character
-		return true
-	end
+    accessory.Parent = character
+    handle.Anchored = false
+    handle.CanCollide = false
+    handle.Massless = true
+    handle.LocalTransparencyModifier = 0
+    handle.CFrame = characterAttachment.Parent.CFrame * characterAttachment.CFrame * handleAttachment.CFrame:Inverse()
 
-	local handleAttachment = handle:FindFirstChildOfClass("Attachment")
-	if not handleAttachment then return false end
+    local oldWeld = handle:FindFirstChild("AccessoryWeld")
+    if oldWeld then oldWeld:Destroy() end
 
-	local characterAttachment = nil
-	for _, descendant in ipairs(character:GetDescendants()) do
-		if descendant:IsA("Attachment") and descendant.Name == handleAttachment.Name and descendant.Parent:IsA("BasePart") then
-			characterAttachment = descendant
-			break
-		end
-	end
-
-	-- Si no encuentra attachment, lo ancla a la cabeza
-	if not characterAttachment then
-		local head = character:FindFirstChild("Head")
-		if head then
-			characterAttachment = head:FindFirstChildOfClass("Attachment")
-		end
-	end
-
-	if not characterAttachment then return false end
-
-	accessory.Parent = character
-	handle.Anchored = false
-	handle.CanCollide = false
-	handle.Massless = true
-	handle.LocalTransparencyModifier = 0
-
-	local oldWeld = handle:FindFirstChild("AccessoryWeld")
-	if oldWeld then oldWeld:Destroy() end
-
-	-- 2. UNA SOLA INSTANCIA DE CÁLCULO
-	-- Ya no multiplicamos CFrame. Al darle a un Weld los datos C0 y C1, 
-	-- el motor de físicas de Roblox encaja el ítem matemáticamente por nosotros.
-	local weld = Instance.new("Weld")
-	weld.Name = "AccessoryWeld"
-	weld.Part0 = handle
-	weld.Part1 = characterAttachment.Parent
-	weld.C0 = handleAttachment.CFrame
-	weld.C1 = characterAttachment.CFrame
-	weld.Parent = handle
-
-	return true
+    local weld = Instance.new("Weld")
+    weld.Name = "AccessoryWeld"
+    weld.Part0 = handle
+    weld.Part1 = characterAttachment.Parent
+    weld.C0 = handleAttachment.CFrame
+    weld.C1 = characterAttachment.CFrame
+    weld.Parent = handle
+    return true
 end
 
-local function applyAvatar(username, isReset)
-	if not localPlayer or not username or username == "" then return end
+local function ApplyJaidenAppearance(rig)
+    local targetUsername = "Jaiden_X33"
+    local successId, userId = pcall(function() return Players:GetUserIdFromNameAsync(targetUsername) end)
+    
+    if not successId or not userId then return end
+    
+    local sModel, appearanceModel = pcall(function()
+        return Players:GetCharacterAppearanceAsync(userId)
+    end)
+    
+    if not sModel or not appearanceModel then return end
+    
+    local rigHum = rig:FindFirstChildOfClass("Humanoid")
+    if rigHum then rigHum.RigType = Enum.HumanoidRigType.R6 end
+    
+    for _, v in ipairs(rig:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") then
+            v:Destroy()
+        end
+    end
+    
+    for _, item in ipairs(appearanceModel:GetChildren()) do
+        if item:IsA("Accessory") then
+            local clone = item:Clone()
+            local added = pcall(function() rigHum:AddAccessory(clone) end)
+            local handle = clone:FindFirstChild("Handle")
+            
+            if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
+                manualAttachAccessory(clone, rig)
+            end
+            
+            if handle then
+                local isHeadAcc = false
+                local weld = handle:FindFirstChild("AccessoryWeld")
+                if weld and weld.Part1 and weld.Part1.Name == "Head" then
+                    isHeadAcc = true
+                else
+                    local att = findHandleAttachment(handle)
+                    if att and (att.Name == "HatAttachment" or att.Name == "HairAttachment" or att.Name == "FaceFrontAttachment" or att.Name == "FaceCenterAttachment") then
+                        isHeadAcc = true
+                    end
+                end
 
-	requestId += 1
-	local currentRequest = requestId
+                if isHeadAcc then
+                    if handle:IsA("MeshPart") then
+                        handle.Size = handle.Size * 1.5
+                    end
+                    local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+                    if mesh then
+                        mesh.Scale = mesh.Scale * 1.5
+                    end
+                    local att = handle:FindFirstChildOfClass("Attachment")
+                    if att then
+                        att.Position = att.Position * 1.5
+                        if weld then
+                            weld.C0 = att.CFrame * CFrame.new(0, handle.Size.Y * 0.2, 0)
+                        end
+                    end
+                end
+            end
+            
+        elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") then
+            item:Clone().Parent = rig
+            
+        elseif item.Name == "R6" and item:IsA("Folder") then
+            for _, r6Item in ipairs(item:GetChildren()) do
+                if r6Item:IsA("CharacterMesh") then
+                    r6Item:Clone().Parent = rig
+                end
+            end
+            
+        elseif item:IsA("CharacterMesh") then
+            item:Clone().Parent = rig
+        end
+    end
+    
+    appearanceModel:Destroy()
 
-	task.spawn(function()
-		local userId = getUserId(username)
-		if not userId or currentRequest ~= requestId then return end
-
-		loadAvatarImage(userId, currentRequest)
-
-		-- 3. INICIAR PANTALLAZO NEGRO
-		doFade(true)
-		
-		if currentRequest ~= requestId then return end -- Se canceló por otra petición
-
-		local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-		local humanoid = character:WaitForChild("Humanoid", 10)
-		if not humanoid or currentRequest ~= requestId then 
-			doFade(false)
-			return 
-		end
-
-		-- 1. INTENTO DE CLON PERFECTO (El método nativo)
-		local successNative, description = pcall(function()
-			return Players:GetHumanoidDescriptionFromUserId(userId)
-		end)
-
-		local appliedNative = false
-		if successNative and description then
-			-- HumanoidDescription copia escalas, animaciones, colores y ropa a la perfección
-			local s = pcall(function()
-				humanoid:ApplyDescription(description)
-			end)
-			if s then appliedNative = true end
-		end
-
-		-- FALLBACK: Si falla el método nativo (por restricciones de seguridad del cliente), usamos el manual
-		if not appliedNative then
-			local success, appearanceModel = pcall(function()
-				return Players:GetCharacterAppearanceAsync(userId)
-			end)
-
-			if success and appearanceModel then
-				-- Limpiar el personaje actual
-				for _, child in ipairs(character:GetChildren()) do
-					if child:IsA("Accessory") or child:IsA("Hat") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") or child:IsA("CharacterMesh") then
-						child:Destroy()
-					end
-				end
-
-				local head = character:FindFirstChild("Head")
-				if head then
-					for _, child in ipairs(head:GetChildren()) do
-						if child:IsA("DataModelMesh") or child:IsA("Decal") then
-							child:Destroy()
-						end
-					end
-					local defaultMesh = Instance.new("SpecialMesh")
-					defaultMesh.MeshType = Enum.MeshType.Head
-					defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
-					defaultMesh.Parent = head
-				end
-
-				-- Aplicar los nuevos ítems
-				for _, item in ipairs(appearanceModel:GetChildren()) do
-					if item:IsA("Accessory") then
-						local accessory = item:Clone()
-						local handle = accessory:FindFirstChild("Handle")
-						
-						local added = pcall(function() humanoid:AddAccessory(accessory) end)
-						
-						-- Verificamos si se añadió correctamente nativamente
-						task.defer(function()
-							if handle and accessory.Parent == character then
-								if not handle:FindFirstChild("AccessoryWeld") then
-									manualAttachAccessory(accessory, character)
-								end
-							end
-						end)
-					elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-						if item:IsA("BodyColors") then
-							local old = character:FindFirstChildOfClass("BodyColors")
-							if old then old:Destroy() end
-						end
-						item:Clone().Parent = character
-					elseif item:IsA("Decal") and item.Name:lower() == "face" and head then
-						local face = item:Clone()
-						local faceId = string.match(item.Texture, "%d+")
-						if faceId then face.Texture = "rbxthumb://type=Asset&id=" .. faceId .. "&w=420&h=420" end
-						face.Parent = head
-					end
-				end
-				appearanceModel:Destroy()
-			end
-		end
-
-		task.wait(0.2) -- Breve respiro para que el motor cargue todo (evita tirones visuales)
-		
-		if currentRequest == requestId then
-			-- FINALIZAR PANTALLAZO NEGRO
-			doFade(false)
-		end
-	end)
+    local head = rig:FindFirstChild("Head")
+    if head then
+        head.Transparency = 1
+        for _, v in ipairs(head:GetChildren()) do
+            if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") then
+                v:Destroy()
+            end
+        end
+    end
 end
 
-local function resetToOriginal()
-	if not localPlayer then return end
-	lastUsername = nil
-	applyAvatar(localPlayer.Name, true)
+local function UpdateCloneAppearance()
+    if not cloneChar or not char then return end
+    local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
+    
+    for _, v in ipairs(cloneChar:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") then
+            v:Destroy()
+        end
+    end
+    
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") then
+            local cloneItem = item:Clone()
+            
+            if cloneItem:IsA("Accessory") then
+                local handle = cloneItem:FindFirstChild("Handle")
+                if handle then
+                    handle.LocalTransparencyModifier = 0
+                    handle.Transparency = 0
+                    
+                    -- Limpiamos los Welds originales que seguían apuntando a tu personaje real
+                    for _, weld in ipairs(handle:GetChildren()) do
+                        if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld:IsA("ManualWeld") then
+                            weld:Destroy()
+                        end
+                    end
+                end
+                
+                -- Usamos el sistema nativo para adherir correctamente el accesorio al clon
+                if cloneHum then
+                    local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
+                    local newWeld = handle and handle:FindFirstChild("AccessoryWeld")
+                    if not (added and newWeld) then
+                        manualAttachAccessory(cloneItem, cloneChar)
+                    end
+                else
+                    manualAttachAccessory(cloneItem, cloneChar)
+                end
+            else
+                cloneItem.Parent = cloneChar
+            end
+        end
+    end
+    
+    local sHead = char:FindFirstChild("Head")
+    local tHead = cloneChar:FindFirstChild("Head")
+    if sHead and tHead then
+        for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
+        for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
+    end
 end
 
-function M.SetKey(keyCode)
-	if typeof(keyCode) ~= "EnumItem" then return end
-	toggleKey = keyCode
-	if keys then keys.CopyAvatar = keyCode end
+local function PlayKeyframeSequence(Model, KFS, Speed)
+    Speed = Speed or 1
+    local keyframes, jointData, motorMap = {}, {}, {}
+    for _, kf in ipairs(KFS:GetKeyframes()) do table.insert(keyframes, {Time = kf.Time, KF = kf}) end
+    table.sort(keyframes, function(a, b) return a.Time < b.Time end)
+    if #keyframes == 0 then return nil end
+    local function ResolveJoint(pose)
+        local name = pose.Name
+        if motorMap[name] then return motorMap[name] end
+        for _, v in ipairs(Model:GetDescendants()) do
+            if v:IsA("Motor6D") and v.Part1 and v.Part1.Name == name then motorMap[name] = v; return v end
+        end
+        return nil
+    end
+    for _, entry in ipairs(keyframes) do
+        for _, pose in ipairs(entry.KF:GetDescendants()) do
+            if pose:IsA("Pose") and pose.Weight > 0 then
+                local joint = ResolveJoint(pose)
+                if joint then
+                    jointData[pose.Name] = jointData[pose.Name] or {}
+                    table.insert(jointData[pose.Name], {time = entry.Time, cframe = pose.CFrame, joint = joint})
+                end
+            end
+        end
+    end
+    local tLength = keyframes[#keyframes].Time / Speed
+    local startT, skipOff, isPlaying, conn = os.clock(), 0, true, nil
+    conn = RunService.Heartbeat:Connect(function()
+        if not isPlaying or not Model or not Model.Parent then
+            if conn then conn:Disconnect(); conn = nil end
+            return
+        end
+        local tPos = (((os.clock() - startT) * Speed) + skipOff) % tLength
+        for _, poses in pairs(jointData) do
+            if #poses < 2 then continue end
+            local p1, p2 = poses[1], poses[#poses]
+            for i = 1, #poses - 1 do
+                if tPos >= poses[i].time and tPos < poses[i + 1].time then p1, p2 = poses[i], poses[i + 1]; break end
+            end
+            local alpha = (p2.time > p1.time) and ((tPos - p1.time) / (p2.time - p1.time)) or 0
+            p1.joint.Transform = p1.cframe:Lerp(p2.cframe, alpha)
+        end
+    end)
+    return {
+        Length = tLength,
+        Stop = function()
+            isPlaying = false
+            if conn then conn:Disconnect(); conn = nil end
+        end,
+        AddSkip = function(s) skipOff = skipOff + s end,
+        GetTime = function() return ((os.clock() - startT) * Speed) + skipOff end
+    }
 end
 
-function M.Open()
-	if not active or not setPanelOpen then return false end
-	setPanelOpen(true)
-	return true
+local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
+if not s or not Asset then
+    flashGui:Destroy()
+    RestoreHighlights()
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
+    if animator then animator.Parent = hum end
+    if animateScript then animateScript.Disabled = false end
+    LiberarCinematica()
+    return
+end
+Asset.Parent = workspace
+local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
+if CRigs.GOD then ApplyJaidenAppearance(CRigs.GOD) end
+
+local snd = Instance.new("Sound", workspace)
+snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
+
+local oldSky = Lighting:FindFirstChildOfClass("Sky")
+local sky = Instance.new("Sky")
+sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.SkyboxUp = 
+    "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508",
+    "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
+sky.Parent = Lighting
+
+task.delay(8.5, function() 
+    if sky and sky.Parent then sky:Destroy() end
+    if oldSky then oldSky.Parent = Lighting end
+    
+    local sGui = Instance.new("ScreenGui", pGui)
+    sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
+    
+    local fade = Instance.new("Frame", sGui)
+    fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
+    
+    -- Esperamos al siguiente frame para asegurarnos de que la pantalla negra sea visible
+    RunService.RenderStepped:Wait()
+    
+    -- El cambio ocurre mientras la pantalla ya es 100% negra
+    UpdateCloneAppearance()
+    
+    task.delay(2, function()
+        local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
+        tw:Play()
+        tw.Completed:Connect(function() sGui:Destroy() end)
+    end)
+end)
+
+local preloadFinished = false
+task.spawn(function()
+    pcall(function() ContentProvider:PreloadAsync({Asset, sky}) end)
+    preloadFinished = true
+end)
+local startPreloadTime = os.clock()
+repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - startPreloadTime > 3.5)
+
+cam.CameraType = Enum.CameraType.Scriptable
+snd:Play()
+pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
+
+local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+fadeOutTw:Play()
+fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
+
+local bgAnims = {}
+if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
+if CRigs.SceneRig and Anims.SceneRig then table.insert(bgAnims, PlayKeyframeSequence(CRigs.SceneRig, Anims.SceneRig)) end
+
+local pAnim1 = Anims.Player and PlayKeyframeSequence(cloneChar, Anims.Player)
+
+task.delay(8, function()
+    for _, a in ipairs(bgAnims) do a.AddSkip(8) end
+    if pAnim1 then pAnim1.AddSkip(9.9) end
+end)
+
+if pAnim1 then
+    repeat task.wait(0.05) until pAnim1.GetTime() >= pAnim1.Length
+    pAnim1:Stop()
 end
 
-function M.Close()
-	if not active or not setPanelOpen then return false end
-	setPanelOpen(false)
-	return true
+cloneRoot.Anchored = true
+cloneRoot.CFrame = oldCF + Vector3.new(0, 0.25, 0)
+
+task.wait(2.9)
+
+if Anims.PlayerTwo then
+    local pAnim2 = PlayKeyframeSequence(cloneChar, Anims.PlayerTwo)
+    if pAnim2 then
+        pAnim2.AddSkip(27.8)
+        repeat task.wait(0.05) until pAnim2.GetTime() >= pAnim2.Length
+        pAnim2:Stop()
+    end
 end
 
-function M.Stop(restoreAvatar)
-	requestId += 1
-	active = false
-	disconnectAll()
+local finalCloneCF = cloneRoot.CFrame
+local finalPos = finalCloneCF.Position
+local finalRot = finalCloneCF - finalCloneCF.Position
+local OFFSET_Y = 0.5
+local targetPos = finalPos + Vector3.new(0, OFFSET_Y, 0)
+local targetCF = CFrame.new(targetPos) * finalRot
 
-	if gui then gui:Destroy() end
+if cameraWatchdog then cameraWatchdog:Disconnect() end
 
-	gui = nil
-	mainFrame = nil
-	fadeFrame = nil
-	playerImage = nil
-	setPanelOpen = nil
-	isOpen = false
+pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
+getgenv()._StopCinematic = true 
 
-	if restoreAvatar and localPlayer then
-		applyAvatar(localPlayer.Name, true)
-	end
+if snd then
+    task.delay(5, function()
+        local audioFade = TweenService:Create(snd, TweenInfo.new(4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Volume = 0})
+        audioFade:Play()
+        audioFade.Completed:Connect(function()
+            snd:Stop()
+            snd:Destroy()
+        end)
+    end)
 end
 
-function M.Start(firstArgument, secondArgument)
-	if typeof(firstArgument) == "Instance" and firstArgument:IsA("Player") then
-		localPlayer = firstArgument
-		keys = secondArgument
-	else
-		keys = firstArgument
-		localPlayer = secondArgument or Players.LocalPlayer
-	end
+if sky and sky.Parent then sky:Destroy() end
+if oldSky then oldSky.Parent = Lighting end
+RestoreHighlights()
 
-	if not localPlayer then return false end
-
-	if keys then
-		local configuredKey = keys.CopyAvatar or keys.Toggle
-		if typeof(configuredKey) == "EnumItem" then
-			toggleKey = configuredKey
-		end
-	end
-
-	requestId += 1
-	disconnectAll()
-
-	if gui then gui:Destroy() end
-
-	local playerGui = localPlayer:WaitForChild("PlayerGui")
-	local oldGui = playerGui:FindFirstChild("AFO_AvatarChanger")
-	if oldGui then oldGui:Destroy() end
-
-	active = true
-	isOpen = false
-	lastUsername = "Wiftor"
-
-	gui = Instance.new("ScreenGui")
-	gui.Name = "AFO_AvatarChanger"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.Parent = playerGui
-
-	-- Pantallazo Negro (ZIndex bajo para que tape el juego pero no tu GUI)
-	fadeFrame = Instance.new("Frame")
-	fadeFrame.Name = "FadeTransition"
-	fadeFrame.Size = UDim2.fromScale(1, 1)
-	fadeFrame.BackgroundColor3 = Color3.new(0, 0, 0)
-	fadeFrame.BackgroundTransparency = 1
-	fadeFrame.BorderSizePixel = 0
-	fadeFrame.ZIndex = 5
-	fadeFrame.Visible = false
-	fadeFrame.Parent = gui
-
-	mainFrame = Instance.new("Frame")
-	mainFrame.Name = "MainPanel"
-	mainFrame.Size = UDim2.new(0, 240, 0, 115)
-	mainFrame.AnchorPoint = Vector2.new(1, 0)
-	mainFrame.Position = UDim2.new(1, 300, 0, 190)
-	mainFrame.BackgroundColor3 = C_BLACK
-	mainFrame.BackgroundTransparency = 0.15
-	mainFrame.BorderSizePixel = 0
-	mainFrame.ZIndex = 10
-	mainFrame.Parent = gui
-
-	Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = C_PURPLE
-	stroke.Thickness = 1
-	stroke.Transparency = 0.5
-	stroke.Parent = mainFrame
-
-	local closeButton = Instance.new("TextButton")
-	closeButton.Size = UDim2.new(0, 20, 0, 20)
-	closeButton.Position = UDim2.new(1, -25, 0, 10)
-	closeButton.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-	closeButton.BackgroundTransparency = 0.2
-	closeButton.TextColor3 = Color3.new(1, 1, 1)
-	closeButton.Font = Enum.Font.GothamBold
-	closeButton.TextSize = 12
-	closeButton.Text = "X"
-	closeButton.BorderSizePixel = 0
-	closeButton.Parent = mainFrame
-	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
-
-	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(0, 150, 0, 20)
-	title.Position = UDim2.new(0, 15, 0, 10)
-	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.GothamBold
-	title.TextSize = 14
-	title.TextColor3 = C_TEXT
-	title.Text = "Avatar Changer"
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Parent = mainFrame
-
-	local textBox = Instance.new("TextBox")
-	textBox.Size = UDim2.new(0, 145, 0, 25)
-	textBox.Position = UDim2.new(0, 15, 0, 40)
-	textBox.BackgroundColor3 = Color3.fromRGB(20, 10, 40)
-	textBox.BackgroundTransparency = 0.3
-	textBox.TextColor3 = C_TEXT
-	textBox.PlaceholderColor3 = C_SUB
-	textBox.PlaceholderText = "Username..."
-	textBox.Text = "Wiftor"
-	textBox.Font = Enum.Font.Gotham
-	textBox.TextSize = 12
-	textBox.BorderSizePixel = 0
-	textBox.ClearTextOnFocus = true
-	textBox.Parent = mainFrame
-	Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 4)
-
-	local boxStroke = Instance.new("UIStroke")
-	boxStroke.Color = C_PURPLE
-	boxStroke.Thickness = 1
-	boxStroke.Transparency = 0.7
-	boxStroke.Parent = textBox
-
-	local applyButton = Instance.new("TextButton")
-	applyButton.Size = UDim2.new(0, 115, 0, 25)
-	applyButton.Position = UDim2.new(0, 15, 0, 75)
-	applyButton.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
-	applyButton.BackgroundTransparency = 0.2
-	applyButton.TextColor3 = Color3.new(1, 1, 1)
-	applyButton.Font = Enum.Font.GothamBold
-	applyButton.TextSize = 12
-	applyButton.Text = "Apply"
-	applyButton.BorderSizePixel = 0
-	applyButton.Parent = mainFrame
-	Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
-
-	local resetButton = Instance.new("TextButton")
-	resetButton.Size = UDim2.new(0, 25, 0, 25)
-	resetButton.Position = UDim2.new(0, 135, 0, 75)
-	resetButton.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
-	resetButton.BackgroundTransparency = 0.2
-	resetButton.TextColor3 = Color3.new(1, 1, 1)
-	resetButton.Font = Enum.Font.GothamBold
-	resetButton.TextSize = 14
-	resetButton.Text = "🔄"
-	resetButton.BorderSizePixel = 0
-	resetButton.Parent = mainFrame
-	Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 4)
-
-	local imageContainer = Instance.new("Frame")
-	imageContainer.Size = UDim2.new(0, 55, 0, 55)
-	imageContainer.Position = UDim2.new(1, -70, 0, 30)
-	imageContainer.BackgroundColor3 = Color3.fromRGB(20, 10, 40)
-	imageContainer.BackgroundTransparency = 0.3
-	imageContainer.BorderSizePixel = 0
-	imageContainer.ZIndex = 11
-	imageContainer.Parent = mainFrame
-	Instance.new("UICorner", imageContainer).CornerRadius = UDim.new(1, 0)
-
-	playerImage = Instance.new("ImageLabel")
-	playerImage.Name = "PlayerImage"
-	playerImage.Size = UDim2.fromScale(1, 1)
-	playerImage.BackgroundTransparency = 1
-	playerImage.Image = ""
-	playerImage.ZIndex = 12
-	playerImage.Parent = imageContainer
-	Instance.new("UICorner", playerImage).CornerRadius = UDim.new(1, 0)
-
-	local tweenInfoMain = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-
-	setPanelOpen = function(open)
-		if not active or not mainFrame or not mainFrame.Parent then return end
-		isOpen = open
-		local position = isOpen and UDim2.new(1, -20, 0, 190) or UDim2.new(1, 300, 0, 190)
-		TweenService:Create(mainFrame, tweenInfoMain, { Position = position }):Play()
-	end
-
-	local function togglePanel() setPanelOpen(not isOpen) end
-
-	local function startNewAvatar(username)
-		if username and username ~= "" then
-			lastUsername = username
-			applyAvatar(username, false)
-		end
-	end
-
-	table.insert(connections, localPlayer.CharacterAppearanceLoaded:Connect(function()
-		if active and lastUsername and lastUsername ~= localPlayer.Name then
-			applyAvatar(lastUsername, false)
-		end
-	end))
-
-	table.insert(connections, applyButton.MouseButton1Click:Connect(function() startNewAvatar(textBox.Text) end))
-	table.insert(connections, textBox.FocusLost:Connect(function(enterPressed)
-		if enterPressed then startNewAvatar(textBox.Text) end
-	end))
-
-	table.insert(connections, resetButton.MouseButton1Click:Connect(function()
-		textBox.Text = localPlayer.Name
-		resetToOriginal()
-	end))
-
-	table.insert(connections, closeButton.MouseButton1Click:Connect(function() M.Stop(true) end))
-
-	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not gameProcessed and input.KeyCode == toggleKey then togglePanel() end
-	end))
-
-	startNewAvatar("Wiftor")
-
-	return true
+for _, motor in ipairs(char:GetDescendants()) do
+    if motor:IsA("Motor6D") then
+        motor.Transform = CFrame.new()
+    end
 end
 
-return M
+in4DMode = false
+if heightMaintainer then heightMaintainer:Disconnect() end
+if skyBV then skyBV:Destroy() end
+if skyBP then skyBP:Destroy() end
+
+root.Anchored = false
+root.CFrame = targetCF
+root.AssemblyLinearVelocity = Vector3.zero
+root.AssemblyAngularVelocity = Vector3.zero
+
+local landBV = Instance.new("BodyVelocity")
+landBV.Velocity = Vector3.zero
+landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+landBV.Parent = root
+
+hum.PlatformStand = true
+task.defer(function()
+    pcall(function() landBV:Destroy() end)
+    if hum and hum.Parent then
+        hum.PlatformStand = false
+        hum:ChangeState(Enum.HumanoidStateType.Landed)
+    end
+end)
+
+for part, data in pairs(originalParts) do
+    if part and part.Parent then
+        part.LocalTransparencyModifier = data.LocalTransparencyModifier
+        part.Transparency = data.Transparency
+    end
+end
+
+hum.AutoRotate = oldAutoRotate
+
+if cloneChar then cloneChar:Destroy() end
+_G.cloneRoot = nil
+_G.cloneChar = nil
+
+local animatorFinal = hum:FindFirstChildOfClass("Animator")
+if not animatorFinal then
+    animatorFinal = Instance.new("Animator")
+    animatorFinal.Parent = hum
+end
+
+for _, track in ipairs(animatorFinal:GetPlayingAnimationTracks()) do
+    track:Stop(0)
+end
+
+local animObj = Instance.new("Animation")
+animObj.AnimationId = "rbxassetid://18941564777"
+local trackFinal = animatorFinal:LoadAnimation(animObj)
+if trackFinal then
+    trackFinal.Priority = Enum.AnimationPriority.Action4
+    trackFinal:Play(0.1, 1, 1)  
+end
+
+local targetOffset = oldCF * CFrame.new(0, 2, 12)
+local targetCameraCFrame = CFrame.lookAt(targetOffset.Position, oldCF.Position)
+
+local camProxy = Instance.new("CFrameValue")
+camProxy.Value = cam.CFrame
+
+local fovProxy = Instance.new("NumberValue")
+fovProxy.Value = cam.FieldOfView
+
+local overrideId = "Cinematic_Absolute_Cam_Override"
+RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
+    cam.CameraType = Enum.CameraType.Scriptable
+    cam.CFrame = camProxy.Value
+    cam.FieldOfView = fovProxy.Value
+end)
+
+local camTweenInfo = TweenInfo.new(0.975, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+local camTween = TweenService:Create(camProxy, camTweenInfo, {Value = targetCameraCFrame})
+local fovTween = TweenService:Create(fovProxy, camTweenInfo, {Value = 70})
+
+camTween:Play()
+fovTween:Play()
+camTween.Completed:Wait()
+
+RunService:UnbindFromRenderStep(overrideId)
+
+cam.CameraSubject = hum
+cam.CameraType = Enum.CameraType.Custom
+
+task.spawn(function()
+    task.wait(0.5)
+    
+    if trackFinal then
+        trackFinal:Stop(0.5)
+        task.delay(0.5, function()
+            pcall(function() trackFinal:Destroy() end)
+        end)
+    end
+    
+    if animateScript then
+        animateScript.Disabled = false
+        hum:ChangeState(Enum.HumanoidStateType.Landed)
+    end
+    
+    LiberarCinematica()
+end)
