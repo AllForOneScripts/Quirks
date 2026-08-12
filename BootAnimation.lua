@@ -116,29 +116,14 @@ end
 local in4DMode = true
 local skyWorldY = originalGroundY + 1500
 
--- ==========================================
--- FIX: Físicas de Ascenso Anti-Cheat y Postura Fuerte
--- ==========================================
 hum.PlatformStand = true
 root.Anchored = false 
 
--- BodyGyro para mantener al personaje rígido y de pie (nada de caerse al suelo)
-local postureGyro = Instance.new("BodyGyro")
-postureGyro.Name = "Posture_4D"
-postureGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-postureGyro.P = 100000
-postureGyro.D = 1000
-postureGyro.CFrame = root.CFrame -- Congela la rotación original mirando firme
-postureGyro.Parent = root
-
--- BodyPosition para subir al cielo de manera física pero extremadamente rápida
-local skyBP = Instance.new("BodyPosition")
-skyBP.Name = "SkyBP_4D"
-skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
-skyBP.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-skyBP.P = 60000
-skyBP.D = 2500
-skyBP.Parent = root
+local skyBV = Instance.new("BodyVelocity", root)
+skyBV.Name = "SkyBV_4D"
+skyBV.Velocity = Vector3.new(0, 600, 0)
+skyBV.MaxForce = Vector3.new(0, 9e8, 0)
+local skyBP = nil
 
 task.spawn(function()
     local t0 = tick()
@@ -146,8 +131,25 @@ task.spawn(function()
         if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
         task.wait(0.05)
     end
+    if not in4DMode then return end
+    if skyBV then skyBV:Destroy(); skyBV = nil end
+    if not root or not root.Parent then return end
+    
+    skyBP = Instance.new("BodyPosition", root)
+    skyBP.Name = "SkyBP_4D"
+    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
+    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    skyBP.P = 60000
+    skyBP.D = 2500
 end)
--- (El heightMaintainer con CFrame fue eliminado para evitar flags del AC. BodyPosition mantendrá la altura sola de manera limpia)
+
+local heightMaintainer = RunService.Heartbeat:Connect(function()
+    if in4DMode and root then
+        if math.abs(root.Position.Y - skyWorldY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+        end
+    end
+end)
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -319,15 +321,20 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
+-- ==========================================
+-- FIX: UpdateCloneAppearance corregido
+-- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
     
+    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
+    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
@@ -341,6 +348,7 @@ local function UpdateCloneAppearance()
                 handle.Transparency = 0
             end
             
+            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
             local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
             if cloneItem:FindFirstChild("Handle") then
                 local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
@@ -351,6 +359,7 @@ local function UpdateCloneAppearance()
         end
     end
     
+    -- 3. Copiamos la cara (Decals)
     local sHead = char:FindFirstChild("Head")
     local tHead = cloneChar:FindFirstChild("Head")
     if sHead and tHead then
@@ -437,19 +446,25 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
+-- ==========================================
+-- FIX: Lógica del pantallazo negro sincronizado
+-- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
+    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0
+    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
     
+    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
     UpdateCloneAppearance()
     
+    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -536,24 +551,15 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
--- ==========================================
--- FIX: Descenso físico suavizado al acabar la cinemática
--- ==========================================
 in4DMode = false
-
-if skyBP and root then
-    -- Primero hacemos que el BodyPosition baje físicamente al personaje al target
-    skyBP.Position = targetPos
-    task.wait(0.15) -- Damos tiempo súper corto a las físicas para simular el trayecto
-    skyBP:Destroy()
-end
-if postureGyro then postureGyro:Destroy() end
+if heightMaintainer then heightMaintainer:Disconnect() end
+if skyBV then skyBV:Destroy() end
+if skyBP then skyBP:Destroy() end
 
 root.Anchored = false
+root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
--- Usamos PivotTo de forma limpia (menos agresivo que modificar root.CFrame directo en muchos Anticheats)
-char:PivotTo(targetCF)
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
