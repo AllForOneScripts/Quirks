@@ -412,9 +412,6 @@ task.delay(8.5, function()
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
     
-    -- ¡SEÑAL AL HUB DE QUE LA PANTALLA ESTÁ NEGRA!
-    getgenv()._BlackScreenActive = true
-    
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -484,10 +481,12 @@ local targetCF = CFrame.new(targetPos) * finalRot
 -- ============================================================
 -- 7. PREPARAR RESTAURACIÓN Y DETENER LUCHA DE CÁMARAS
 -- ============================================================
+-- Apagamos el Guardián porque nosotros tomaremos el control manual ahora
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 
+-- Desvincular de forma agresiva cualquier residuo de SummonCam
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
-getgenv()._StopCinematic = true
+getgenv()._StopCinematic = true -- Flag de seguridad común por si SummonCam lo lee
 
 if snd then
     task.delay(5, function()
@@ -559,12 +558,16 @@ end
 local targetOffset = oldCF * CFrame.new(0, 2, 12)
 local targetCameraCFrame = CFrame.lookAt(targetOffset.Position, oldCF.Position)
 
+-- En lugar de afectar a la cámara directamente (lo que causa tirones por luchas de RenderStepped),
+-- Animamos valores abstractos (Proxies) y forzamos su aplicación.
 local camProxy = Instance.new("CFrameValue")
 camProxy.Value = cam.CFrame
 
 local fovProxy = Instance.new("NumberValue")
 fovProxy.Value = cam.FieldOfView
 
+-- Bindeamos un override absoluto con la máxima prioridad (Camera + 200). 
+-- Esto APLASTA cualquier modificación que intente hacer el juego u otros scripts.
 local overrideId = "Cinematic_Absolute_Cam_Override"
 RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
     cam.CameraType = Enum.CameraType.Scriptable
@@ -580,6 +583,7 @@ camTween:Play()
 fovTween:Play()
 camTween.Completed:Wait()
 
+-- Una vez terminado el tween suave, soltamos nuestro control absoluto
 RunService:UnbindFromRenderStep(overrideId)
 
 cam.CameraSubject = hum
