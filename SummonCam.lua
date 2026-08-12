@@ -1,14 +1,28 @@
--- Generated Following Cinematic
+--[[
+    SummonCam – Versión adaptada para clon
+    Usa _G.cloneRoot (HumanoidRootPart del clon) como referencia.
+]]
+
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
-local root = player.Character:WaitForChild('HumanoidRootPart')
+-- === OBTENER LA RAÍZ DEL CLON (o del personaje real como fallback) ===
+local rootPart
+if _G.cloneRoot and _G.cloneRoot.Parent then
+    rootPart = _G.cloneRoot
+else
+    -- Si no existe el clon, usar el personaje real (comportamiento original)
+    local char = player.Character or player.CharacterAdded:Wait()
+    rootPart = char:WaitForChild('HumanoidRootPart')
+    warn('SummonCam: Usando personaje real (no se encontró _G.cloneRoot)')
+end
 
 camera.CameraType = Enum.CameraType.Scriptable
 
+-- === FRAMES ===
 local frames = {
 	{cf=CFrame.new(-11.434738,4.715202,-3.632448,-0.308051,0.227994,-0.923647,-0.000000,0.970860,0.239648,0.951370,0.073824,-0.299075),fov=70.000000,dt=0.018547},
 	{cf=CFrame.new(-11.434738,4.715173,-3.631821,-0.308051,0.227994,-0.923647,-0.000000,0.970860,0.239648,0.951370,0.073824,-0.299075),fov=70.000000,dt=0.028260},
@@ -1272,32 +1286,29 @@ local frames = {
 	{cf=CFrame.new(-11.861284,-1.708134,0.667480,0.061832,-0.277346,-0.958778,0.000000,0.960617,-0.277878,0.998087,0.017182,0.059396),fov=73.985229,dt=0.036571},
 }
 
+-- === VARIABLES DE REPRODUCCIÓN ===
 local accumulated = 0
 local index = 1
-local smoothRootCF = root.CFrame
+local smoothRootCF = rootPart.CFrame  -- CFrame inicial del clon
 
 RunService:BindToRenderStep('FollowCinematic', Enum.RenderPriority.Camera.Value + 1, function(dt)
+    accumulated = accumulated + dt
 
-	accumulated += dt
+    -- Actualizamos smoothRootCF con el CFrame actual del clon (aunque esté anclado, por si acaso)
+    if rootPart and rootPart.Parent then
+        smoothRootCF = rootPart.CFrame
+    end
 
-	smoothRootCF = root.CFrame
+    while frames[index] and accumulated >= frames[index].dt do
+        accumulated = accumulated - frames[index].dt
+        local f = frames[index]
+        camera.CFrame = smoothRootCF * f.cf
+        camera.FieldOfView = f.fov
+        index = index + 1
+    end
 
-	while frames[index] and accumulated >= frames[index].dt do
-
-		accumulated -= frames[index].dt
-
-		local f = frames[index]
-
-		camera.CFrame = smoothRootCF * f.cf
-		camera.FieldOfView = f.fov
-
-		index += 1
-
-	end
-
-	if not frames[index] then
-		RunService:UnbindFromRenderStep('FollowCinematic')
-		camera.CameraType = Enum.CameraType.Custom
-	end
-
+    if not frames[index] then
+        RunService:UnbindFromRenderStep('FollowCinematic')
+        camera.CameraType = Enum.CameraType.Custom
+    end
 end)
