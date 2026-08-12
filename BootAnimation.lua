@@ -321,85 +321,52 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
--- ==========================================================
--- ACTUALIZACIÓN DE CLON MEJORADA (Copia exacta de tu avatar actual)
--- ==========================================================
+-- ==========================================
+-- FIX: UpdateCloneAppearance corregido
+-- ==========================================
 local function UpdateCloneAppearance()
-    local sourceChar = player.Character -- Usar el personaje actual en este preciso instante
-    if not cloneChar or not sourceChar then return end
-    local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
+    if not cloneChar or not char then return end
     
-    -- 1. Limpiar ABSOLUTAMENTE todo lo visual del clon
+    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    -- 2. Copiar todo el set de ropa, cuerpo y accesorios
-    for _, item in ipairs(sourceChar:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            local cloneItem = item:Clone()
+    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+            item:Clone().Parent = cloneChar
             
-            if cloneItem:IsA("Accessory") then
-                local handle = cloneItem:FindFirstChild("Handle")
-                if handle then
-                    handle.LocalTransparencyModifier = 0
-                    handle.Transparency = 0
-                    
-                    for _, weld in ipairs(handle:GetChildren()) do
-                        if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld:IsA("ManualWeld") then
-                            weld:Destroy()
-                        end
-                    end
-                end
-                
-                if cloneHum then
-                    local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
-                    local newWeld = handle and handle:FindFirstChild("AccessoryWeld")
-                    if not (added and newWeld) then
-                        manualAttachAccessory(cloneItem, cloneChar)
-                    end
-                else
+        elseif item:IsA("Accessory") then
+            local cloneItem = item:Clone()
+            local handle = cloneItem:FindFirstChild("Handle")
+            
+            if handle then
+                handle.LocalTransparencyModifier = 0
+                handle.Transparency = 0
+            end
+            
+            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
+            local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
+            if cloneItem:FindFirstChild("Handle") then
+                local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
+                if not weld or not weld.Part1 then
                     manualAttachAccessory(cloneItem, cloneChar)
                 end
-            else
-                cloneItem.Parent = cloneChar
             end
         end
     end
     
-    -- 3. Sincronizar BaseParts (por si CopyAvatar te cambia la cara, mallas, colores base, etc.)
-    for _, part in ipairs(sourceChar:GetChildren()) do
-        if part:IsA("BasePart") then
-            local clonePart = cloneChar:FindFirstChild(part.Name)
-            if clonePart then
-                -- Evitar copiar transparencias excesivas si el personaje original lo volvimos invisible
-                if part.Transparency < 1 then
-                    clonePart.Transparency = part.Transparency
-                end
-                clonePart.Color = part.Color
-                clonePart.Material = part.Material
-                clonePart.LocalTransparencyModifier = 0
-                
-                -- Limpiar caras o mallas antiguas del clon (ej: HeadMesh, Face)
-                for _, v in ipairs(clonePart:GetChildren()) do
-                    if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Texture") then
-                        v:Destroy()
-                    end
-                end
-                
-                -- Copiarlas desde el personaje que ya tiene el CopyAvatar aplicado
-                for _, v in ipairs(part:GetChildren()) do
-                    if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Texture") then
-                        v:Clone().Parent = clonePart
-                    end
-                end
-            end
-        end
+    -- 3. Copiamos la cara (Decals)
+    local sHead = char:FindFirstChild("Head")
+    local tHead = cloneChar:FindFirstChild("Head")
+    if sHead and tHead then
+        for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
+        for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
     end
 end
--- ==========================================================
 
 local function PlayKeyframeSequence(Model, KFS, Speed)
     Speed = Speed or 1
@@ -479,22 +446,25 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
+-- ==========================================
+-- FIX: Lógica del pantallazo negro sincronizado
+-- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
+    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
+    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
     
-    -- Esperamos al siguiente frame para asegurarnos de que la pantalla negra sea visible
-    RunService.RenderStepped:Wait()
-    
-    -- El cambio ocurre mientras la pantalla ya es 100% negra
+    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
     UpdateCloneAppearance()
     
+    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
