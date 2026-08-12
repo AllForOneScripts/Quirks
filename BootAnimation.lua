@@ -33,6 +33,15 @@ local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
 -- ============================================================
+-- GUARDIÁN DE CÁMARA (Evita que el juego recupere la cámara)
+-- ============================================================
+local cameraWatchdog = RunService.Heartbeat:Connect(function()
+    if cam.CameraType ~= Enum.CameraType.Scriptable then
+        cam.CameraType = Enum.CameraType.Scriptable
+    end
+end)
+
+-- ============================================================
 -- POSICIÓN ORIGINAL DEL JUGADOR
 -- ============================================================
 local oldCF = root.CFrame
@@ -51,6 +60,7 @@ pcall(function() char.Archivable = false end)
 if not cloneChar then
     warn("No se pudo clonar el personaje. Abortando.")
     flashGui:Destroy()
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
     LiberarCinematica()
     return
 end
@@ -80,24 +90,21 @@ if cloneRoot then
     cloneRoot.Anchored = true
 end
 
--- Posición fija de la cinemática (donde ocurre la primera parte)
+-- Posición fija de la cinemática
 local CINEMATIC_CF = CFrame.new(876.2, 1882, -397.6, -0.56, 0, 0.82, 0, 1, 0, -0.82, 0, -0.56)
 cloneChar:PivotTo(CINEMATIC_CF)
 cloneChar.Parent = workspace
 
--- Ocultar el nombre del clon
 if cloneChar:FindFirstChild("Humanoid") then
     cloneChar.Humanoid.NameDisplayDistance = 0
 end
 
--- Exponer el clon para SummonCam
 _G.cloneRoot = cloneRoot
 _G.cloneChar = cloneChar
 
 -- ============================================================
 -- 2. OCULTAR Y ELEVAR AL PERSONAJE REAL (MODO 4D ESTÁTICO)
 -- ============================================================
--- Guardar referencias de partes originales para restaurar después
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
     if part:IsA("BasePart") then
@@ -107,7 +114,7 @@ for _, part in ipairs(char:GetDescendants()) do
             CanCollide = part.CanCollide,
             CanTouch = part.CanTouch,
         }
-        part.LocalTransparencyModifier = 1  -- Hacer invisible sin modificar Transparency
+        part.LocalTransparencyModifier = 1  
         part.CanCollide = false
         part.CanTouch = false
     end
@@ -127,7 +134,6 @@ for _, acc in ipairs(char:GetChildren()) do
     end
 end
 
--- Elevar al personaje real a una altura segura de forma absoluta
 local SKY_ALTITUDE = 1500
 local skyY = originalGroundY + SKY_ALTITUDE
 
@@ -141,7 +147,6 @@ root.CFrame = CFrame.new(originalRootPos.X, skyY, originalRootPos.Z)
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
 
--- Detener pistas del real
 local animator = hum:FindFirstChildOfClass("Animator")
 if animator then
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
@@ -374,6 +379,7 @@ local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("Cosm
 if not s or not Asset then
     flashGui:Destroy()
     RestoreHighlights()
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
     LiberarCinematica()
@@ -396,7 +402,7 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
-task.delay(8.5, function() -- Cambiado de 9 a 8.5
+task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
@@ -406,7 +412,6 @@ task.delay(8.5, function() -- Cambiado de 9 a 8.5
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
     
-    -- Se mantiene igual para que la duración total sea la misma (3 segundos en total)
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -437,7 +442,6 @@ local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
 if CRigs.SceneRig and Anims.SceneRig then table.insert(bgAnims, PlayKeyframeSequence(CRigs.SceneRig, Anims.SceneRig)) end
 
--- PARTE 1: en posición fija
 local pAnim1 = Anims.Player and PlayKeyframeSequence(cloneChar, Anims.Player)
 
 task.delay(8, function()
@@ -451,14 +455,13 @@ if pAnim1 then
 end
 
 -- ============================================================
--- MOVER CLON AL POLO A TIERRA (usando oldCF con offset)
+-- MOVER CLON AL POLO A TIERRA
 -- ============================================================
 cloneRoot.Anchored = true
 cloneRoot.CFrame = oldCF + Vector3.new(0, 0.25, 0)
 
 task.wait(2.9)
 
--- PARTE 2: en el polo a tierra
 if Anims.PlayerTwo then
     local pAnim2 = PlayKeyframeSequence(cloneChar, Anims.PlayerTwo)
     if pAnim2 then
@@ -468,9 +471,6 @@ if Anims.PlayerTwo then
     end
 end
 
--- ============================================================
--- CAPTURAR POSICIÓN FINAL DEL CLON
--- ============================================================
 local finalCloneCF = cloneRoot.CFrame
 local finalPos = finalCloneCF.Position
 local finalRot = finalCloneCF - finalCloneCF.Position
@@ -479,11 +479,15 @@ local targetPos = finalPos + Vector3.new(0, OFFSET_Y, 0)
 local targetCF = CFrame.new(targetPos) * finalRot
 
 -- ============================================================
--- 7. RESTAURAR PERSONAJE REAL A LA POSICIÓN FINAL DEL CLON
+-- 7. PREPARAR RESTAURACIÓN Y DETENER LUCHA DE CÁMARAS
 -- ============================================================
-RunService:UnbindFromRenderStep("FollowCinematic")
+-- Apagamos el Guardián porque nosotros tomaremos el control manual ahora
+if cameraWatchdog then cameraWatchdog:Disconnect() end
 
--- Fade out de audio
+-- Desvincular de forma agresiva cualquier residuo de SummonCam
+pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
+getgenv()._StopCinematic = true -- Flag de seguridad común por si SummonCam lo lee
+
 if snd then
     task.delay(5, function()
         local audioFade = TweenService:Create(snd, TweenInfo.new(4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Volume = 0})
@@ -499,23 +503,18 @@ if sky and sky.Parent then sky:Destroy() end
 if oldSky then oldSky.Parent = Lighting end
 RestoreHighlights()
 
--- Restaurar motores del real
 for _, motor in ipairs(char:GetDescendants()) do
     if motor:IsA("Motor6D") then
         motor.Transform = CFrame.new()
     end
 end
 
--- Bajar al real a la posición final del clon
 hum.PlatformStand = false
 root.Anchored = false
-
--- Teletransportar al personaje real a la posición exacta del clon (con offset Y)
 root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
--- Restaurar visibilidad del real (usando las referencias guardadas)
 for part, data in pairs(originalParts) do
     if part and part.Parent then
         part.LocalTransparencyModifier = data.LocalTransparencyModifier
@@ -528,7 +527,6 @@ end
 hum.PlatformStand = false
 hum.AutoRotate = oldAutoRotate
 
--- Destruir clon y limpiar globales
 if cloneChar then cloneChar:Destroy() end
 _G.cloneRoot = nil
 _G.cloneChar = nil
@@ -542,7 +540,6 @@ if not animatorFinal then
     animatorFinal.Parent = hum
 end
 
--- Detener todo por si acaso
 for _, track in ipairs(animatorFinal:GetPlayingAnimationTracks()) do
     track:Stop(0)
 end
@@ -552,22 +549,42 @@ animObj.AnimationId = "rbxassetid://18941564777"
 local trackFinal = animatorFinal:LoadAnimation(animObj)
 if trackFinal then
     trackFinal.Priority = Enum.AnimationPriority.Action4
-    trackFinal:Play(0.1, 1, 1)  -- Fade-in rápido
+    trackFinal:Play(0.1, 1, 1)  
 end
 
 -- ============================================================
--- RESTAURAR CÁMARA (MIENTRAS LA ANIMACIÓN YA ESTÁ SONANDO)
+-- RESTAURAR CÁMARA (TWEEN POR PROXY INFALIBLE)
 -- ============================================================
 local targetOffset = oldCF * CFrame.new(0, 2, 12)
 local targetCameraCFrame = CFrame.lookAt(targetOffset.Position, oldCF.Position)
-cam.CameraType = Enum.CameraType.Scriptable
 
-local camTween = TweenService:Create(cam, TweenInfo.new(0.975, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out), {
-    CFrame = targetCameraCFrame,
-    FieldOfView = 70
-})
+-- En lugar de afectar a la cámara directamente (lo que causa tirones por luchas de RenderStepped),
+-- Animamos valores abstractos (Proxies) y forzamos su aplicación.
+local camProxy = Instance.new("CFrameValue")
+camProxy.Value = cam.CFrame
+
+local fovProxy = Instance.new("NumberValue")
+fovProxy.Value = cam.FieldOfView
+
+-- Bindeamos un override absoluto con la máxima prioridad (Camera + 200). 
+-- Esto APLASTA cualquier modificación que intente hacer el juego u otros scripts.
+local overrideId = "Cinematic_Absolute_Cam_Override"
+RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
+    cam.CameraType = Enum.CameraType.Scriptable
+    cam.CFrame = camProxy.Value
+    cam.FieldOfView = fovProxy.Value
+end)
+
+local camTweenInfo = TweenInfo.new(0.975, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+local camTween = TweenService:Create(camProxy, camTweenInfo, {Value = targetCameraCFrame})
+local fovTween = TweenService:Create(fovProxy, camTweenInfo, {Value = 70})
+
 camTween:Play()
+fovTween:Play()
 camTween.Completed:Wait()
+
+-- Una vez terminado el tween suave, soltamos nuestro control absoluto
+RunService:UnbindFromRenderStep(overrideId)
 
 cam.CameraSubject = hum
 cam.CameraType = Enum.CameraType.Custom
@@ -576,23 +593,17 @@ cam.CameraType = Enum.CameraType.Custom
 -- DESVANECER ANIMACIÓN FINAL Y REACTIVAR Animate
 -- ============================================================
 task.spawn(function()
-    -- Esperar un poco para que la cámara se estabilice y la animación se haya mostrado
     task.wait(0.5)
     
     if trackFinal then
-        -- Usar el método nativo de Roblox para hacer fade-out
         trackFinal:Stop(0.5)
-        
         task.delay(0.5, function()
             pcall(function() trackFinal:Destroy() end)
         end)
     end
     
-    -- Reactivar el sistema de animaciones nativo
     if animateScript then
         animateScript.Disabled = false
-        
-        -- FORZAR AL ANIMATE A DESPERTAR
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
     
