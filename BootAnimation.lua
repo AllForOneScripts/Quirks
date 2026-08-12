@@ -138,11 +138,6 @@ root.CFrame = CFrame.new(originalRootPos.X, skyY, originalRootPos.Z)
 -- ============================================================
 -- 3. CONTINUAR CON EL RESTO DEL SCRIPT ORIGINAL
 -- ============================================================
-local originalCharChildren = {}
-for _, child in ipairs(char:GetChildren()) do
-    originalCharChildren[child] = true
-end
-
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
 
@@ -503,13 +498,6 @@ end
 if sky and sky.Parent then sky:Destroy() end
 if oldSky then oldSky.Parent = Lighting end
 RestoreHighlights()
-
--- Limpiar partes añadidas al real
-for _, child in ipairs(char:GetChildren()) do
-    if not originalCharChildren[child] then
-        pcall(function() child:Destroy() end)
-    end
-end
 
 -- Restaurar motores del real
 for _, motor in ipairs(char:GetDescendants()) do
