@@ -1,5 +1,4 @@
 if getgenv()._GarouAnimRunning then
-    warn("La cinemática ya está en curso. Ignorando ejecución.")
     return
 end
 getgenv()._GarouAnimRunning = true
@@ -16,7 +15,6 @@ local player = Players.LocalPlayer
 local cam = workspace.CurrentCamera
 local pGui = player:WaitForChild("PlayerGui")
 
--- Flash de entrada
 local flashGui = Instance.new("ScreenGui")
 flashGui.IgnoreGuiInset = true
 flashGui.ResetOnSpawn = false
@@ -32,40 +30,29 @@ local char = player.Character or player.CharacterAdded:Wait()
 local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
--- ============================================================
--- GUARDIÁN DE CÁMARA (Evita que el juego recupere la cámara)
--- ============================================================
 local cameraWatchdog = RunService.Heartbeat:Connect(function()
     if cam.CameraType ~= Enum.CameraType.Scriptable then
         cam.CameraType = Enum.CameraType.Scriptable
     end
 end)
 
--- ============================================================
--- POSICIÓN ORIGINAL DEL JUGADOR
--- ============================================================
 local oldCF = root.CFrame
 local oldAutoRotate = hum.AutoRotate
 hum.AutoRotate = false
 local originalRootPos = root.Position
 local originalGroundY = originalRootPos.Y
 
--- ============================================================
--- 1. CREAR CLON EN POSICIÓN FIJA (CINEMÁTICA)
--- ============================================================
 pcall(function() char.Archivable = true end)
 local cloneChar = char:Clone()
 pcall(function() char.Archivable = false end)
 
 if not cloneChar then
-    warn("No se pudo clonar el personaje. Abortando.")
     flashGui:Destroy()
     if cameraWatchdog then cameraWatchdog:Disconnect() end
     LiberarCinematica()
     return
 end
 
--- Limpiar scripts del clon
 for _, v in ipairs(cloneChar:GetDescendants()) do
     if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then
         v:Destroy()
@@ -90,7 +77,6 @@ if cloneRoot then
     cloneRoot.Anchored = true
 end
 
--- Posición fija de la cinemática
 local CINEMATIC_CF = CFrame.new(876.2, 1882, -397.6, -0.56, 0, 0.82, 0, 1, 0, -0.82, 0, -0.56)
 cloneChar:PivotTo(CINEMATIC_CF)
 cloneChar.Parent = workspace
@@ -102,48 +88,69 @@ end
 _G.cloneRoot = cloneRoot
 _G.cloneChar = cloneChar
 
--- ============================================================
--- 2. OCULTAR Y ELEVAR AL PERSONAJE REAL (MODO 4D ESTÁTICO)
--- ============================================================
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
     if part:IsA("BasePart") then
         originalParts[part] = {
             LocalTransparencyModifier = part.LocalTransparencyModifier,
-            Transparency = part.Transparency,
-            CanCollide = part.CanCollide,
-            CanTouch = part.CanTouch,
+            Transparency = part.Transparency
         }
         part.LocalTransparencyModifier = 1  
-        part.CanCollide = false
-        part.CanTouch = false
     end
 end
 for _, acc in ipairs(char:GetChildren()) do
     if acc:IsA("Accessory") then
         local handle = acc:FindFirstChild("Handle")
         if handle and handle:IsA("BasePart") then
-            originalParts[handle] = {
-                LocalTransparencyModifier = handle.LocalTransparencyModifier,
-                Transparency = handle.Transparency,
-                CanCollide = handle.CanCollide,
-                CanTouch = handle.CanTouch,
-            }
+            if not originalParts[handle] then
+                originalParts[handle] = {
+                    LocalTransparencyModifier = handle.LocalTransparencyModifier,
+                    Transparency = handle.Transparency
+                }
+            end
             handle.LocalTransparencyModifier = 1
         end
     end
 end
 
-local SKY_ALTITUDE = 1500
-local skyY = originalGroundY + SKY_ALTITUDE
+local in4DMode = true
+local skyWorldY = originalGroundY + 1500
 
 hum.PlatformStand = true
-root.Anchored = true 
-root.CFrame = CFrame.new(originalRootPos.X, skyY, originalRootPos.Z)
+root.Anchored = false 
 
--- ============================================================
--- 3. CONTINUAR CON EL RESTO DEL SCRIPT ORIGINAL
--- ============================================================
+local skyBV = Instance.new("BodyVelocity", root)
+skyBV.Name = "SkyBV_4D"
+skyBV.Velocity = Vector3.new(0, 600, 0)
+skyBV.MaxForce = Vector3.new(0, 9e8, 0)
+local skyBP = nil
+
+task.spawn(function()
+    local t0 = tick()
+    while tick() - t0 < 10 and in4DMode do
+        if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
+        task.wait(0.05)
+    end
+    if not in4DMode then return end
+    if skyBV then skyBV:Destroy(); skyBV = nil end
+    if not root or not root.Parent then return end
+    
+    skyBP = Instance.new("BodyPosition", root)
+    skyBP.Name = "SkyBP_4D"
+    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
+    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    skyBP.P = 60000
+    skyBP.D = 2500
+end)
+
+local heightMaintainer = RunService.Heartbeat:Connect(function()
+    if in4DMode and root then
+        if math.abs(root.Position.Y - skyWorldY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+        end
+    end
+end)
+
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
 
@@ -181,7 +188,6 @@ end
 local AnimAssetURL = "https://github.com/ian49972/RBXMS/raw/refs/heads/main/CosmicG.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
 
--- Funciones auxiliares para apariencia (JAIDEN)
 local function findHandleAttachment(handle)
     for _, child in ipairs(handle:GetChildren()) do
         if child:IsA("Attachment") then return child end
@@ -230,10 +236,7 @@ local function ApplyJaidenAppearance(rig)
     local targetUsername = "Jaiden_X33"
     local successId, userId = pcall(function() return Players:GetUserIdFromNameAsync(targetUsername) end)
     
-    if not successId or not userId then 
-        warn("No se pudo obtener el ID del jugador: " .. targetUsername)
-        return 
-    end
+    if not successId or not userId then return end
     
     local sModel, appearanceModel = pcall(function()
         return Players:GetCharacterAppearanceAsync(userId)
@@ -318,6 +321,34 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
+local function UpdateCloneAppearance()
+    if not cloneChar or not char then return end
+    for _, v in ipairs(cloneChar:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") then
+            v:Destroy()
+        end
+    end
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") then
+            local cloneItem = item:Clone()
+            if cloneItem:IsA("Accessory") then
+                local handle = cloneItem:FindFirstChild("Handle")
+                if handle then
+                    handle.LocalTransparencyModifier = 0
+                    handle.Transparency = 0
+                end
+            end
+            cloneItem.Parent = cloneChar
+        end
+    end
+    local sHead = char:FindFirstChild("Head")
+    local tHead = cloneChar:FindFirstChild("Head")
+    if sHead and tHead then
+        for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
+        for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
+    end
+end
+
 local function PlayKeyframeSequence(Model, KFS, Speed)
     Speed = Speed or 1
     local keyframes, jointData, motorMap = {}, {}, {}
@@ -372,9 +403,6 @@ local function PlayKeyframeSequence(Model, KFS, Speed)
     }
 end
 
--- ============================================================
--- 4. CARGAR ASSET
--- ============================================================
 local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
 if not s or not Asset then
     flashGui:Destroy()
@@ -389,9 +417,6 @@ Asset.Parent = workspace
 local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
 if CRigs.GOD then ApplyJaidenAppearance(CRigs.GOD) end
 
--- ============================================================
--- 5. CONFIGURAR CÁMARA Y REPRODUCIR CINEMÁTICA
--- ============================================================
 local snd = Instance.new("Sound", workspace)
 snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
 
@@ -405,6 +430,8 @@ sky.Parent = Lighting
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
+    
+    UpdateCloneAppearance()
     
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
@@ -435,9 +462,6 @@ local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingSt
 fadeOutTw:Play()
 fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
 
--- ============================================================
--- 6. REPRODUCIR ANIMACIONES (SOBRE EL CLON)
--- ============================================================
 local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
 if CRigs.SceneRig and Anims.SceneRig then table.insert(bgAnims, PlayKeyframeSequence(CRigs.SceneRig, Anims.SceneRig)) end
@@ -454,9 +478,6 @@ if pAnim1 then
     pAnim1:Stop()
 end
 
--- ============================================================
--- MOVER CLON AL POLO A TIERRA
--- ============================================================
 cloneRoot.Anchored = true
 cloneRoot.CFrame = oldCF + Vector3.new(0, 0.25, 0)
 
@@ -478,15 +499,10 @@ local OFFSET_Y = 0.5
 local targetPos = finalPos + Vector3.new(0, OFFSET_Y, 0)
 local targetCF = CFrame.new(targetPos) * finalRot
 
--- ============================================================
--- 7. PREPARAR RESTAURACIÓN Y DETENER LUCHA DE CÁMARAS
--- ============================================================
--- Apagamos el Guardián porque nosotros tomaremos el control manual ahora
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 
--- Desvincular de forma agresiva cualquier residuo de SummonCam
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
-getgenv()._StopCinematic = true -- Flag de seguridad común por si SummonCam lo lee
+getgenv()._StopCinematic = true 
 
 if snd then
     task.delay(5, function()
@@ -509,31 +525,43 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
-hum.PlatformStand = false
+in4DMode = false
+if heightMaintainer then heightMaintainer:Disconnect() end
+if skyBV then skyBV:Destroy() end
+if skyBP then skyBP:Destroy() end
+
 root.Anchored = false
 root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+local landBV = Instance.new("BodyVelocity")
+landBV.Velocity = Vector3.zero
+landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+landBV.Parent = root
+
+hum.PlatformStand = true
+task.defer(function()
+    pcall(function() landBV:Destroy() end)
+    if hum and hum.Parent then
+        hum.PlatformStand = false
+        hum:ChangeState(Enum.HumanoidStateType.Landed)
+    end
+end)
+
 for part, data in pairs(originalParts) do
     if part and part.Parent then
         part.LocalTransparencyModifier = data.LocalTransparencyModifier
         part.Transparency = data.Transparency
-        part.CanCollide = data.CanCollide
-        part.CanTouch = data.CanTouch
     end
 end
 
-hum.PlatformStand = false
 hum.AutoRotate = oldAutoRotate
 
 if cloneChar then cloneChar:Destroy() end
 _G.cloneRoot = nil
 _G.cloneChar = nil
 
--- ============================================================
--- APLICAR ANIMACIÓN FINAL (18941564777) ANTES DE RESTAURAR CÁMARA
--- ============================================================
 local animatorFinal = hum:FindFirstChildOfClass("Animator")
 if not animatorFinal then
     animatorFinal = Instance.new("Animator")
@@ -552,22 +580,15 @@ if trackFinal then
     trackFinal:Play(0.1, 1, 1)  
 end
 
--- ============================================================
--- RESTAURAR CÁMARA (TWEEN POR PROXY INFALIBLE)
--- ============================================================
 local targetOffset = oldCF * CFrame.new(0, 2, 12)
 local targetCameraCFrame = CFrame.lookAt(targetOffset.Position, oldCF.Position)
 
--- En lugar de afectar a la cámara directamente (lo que causa tirones por luchas de RenderStepped),
--- Animamos valores abstractos (Proxies) y forzamos su aplicación.
 local camProxy = Instance.new("CFrameValue")
 camProxy.Value = cam.CFrame
 
 local fovProxy = Instance.new("NumberValue")
 fovProxy.Value = cam.FieldOfView
 
--- Bindeamos un override absoluto con la máxima prioridad (Camera + 200). 
--- Esto APLASTA cualquier modificación que intente hacer el juego u otros scripts.
 local overrideId = "Cinematic_Absolute_Cam_Override"
 RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
     cam.CameraType = Enum.CameraType.Scriptable
@@ -583,15 +604,11 @@ camTween:Play()
 fovTween:Play()
 camTween.Completed:Wait()
 
--- Una vez terminado el tween suave, soltamos nuestro control absoluto
 RunService:UnbindFromRenderStep(overrideId)
 
 cam.CameraSubject = hum
 cam.CameraType = Enum.CameraType.Custom
 
--- ============================================================
--- DESVANECER ANIMACIÓN FINAL Y REACTIVAR Animate
--- ============================================================
 task.spawn(function()
     task.wait(0.5)
     
