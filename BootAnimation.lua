@@ -116,7 +116,7 @@ end
 local summonActive = true
 local summonSkyY = originalGroundY + 1500
 
--- AQUI ESTÁ EL CAMBIO PARA EL ANTICHEAT (Sin PlatformStand al subir)
+-- FIX ANTICHEAT: Se elimina hum.PlatformStand = true aquí
 root.Anchored = false 
 
 local bootBV = Instance.new("BodyVelocity", root)
@@ -322,17 +322,19 @@ local function ApplyJaidenAppearance(rig)
 end
 
 -- ==========================================
--- FIX: UpdateCloneAppearance corregido (Intacto)
+-- FIX: UpdateCloneAppearance corregido
 -- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
     
+    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
+    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
@@ -346,6 +348,7 @@ local function UpdateCloneAppearance()
                 handle.Transparency = 0
             end
             
+            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
             local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
             if cloneItem:FindFirstChild("Handle") then
                 local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
@@ -356,6 +359,7 @@ local function UpdateCloneAppearance()
         end
     end
     
+    -- 3. Copiamos la cara (Decals)
     local sHead = char:FindFirstChild("Head")
     local tHead = cloneChar:FindFirstChild("Head")
     if sHead and tHead then
@@ -443,21 +447,24 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
 sky.Parent = Lighting
 
 -- ==========================================
--- FIX: Lógica del pantallazo negro sincronizado (Intacto)
+-- FIX: Lógica del pantallazo negro sincronizado
 -- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
+    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0 
+    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
     
+    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
     UpdateCloneAppearance()
     
+    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -544,9 +551,7 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
--- ==========================================
--- AQUI ESTÁ LA OTRA PARTE DEL MÉTODO AÉREO 
--- ==========================================
+-- FIX ANTICHEAT: Frenado en seco con BodyVelocity temporal para evitar inercia
 summonActive = false
 if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
