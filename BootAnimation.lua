@@ -1,3 +1,5 @@
+print("version 1")
+
 if getgenv()._BootAnimRunning then
     return
 end
