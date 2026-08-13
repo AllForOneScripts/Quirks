@@ -196,24 +196,23 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Asegúrate de tener RunService definido en la parte superior de tu script principal
--- local RunService = game:GetService("RunService")
-
-local function SpawnAFOSphere(centerCF, duration)
+local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
     dimensionFolder.Parent = workspace
 
-    local boxSize = 60 -- Tamaño para cubrir la vista
+    local boxSize = 60 
     local half = boxSize / 2
     local wallThickness = 2
 
-    -- Nuevas constantes basadas en tus peticiones
-    local NEW_TEXTURE_ID = "rbxassetid://17146735339"
-    local NEON_MAGENTA = Color3.fromRGB(255, 0, 255) -- Color magenta vibrante (neón)
-    local NEON_SPEED = 180 -- Velocidad muy rápida para dar la vuelta constante
+    local NEON_TEXTURE_ID = "rbxassetid://17146735339"
+    local AURA_TEXTURE_ID = "rbxassetid://5748262504"
+    
+    -- Colores y velocidades
+    local NEON_MAGENTA = Color3.new(3, 0, 3) -- Brillo HDR Neon
+    local NEON_SPEED = 180 
+    local AURA_SPEED = 12
 
-    -- Datos de las 6 paredes (habitación cerrada, textura interna)
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
@@ -223,7 +222,7 @@ local function SpawnAFOSphere(centerCF, duration)
         {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
     }
 
-    local neonTextures = {} -- Solo una lista para la única textura activa
+    local allTextures = {}
 
     for _, data in ipairs(facesData) do
         local wall = Instance.new("Part")
@@ -231,67 +230,82 @@ local function SpawnAFOSphere(centerCF, duration)
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = Color3.fromRGB(0, 0, 0) -- Fondo negro para resaltar el neón
-        wall.Material = Enum.Material.SmoothPlastic -- Superficie lisa para la textura
+        wall.Color = Color3.fromRGB(0, 0, 0)
+        wall.Material = Enum.Material.SmoothPlastic
         wall.Anchored = true
         wall.CanCollide = false
         wall.CanTouch = false
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Aplicar textura magenta neón a la cara interna
-        local tex = Instance.new("Texture")
-        tex.Name = "NeonTexture"
-        tex.Texture = NEW_TEXTURE_ID
-        tex.Transparency = 0 -- Sin transparencia para máxima intensidad del color
-        tex.Color3 = NEON_MAGENTA
-        tex.Face = data.innerFace
-        
-        -- 'Agrandar el zoom' -> Aumentamos la escala de la textura (cubre más área con menos detalles)
-        -- Usamos boxSize * 2 para que el patrón sea grande y majestuoso
-        tex.StudsPerTileU = boxSize * 2
-        tex.StudsPerTileV = boxSize * 2
-        
-        tex.Parent = wall
-        table.insert(neonTextures, tex)
+        -- 1. TEXTURA DE AURA HACIA ARRIBA (Fondo - ZIndex 1)
+        local auraUp = Instance.new("Texture")
+        auraUp.Name = "AuraUp"
+        auraUp.Texture = AURA_TEXTURE_ID
+        auraUp.Transparency = 0.3
+        auraUp.Color3 = Color3.new(1, 1, 1)
+        auraUp.Face = data.innerFace
+        auraUp.StudsPerTileU = boxSize / 1.5
+        auraUp.StudsPerTileV = boxSize / 1.5
+        auraUp.ZIndex = 1 -- Lo coloca detrás
+        auraUp.Parent = wall
+        table.insert(allTextures, auraUp)
+
+        -- 2. TEXTURA DE AURA HACIA ABAJO (Fondo - ZIndex 1)
+        local auraDown = Instance.new("Texture")
+        auraDown.Name = "AuraDown"
+        auraDown.Texture = AURA_TEXTURE_ID
+        auraDown.Transparency = 0.3
+        auraDown.Color3 = Color3.new(1, 1, 1)
+        auraDown.Face = data.innerFace
+        auraDown.StudsPerTileU = boxSize / 1.5
+        auraDown.StudsPerTileV = boxSize / 1.5
+        auraDown.ZIndex = 1 -- Lo coloca detrás
+        auraDown.Parent = wall
+        table.insert(allTextures, auraDown)
+
+        -- 3. TEXTURA NEON PRINCIPAL (Frente - ZIndex 2)
+        local texNeon = Instance.new("Texture")
+        texNeon.Name = "NeonTexture"
+        texNeon.Texture = NEON_TEXTURE_ID
+        texNeon.Transparency = 0 
+        texNeon.Color3 = NEON_MAGENTA
+        texNeon.Face = data.innerFace
+        texNeon.StudsPerTileU = boxSize * 3 -- 50% extra de zoom
+        texNeon.StudsPerTileV = boxSize * 3 -- 50% extra de zoom
+        texNeon.ZIndex = 2 -- Lo coloca al frente
+        texNeon.Parent = wall
+        table.insert(allTextures, texNeon)
     end
 
-    -- Bucle de Animación sin Tweens
+    -- Bucle de Animación infinito (solo para el VFX visual)
     local startTime = os.clock()
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
-        local elapsed = os.clock() - startTime
-        
-        -- Terminación exacta según duración
-        if elapsed >= duration or not dimensionFolder.Parent then
+        -- Detener la animación si la carpeta se elimina para no causar memory leaks
+        if not dimensionFolder.Parent then
             if conn then conn:Disconnect() end
-            if dimensionFolder and dimensionFolder.Parent then
-                dimensionFolder:Destroy()
-            end
             return
         end
 
-        -- Desplazamiento muy rápido de la textura (efecto hipnótico)
-        -- Usamos 'elapsed' para un movimiento constante e independiente de los FPS
+        local elapsed = os.clock() - startTime
         local offsetNeon = elapsed * NEON_SPEED
+        local offsetAura = elapsed * AURA_SPEED
 
-        -- Mueve la única textura creando un efecto de giro rápido
-        for _, tex in ipairs(neonTextures) do
-            -- En 'Top' y 'Bottom', movemos en V. En las paredes laterales, movemos en U para 'dar la vuelta'.
-            if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                tex.OffsetStudsV = offsetNeon
-            else
-                tex.OffsetStudsU = offsetNeon
+        for _, tex in ipairs(allTextures) do
+            if tex.Name == "NeonTexture" then
+                -- Movimiento lateral para las paredes, y en V para el techo/suelo
+                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                    tex.OffsetStudsV = offsetNeon
+                else
+                    tex.OffsetStudsU = offsetNeon
+                end
+            elseif tex.Name == "AuraUp" then
+                tex.OffsetStudsV = -offsetAura
+            elseif tex.Name == "AuraDown" then
+                tex.OffsetStudsV = offsetAura
             end
-        end
-    end)
-
-    -- Limpieza de seguridad al finalizar el tiempo
-    task.delay(duration, function()
-        if conn then conn:Disconnect() end
-        if dimensionFolder and dimensionFolder.Parent then
-            dimensionFolder:Destroy()
         end
     end)
 end
