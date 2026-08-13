@@ -118,8 +118,6 @@ local summonSkyY = originalGroundY + 1500
 
 -- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
 -- ==========================================
-
--- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
 local bootBV = Instance.new("BodyVelocity", root)
@@ -148,7 +146,6 @@ end)
 
 local summonMaintainer = RunService.Heartbeat:Connect(function()
     if summonActive and root then
-        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
         if math.abs(root.Position.Y - summonSkyY) > 5 then
             root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
@@ -327,51 +324,92 @@ local function ApplyJaidenAppearance(rig)
 end
 
 -- ==========================================
--- FIX: UpdateCloneAppearance corregido
+-- FIX: UpdateCloneAppearance 100% PULIDO Y ROBUSTO
 -- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
     
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
+    -- 1. Limpieza absoluta del clon
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
+    -- 2. Copia exacta calcando uniones (Welds) y colores
     for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            item:Clone().Parent = cloneChar
-            
-        elseif item:IsA("Accessory") then
-            local cloneItem = item:Clone()
-            local handle = cloneItem:FindFirstChild("Handle")
-            
-            if handle then
-                handle.LocalTransparencyModifier = 0
-                handle.Transparency = 0
+        if item:IsA("BasePart") then
+            -- Sincronizamos colores directamente en las piezas base por si no usan BodyColors
+            local tPart = cloneChar:FindFirstChild(item.Name)
+            if tPart and tPart:IsA("BasePart") then
+                tPart.Color = item.Color
+                tPart.Material = item.Material
             end
+        elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+            item:Clone().Parent = cloneChar
+        elseif item:IsA("Accessory") then
+            local cloneAcc = item:Clone()
+            local sHandle = item:FindFirstChild("Handle")
+            local cHandle = cloneAcc:FindFirstChild("Handle")
             
-            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
-            local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
-            if cloneItem:FindFirstChild("Handle") then
-                local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
-                if not weld or not weld.Part1 then
-                    manualAttachAccessory(cloneItem, cloneChar)
+            if sHandle and cHandle then
+                cHandle.LocalTransparencyModifier = 0
+                cHandle.Transparency = 0
+                cHandle.Anchored = false
+                cHandle.CanCollide = false
+                cHandle.Massless = true
+                
+                -- CALCAMOS EL WELD ORIGINAL: Esto garantiza precisión perfecta sin depender del motor
+                local sWeld = sHandle:FindFirstChildOfClass("Weld") or sHandle:FindFirstChild("AccessoryWeld")
+                local targetBodyPart = nil
+                
+                if sWeld and sWeld.Part1 then
+                    targetBodyPart = cloneChar:FindFirstChild(sWeld.Part1.Name)
+                end
+                
+                if sWeld and targetBodyPart then
+                    cloneAcc.Parent = cloneChar
+                    for _, v in ipairs(cHandle:GetChildren()) do
+                        if v:IsA("JointInstance") then v:Destroy() end
+                    end
+                    local cWeld = Instance.new("Weld")
+                    cWeld.Name = "AccessoryWeld"
+                    cWeld.Part0 = cHandle
+                    cWeld.Part1 = targetBodyPart
+                    cWeld.C0 = sWeld.C0
+                    cWeld.C1 = sWeld.C1
+                    cWeld.Parent = cHandle
+                    cHandle.CFrame = targetBodyPart.CFrame * cWeld.C1 * cWeld.C0:Inverse()
+                else
+                    -- Fallback de seguridad
+                    cloneAcc.Parent = cloneChar
+                    pcall(function() cloneChar.Humanoid:AddAccessory(cloneAcc) end)
+                    if not cloneAcc:FindFirstChild("AccessoryWeld", true) then
+                        manualAttachAccessory(cloneAcc, cloneChar)
+                    end
                 end
             end
         end
     end
     
-    -- 3. Copiamos la cara (Decals)
+    -- 3. Copiamos la cara Y LAS MALLAS de la cabeza de forma segura (por si hay Headless o cabezas custom)
     local sHead = char:FindFirstChild("Head")
     local tHead = cloneChar:FindFirstChild("Head")
     if sHead and tHead then
-        for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
-        for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
+        for _, v in ipairs(tHead:GetChildren()) do 
+            if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("BlockMesh") or v:IsA("CylinderMesh") then 
+                v:Destroy() 
+            end 
+        end
+        for _, v in ipairs(sHead:GetChildren()) do 
+            if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("BlockMesh") or v:IsA("CylinderMesh") then 
+                v:Clone().Parent = tHead 
+            end 
+        end
+        tHead.Size = sHead.Size
     end
 end
+-- ==========================================
 
 local function PlayKeyframeSequence(Model, KFS, Speed)
     Speed = Speed or 1
@@ -452,13 +490,12 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
 sky.Parent = Lighting
 
 -- ==========================================
--- FIX: Lógica del pantallazo negro sincronizado
+-- FIX: Lógica del pantallazo sincronizada y pulida
 -- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
-    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
@@ -466,11 +503,14 @@ task.delay(8.5, function()
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
     fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
     
-    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
+    -- Dar un margen de un frame para garantizar que el otro script haya terminado de replicar assets
+    task.wait(0.05)
+    
+    -- ACTUALIZAMOS APARIENCIA EXACTAMENTE AQUÍ
     UpdateCloneAppearance()
     
-    -- 3. Transición de fundido de negro a transparente
-    task.delay(2, function()
+    -- Transición de fundido
+    task.delay(1.95, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
@@ -569,7 +609,6 @@ root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
--- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
