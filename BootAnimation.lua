@@ -196,8 +196,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -384,7 +382,7 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. NUEVO SISTEMA: VIENTO AMBIENTAL BRILLANTE (CORREGIDO) ---
+    -- --- 3. NUEVO SISTEMA: VIENTO AMBIENTAL (REMOLINO GRUESO Y LENTO) ---
     local WIND_TEXTURE_ID = "rbxassetid://72770859533608"
     
     local windVolume = Instance.new("Part")
@@ -401,40 +399,44 @@ local function SpawnAFOSphere(centerCF)
         emitter.Name = name
         emitter.Texture = WIND_TEXTURE_ID
         emitter.Color = ColorSequence.new(color)
-        emitter.LightEmission = 1
-        emitter.ZOffset = 0 -- CRÍTICO: Debe ser 0 para que no se aleje de la cámara del jugador
+        emitter.LightEmission = 0.8
+        emitter.ZOffset = 0
         
+        -- MUCHO MÁS GRUESO: Partículas gigantes para dar volumen
         emitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
-            NumberSequenceKeypoint.new(0.2, 3.5),
-            NumberSequenceKeypoint.new(0.8, 4.5),
+            NumberSequenceKeypoint.new(0.3, 20),
+            NumberSequenceKeypoint.new(0.7, 28),
             NumberSequenceKeypoint.new(1, 0)
         })
         
         emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.5, 0.15),
+            NumberSequenceKeypoint.new(0.5, 0.45), -- Un poco más transparentes porque son enormes
             NumberSequenceKeypoint.new(1, 1)
         })
         
-        emitter.Lifetime = NumberRange.new(6, 10)
-        emitter.Rate = 100 -- Aumentado un poco para llenar el área
-        emitter.Speed = NumberRange.new(1, 3)
-        emitter.SpreadAngle = Vector2.new(360, 360) -- CRÍTICO: Dispara en todas las direcciones 3D
-        emitter.Drag = 0.5
-        emitter.Acceleration = Vector3.new(0, 0, 0) -- Flotan en el aire, no solo hacia arriba
+        emitter.Lifetime = NumberRange.new(8, 12)
+        emitter.Rate = 20 -- Menos cantidad necesaria porque cada partícula es inmensa
+        emitter.Speed = NumberRange.new(0.2, 0.8) -- MUY LENTO
+        emitter.SpreadAngle = Vector2.new(360, 360) 
+        emitter.Drag = 0.2
+        emitter.Acceleration = Vector3.new(0, 0, 0)
         
         emitter.Rotation = NumberRange.new(0, 360)
-        emitter.RotSpeed = NumberRange.new(-15, 15)
-        emitter.Shape = Enum.ParticleEmitterShape.Box 
+        emitter.RotSpeed = NumberRange.new(-5, 5) -- Rotan muy despacio
+        emitter.Shape = Enum.ParticleEmitterShape.Sphere 
         emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut
+        
+        -- CRÍTICO: Esto hace que el viento gire al unísono con el bloque, formando el remolino
+        emitter.LockedToPart = true 
         emitter.Parent = windVolume
     end
 
     createWindEmitter("MagentaWind", Color3.fromRGB(255, 0, 255))
     createWindEmitter("YellowWind", Color3.fromRGB(255, 230, 0))
 
-    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (VISIBLES Y DESVANECIENTES CORREGIDO) ---
+    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (POCOS PERO GIGANTES) ---
     local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713"
     
     local lightningHub = Instance.new("Part")
@@ -452,7 +454,6 @@ local function SpawnAFOSphere(centerCF)
     local function SpawnTravelingLightning()
         local extent = half - 2
         
-        -- Función para obtener un punto 3D aleatorio DENTRO de la habitación
         local function getRandomPointInVolume()
             return centerCF * Vector3.new(
                 (math.random() * 2 - 1) * extent,
@@ -464,7 +465,6 @@ local function SpawnAFOSphere(centerCF)
         local startPos = getRandomPointInVolume()
         local rawEndPos = getRandomPointInVolume()
 
-        -- Asegurarse de que el rayo no sea demasiado corto (que viaje cierta distancia)
         while (rawEndPos - startPos).Magnitude < (boxSize * 0.4) do
             rawEndPos = getRandomPointInVolume()
         end
@@ -486,7 +486,8 @@ local function SpawnAFOSphere(centerCF)
         table.insert(points, finalTargetPos)
 
         task.spawn(function()
-            local beamWidth = math.random(12, 24)
+            -- RAYOS GIGANTES (De 35 a 65 de grosor)
+            local beamWidth = math.random(35, 65) 
             local debrisTable = {} 
             local beamsList = {}
 
@@ -521,12 +522,12 @@ local function SpawnAFOSphere(centerCF)
                 blackBeam.Texture = LIGHTNING_TEXTURE_ID
                 blackBeam.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0))
                 blackBeam.LightEmission = 0
-                blackBeam.Width0 = beamWidth * 0.65
-                blackBeam.Width1 = beamWidth * 0.65
+                blackBeam.Width0 = beamWidth * 0.6
+                blackBeam.Width1 = beamWidth * 0.6
                 blackBeam.TextureMode = Enum.TextureMode.Wrap
                 blackBeam.TextureLength = 10
                 blackBeam.TextureSpeed = math.random(15, 30)
-                blackBeam.ZOffset = 0 -- CORREGIDO: ahora es 0 para que no se aleje visualmente del jugador
+                blackBeam.ZOffset = 0 
                 blackBeam.FaceCamera = true
                 blackBeam.Parent = lightningHub
 
@@ -538,7 +539,7 @@ local function SpawnAFOSphere(centerCF)
                 table.insert(beamsList, yellowBeam)
                 table.insert(beamsList, blackBeam)
 
-                task.wait(0.015) 
+                task.wait(0.02) -- Un pequeñísimo instante más lento para apreciar lo colosales que son
             end
 
             task.wait(0.2)
@@ -549,7 +550,7 @@ local function SpawnAFOSphere(centerCF)
                 for _, beam in ipairs(beamsList) do
                     beam.Transparency = NumberSequence.new(transAlpha)
                 end
-                task.wait(0.03)
+                task.wait(0.04)
             end
 
             for _, item in ipairs(debrisTable) do
@@ -560,18 +561,14 @@ local function SpawnAFOSphere(centerCF)
 
     task.spawn(function()
         task.wait(0.3) 
-        local currentDelay = 0.6
-        local minDelay = 0.08
-        local acceleration = 0.85
-
+        -- POCOS RAYOS: Ya no aceleran. Aparecen al azar cada 2 a 4.5 segundos.
         while dimensionFolder.Parent do
             SpawnTravelingLightning()
-            task.wait(currentDelay)
-            currentDelay = math.max(minDelay, currentDelay * acceleration)
+            task.wait(math.random(20, 45) / 10) 
         end
     end)
 
-    -- --- 5. BUCLE DE ANIMACIÓN ORIGINAL ---
+    -- --- 5. BUCLE DE ANIMACIÓN ORIGINAL + ROTACIÓN DEL REMOLINO ---
     local startTime = os.clock()
     local conn
     
@@ -582,6 +579,13 @@ local function SpawnAFOSphere(centerCF)
         end
 
         local elapsed = os.clock() - startTime
+        
+        -- Hacemos girar el volumen del viento para crear el remolino grueso y lento
+        if windVolume.Parent then
+            windVolume.CFrame = centerCF * CFrame.Angles(0, elapsed * 0.25, 0)
+        end
+
+        -- Animación de las paredes
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
