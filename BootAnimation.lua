@@ -199,22 +199,24 @@ end
 -- Asume que RunService ya está definido en el scope superior del script principal
 -- (local RunService = game:GetService("RunService"))
 
-local function SpawnAFOSphere(centerCF, duration)
+-- Retorna el folder de la dimensión y la conexión del bucle para que el script
+-- principal decida cuándo detenerlo (no tiene duración fija, como una dimensión de combate).
+local function SpawnAFOSphere(centerCF)
     local sphereFolder = Instance.new("Folder")
-    sphereFolder.Name = "AFO_Sphere_Effect"
+    sphereFolder.Name = "AFO_Dimension"
     sphereFolder.Parent = workspace
 
-    local sphereRadius = 15
+    local sphereRadius = 70
 
-    -- 1. Esfera base (núcleo negro).
-    -- Se usa un Part normal como contenedor de física/posición, pero su geometría
-    -- visible la reemplaza el SpecialMesh de abajo.
+    -- ## 1. ESFERA PRINCIPAL: vacío negro + textura 72194288856630
+    -- Block de 1x1x1 + SpecialMesh con el mesh esférico de caras invertidas
+    -- (mismo truco que ya te funcionó) para que se vea desde ADENTRO.
     local mainSphere = Instance.new("Part")
-    mainSphere.Name = "CoreSphere"
-    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    mainSphere.Name = "VoidSphere"
+    mainSphere.Size = Vector3.new(1, 1, 1)
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.SmoothPlastic
+    mainSphere.Material = Enum.Material.Neon
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
@@ -222,94 +224,74 @@ local function SpawnAFOSphere(centerCF, duration)
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- Mesh esférico con normales invertidas: al escalar un eje en negativo se
-    -- voltea el winding de las caras, así que se ve desde ADENTRO (que es donde
-    -- está la cámara) en vez de solo desde afuera como pasaría con un Part
-    -- Shape = Ball normal (single-sided).
-    local sphereMesh = Instance.new("SpecialMesh")
-    sphereMesh.MeshType = Enum.MeshType.Sphere
-    sphereMesh.Scale = Vector3.new(-1, 1, 1)
-    sphereMesh.Parent = mainSphere
+    local mainMesh = Instance.new("SpecialMesh")
+    mainMesh.MeshType = Enum.MeshType.FileMesh
+    mainMesh.MeshId = "rbxassetid://437220420"
+    mainMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    mainMesh.Parent = mainSphere
 
-    -- 2. Capa principal: textura 72194288856630, oscurecida 50%, cayendo rápido
-    -- con loop continuo. "Texture" es el único objeto con OffsetStudsU/V, por
-    -- eso se usa en vez de Decal para poder animar el scroll.
     local mainTexture = Instance.new("Texture")
-    mainTexture.Name = "MainTexture"
-    mainTexture.Face = Enum.NormalId.Front
     mainTexture.Texture = "rbxassetid://72194288856630"
     mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
-    mainTexture.Transparency = 0
     mainTexture.StudsPerTileU = sphereRadius * 1.2
     mainTexture.StudsPerTileV = sphereRadius * 1.2
     mainTexture.Parent = mainSphere
 
-    -- 3. Capa overlay: textura 5748262504, 75% de transparencia.
-    -- Dos instancias de la misma textura (en caras distintas, ambas envuelven
-    -- igual la esfera) para que "nazca" del centro y se deslice tanto hacia
-    -- arriba como hacia abajo de forma continua.
-    local overlayUp = Instance.new("Texture")
-    overlayUp.Name = "OverlayUp"
-    overlayUp.Face = Enum.NormalId.Back
-    overlayUp.Texture = "rbxassetid://5748262504"
-    overlayUp.Transparency = 0.75
-    overlayUp.StudsPerTileU = sphereRadius * 1.2
-    overlayUp.StudsPerTileV = sphereRadius * 1.2
-    overlayUp.OffsetStudsV = overlayUp.StudsPerTileV * 0.5 -- arranca centrada
-    overlayUp.Parent = mainSphere
+    -- ## 2. CAPA OVERLAY: textura 5748262504, 75% transparente
+    -- Esfera concéntrica levemente más chica (evita z-fighting con la principal).
+    -- Su Part queda con Transparency = 1: solo se ve la Texture hija, no el
+    -- material del Part.
+    local overlaySphere = Instance.new("Part")
+    overlaySphere.Name = "OverlaySphere"
+    overlaySphere.Size = Vector3.new(1, 1, 1)
+    overlaySphere.CFrame = centerCF
+    overlaySphere.Transparency = 1
+    overlaySphere.Anchored = true
+    overlaySphere.CanCollide = false
+    overlaySphere.CanTouch = false
+    overlaySphere.CanQuery = false
+    overlaySphere.CastShadow = false
+    overlaySphere.Parent = sphereFolder
 
-    local overlayDown = Instance.new("Texture")
-    overlayDown.Name = "OverlayDown"
-    overlayDown.Face = Enum.NormalId.Top
-    overlayDown.Texture = "rbxassetid://5748262504"
-    overlayDown.Transparency = 0.75
-    overlayDown.StudsPerTileU = sphereRadius * 1.2
-    overlayDown.StudsPerTileV = sphereRadius * 1.2
-    overlayDown.OffsetStudsV = overlayDown.StudsPerTileV * 0.5 -- arranca centrada
-    overlayDown.Parent = mainSphere
+    local overlayMesh = Instance.new("SpecialMesh")
+    overlayMesh.MeshType = Enum.MeshType.FileMesh
+    overlayMesh.MeshId = "rbxassetid://437220420"
+    overlayMesh.Scale = Vector3.new(sphereRadius * 2 - 1, sphereRadius * 2 - 1, sphereRadius * 2 - 1)
+    overlayMesh.Parent = overlaySphere
 
-    -- 4. Luz ambiental sutil para reforzar la atmósfera de la dimensión
+    local overlayTexture = Instance.new("Texture")
+    overlayTexture.Texture = "rbxassetid://5748262504"
+    overlayTexture.Transparency = 0.75
+    overlayTexture.StudsPerTileU = sphereRadius * 1.2
+    overlayTexture.StudsPerTileV = sphereRadius * 1.2
+    overlayTexture.Parent = overlaySphere
+
+    -- ## 3. Luz ambiental (opcional; elimínala si necesitas exprimir más rendimiento)
     local ambientLight = Instance.new("PointLight")
     ambientLight.Color = Color3.fromRGB(160, 20, 90)
-    ambientLight.Range = sphereRadius * 3
+    ambientLight.Range = sphereRadius * 1.5
     ambientLight.Brightness = 1.5
     ambientLight.Parent = mainSphere
 
-    -- Velocidades de scroll (studs/segundo)
-    local mainScrollSpeed = 45  -- textura principal: caída rápida
-    local overlaySpeed     = 12  -- overlay: se abre desde el centro, más lento
+    -- ## 4. Animación por ROTACIÓN física (no por OffsetStuds, ver nota abajo)
+    -- Solo 2 objetos y 2 CFrame.Angles por frame -> muchísimo más barato que
+    -- los 120 Parts recalculando trigonometría cada frame de la versión anterior.
+    local mainSpeed = math.rad(90)      -- rad/seg: capa principal, caída/giro rápido
+    local overlaySpeed = -math.rad(25)  -- rad/seg: overlay, sentido contrario y más lento
+    local mainAngle, overlayAngle = 0, 0
+    local TAU = 2 * math.pi
 
-    -- 5. Bucle de animación
-    local startTime = os.clock()
-    local conn
+    local connection = RunService.RenderStepped:Connect(function(deltaTime)
+        if not sphereFolder.Parent then return end
 
-    conn = RunService.RenderStepped:Connect(function(deltaTime)
-        local elapsed = os.clock() - startTime
+        mainAngle = (mainAngle + mainSpeed * deltaTime) % TAU
+        overlayAngle = (overlayAngle + overlaySpeed * deltaTime) % TAU
 
-        if elapsed >= duration or not sphereFolder.Parent then
-            if conn then conn:Disconnect() end
-            if sphereFolder and sphereFolder.Parent then
-                sphereFolder:Destroy()
-            end
-            return
-        end
-
-        -- Textura principal: cae continuamente, con módulo para loop perfecto sin saltos
-        mainTexture.OffsetStudsV = (mainTexture.OffsetStudsV + mainScrollSpeed * deltaTime) % mainTexture.StudsPerTileV
-
-        -- Overlay: una copia sube (offset decreciente) y la otra baja (offset creciente),
-        -- ambas partiendo del mismo punto central, cubriendo la esfera sin parar
-        overlayUp.OffsetStudsV = (overlayUp.OffsetStudsV - overlaySpeed * deltaTime) % overlayUp.StudsPerTileV
-        overlayDown.OffsetStudsV = (overlayDown.OffsetStudsV + overlaySpeed * deltaTime) % overlayDown.StudsPerTileV
+        mainSphere.CFrame = centerCF * CFrame.Angles(mainAngle, 0, 0)
+        overlaySphere.CFrame = centerCF * CFrame.Angles(overlayAngle, 0, 0)
     end)
 
-    -- 6. Limpieza de seguridad
-    task.delay(duration, function()
-        if conn then conn:Disconnect() end
-        if sphereFolder and sphereFolder.Parent then
-            sphereFolder:Destroy()
-        end
-    end)
+    return sphereFolder, connection
 end
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
