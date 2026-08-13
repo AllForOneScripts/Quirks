@@ -203,26 +203,46 @@ local function SpawnAFOSphere(centerCF)
     sphereFolder.Name = "AFO_Dimension"
     sphereFolder.Parent = workspace
 
-    local sphereRadius = 80
+    -- Radio de la dimensión (suficientemente grande para atrapar a los jugadores)
+    local sphereRadius = 70 
 
+    -- ## 1. ESFERA NEGRA (El Vacío)
     local mainSphere = Instance.new("Part")
     mainSphere.Name = "VoidSphere"
-    mainSphere.Shape = Enum.PartType.Block
-    mainSphere.Size = Vector3.new(1, 1, 1)
+    -- Usamos Block en lugar de Ball porque el SpecialMesh definirá la forma real
+    mainSphere.Shape = Enum.PartType.Block 
+    mainSphere.Size = Vector3.new(1, 1, 1) 
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.Neon
+    mainSphere.Material = Enum.Material.Neon -- Neon negro no emite luz, pero ignora sombras (vacío perfecto)
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
+    -- TRUCO PARA DIMENSIONES: Malla invertida para que la esfera sea visible desde ADENTRO
     local invertedMesh = Instance.new("SpecialMesh")
     invertedMesh.MeshType = Enum.MeshType.FileMesh
-    invertedMesh.MeshId = "rbxassetid://437220420"
+    invertedMesh.MeshId = "rbxassetid://437220420" -- ID público de una esfera con caras invertidas
     invertedMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     invertedMesh.Parent = mainSphere
+
+    -- ## 2. TEXTURA PRINCIPAL: 72194288856630, oscurecida 50%
+    local mainTexture = Instance.new("Texture")
+    mainTexture.Texture = "rbxassetid://72194288856630"
+    mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
+    mainTexture.StudsPerTileU = sphereRadius * 1.2
+    mainTexture.StudsPerTileV = sphereRadius * 1.2
+    mainTexture.Parent = mainSphere
+
+    -- ## 3. TEXTURA OVERLAY: 5748262504, 75% transparente
+    local overlayTexture = Instance.new("Texture")
+    overlayTexture.Texture = "rbxassetid://5748262504"
+    overlayTexture.Transparency = 0.75
+    overlayTexture.StudsPerTileU = sphereRadius * 1.2
+    overlayTexture.StudsPerTileV = sphereRadius * 1.2
+    overlayTexture.Parent = mainSphere
 
     return sphereFolder
 end
