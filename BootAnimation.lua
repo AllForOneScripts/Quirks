@@ -77,8 +77,10 @@ if cloneRoot then
     cloneRoot.Anchored = true
 end
 
-local CINEMATIC_CF = CFrame.new(876.2, 1882, -397.6, -0.56, 0, 0.82, 0, 1, 0, -0.82, 0, -0.56)
-cloneChar:PivotTo(CINEMATIC_CF)
+-- ==========================================
+--  FIX: Clon en el suelo original (oldCF)
+-- ==========================================
+cloneChar:PivotTo(oldCF)   -- <--- antes era CINEMATIC_CF
 cloneChar.Parent = workspace
 
 if cloneChar:FindFirstChild("Humanoid") then
@@ -113,40 +115,41 @@ for _, acc in ipairs(char:GetChildren()) do
     end
 end
 
-local in4DMode = true
-local skyWorldY = originalGroundY + 1500
+-- Variables renombradas (Summon / Boot)
+local summonActive = true
+local summonAltitude = originalGroundY + 1500
 
 hum.PlatformStand = true
 root.Anchored = false 
 
-local skyBV = Instance.new("BodyVelocity", root)
-skyBV.Name = "SkyBV_4D"
-skyBV.Velocity = Vector3.new(0, 600, 0)
-skyBV.MaxForce = Vector3.new(0, 9e8, 0)
-local skyBP = nil
+local summonLiftBV = Instance.new("BodyVelocity", root)
+summonLiftBV.Name = "SummonLiftBV"
+summonLiftBV.Velocity = Vector3.new(0, 600, 0)
+summonLiftBV.MaxForce = Vector3.new(0, 9e8, 0)
+local summonHoldBP = nil
 
 task.spawn(function()
     local t0 = tick()
-    while tick() - t0 < 10 and in4DMode do
-        if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
+    while tick() - t0 < 10 and summonActive do
+        if root and root.Parent and root.Position.Y >= summonAltitude - 20 then break end
         task.wait(0.05)
     end
-    if not in4DMode then return end
-    if skyBV then skyBV:Destroy(); skyBV = nil end
+    if not summonActive then return end
+    if summonLiftBV then summonLiftBV:Destroy(); summonLiftBV = nil end
     if not root or not root.Parent then return end
     
-    skyBP = Instance.new("BodyPosition", root)
-    skyBP.Name = "SkyBP_4D"
-    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
-    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    skyBP.P = 60000
-    skyBP.D = 2500
+    summonHoldBP = Instance.new("BodyPosition", root)
+    summonHoldBP.Name = "SummonHoldBP"
+    summonHoldBP.Position = Vector3.new(originalRootPos.X, summonAltitude, originalRootPos.Z)
+    summonHoldBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    summonHoldBP.P = 60000
+    summonHoldBP.D = 2500
 end)
 
-local heightMaintainer = RunService.Heartbeat:Connect(function()
-    if in4DMode and root then
-        if math.abs(root.Position.Y - skyWorldY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+local summonHeightKeeper = RunService.Heartbeat:Connect(function()
+    if summonActive and root then
+        if math.abs(root.Position.Y - summonAltitude) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, summonAltitude, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
@@ -551,10 +554,10 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
-in4DMode = false
-if heightMaintainer then heightMaintainer:Disconnect() end
-if skyBV then skyBV:Destroy() end
-if skyBP then skyBP:Destroy() end
+summonActive = false
+if summonHeightKeeper then summonHeightKeeper:Disconnect() end
+if summonLiftBV then summonLiftBV:Destroy() end
+if summonHoldBP then summonHoldBP:Destroy() end
 
 root.Anchored = false
 root.CFrame = targetCF
