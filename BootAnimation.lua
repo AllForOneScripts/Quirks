@@ -196,6 +196,8 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -290,7 +292,7 @@ local function SpawnAFOSphere(centerCF)
         table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. SISTEMA DE HUMO BRILLANTE + MÁSCARA TV ---
+    -- --- 2. SISTEMA DE HUMO BRILLANTE + MÁSCARA TV (REDUCIDO) ---
     local smokeTextures = {
         "rbxassetid://13490928216", 
         "rbxassetid://4231233461", 
@@ -298,35 +300,33 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25)
 
-        -- 1. Emisores del humo principal
+        -- 1. Emisores del humo principal (MUCHO MÁS LIGERO)
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            
-            -- REDUCIDO UN 45% (De 1 a 0.55)
             smokeEmitter.LightEmission = 0.55 
             smokeEmitter.ZOffset = 0.5 
-            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
             
+            -- Tamaño reducido
             smokeEmitter.Size = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 20),
-                NumberSequenceKeypoint.new(1, 60) 
+                NumberSequenceKeypoint.new(0, 15),
+                NumberSequenceKeypoint.new(1, 35) 
             })
             
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.3, 0.9),
-                NumberSequenceKeypoint.new(0.7, 0.9),
+                NumberSequenceKeypoint.new(0.3, 0.95),
+                NumberSequenceKeypoint.new(0.7, 0.95),
                 NumberSequenceKeypoint.new(1, 1)
             })
             
-            smokeEmitter.Lifetime = NumberRange.new(5, 8)
-            smokeEmitter.Rate = 12 
+            -- Vida y cantidad reducidas drásticamente
+            smokeEmitter.Lifetime = NumberRange.new(3, 5)
+            smokeEmitter.Rate = 3 -- Antes 12
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
             
@@ -335,35 +335,29 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
+        -- 2. Emisor de Ruido de TV (Máscara deslizante) (REDUCIDO)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
-        
-        -- REDUCIDO UN 45% (De 0.8 a 0.44)
         noiseEmitter.LightEmission = 0.44 
-        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
-        
+        noiseEmitter.ZOffset = 0.6 
         noiseEmitter.Color = ColorSequence.new(hdrColor)
         
         noiseEmitter.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 20),
-            NumberSequenceKeypoint.new(1, 60) 
+            NumberSequenceKeypoint.new(0, 15),
+            NumberSequenceKeypoint.new(1, 40) 
         })
         
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
-            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.2, 0.85), 
+            NumberSequenceKeypoint.new(0.8, 0.85), 
             NumberSequenceKeypoint.new(1, 1)
         })
         
-        noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
-        
-        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
-        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
-        
+        noiseEmitter.Lifetime = NumberRange.new(3, 5)
+        noiseEmitter.Rate = 8 -- Antes 30
+        noiseEmitter.Speed = NumberRange.new(10, 20) 
         noiseEmitter.EmissionDirection = emitDirection
         
         noiseEmitter.Rotation = NumberRange.new(0, 360)
@@ -392,10 +386,57 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. SISTEMA DE RAYOS ELÉCTRICOS (Visibles y Desplazables) ---
+    -- --- 3. NUEVO SISTEMA: VIENTO AMBIENTAL BRILLANTE ---
+    local WIND_TEXTURE_ID = "rbxassetid://72770859533608"
+    
+    local windVolume = Instance.new("Part")
+    windVolume.Name = "WindVolume"
+    windVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
+    windVolume.CFrame = centerCF
+    windVolume.Anchored = true
+    windVolume.CanCollide = false
+    windVolume.Transparency = 1
+    windVolume.Parent = dimensionFolder
+
+    local function createWindEmitter(name, color)
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = name
+        emitter.Texture = WIND_TEXTURE_ID
+        emitter.Color = ColorSequence.new(color)
+        emitter.LightEmission = 1
+        emitter.ZOffset = 1
+        emitter.Size = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(0.2, 1.5),
+            NumberSequenceKeypoint.new(0.8, 2),
+            NumberSequenceKeypoint.new(1, 0)
+        })
+        emitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0.4), -- Muy visible
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        emitter.Lifetime = NumberRange.new(5, 8)
+        emitter.Rate = 12
+        emitter.Speed = NumberRange.new(1, 3) -- Viento lento
+        emitter.Rotation = NumberRange.new(0, 360)
+        emitter.RotSpeed = NumberRange.new(-20, 20)
+        emitter.EmissionDirection = Enum.NormalId.Top
+        -- Emitir desde todo el volumen de la caja:
+        emitter.Shape = Enum.ParticleEmitterShape.Box 
+        emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut
+        emitter.Parent = windVolume
+    end
+
+    -- Viento Magenta
+    createWindEmitter("MagentaWind", Color3.fromRGB(255, 0, 255))
+    -- Viento Amarillo
+    createWindEmitter("YellowWind", Color3.fromRGB(255, 230, 0))
+
+
+    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (Corregido y Rápido) ---
     local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713"
     
-    -- Parte central obligatoria para que los Attachments y Beams se vean
     local lightningHub = Instance.new("Part")
     lightningHub.Name = "LightningHub"
     lightningHub.Anchored = true
@@ -413,7 +454,6 @@ local function SpawnAFOSphere(centerCF)
         local axis = math.random(1, 3)
         local startPos, rawEndPos
 
-        -- Definir de qué pared a qué pared va el rayo
         if axis == 1 then
             startPos = centerCF * Vector3.new(-extent, math.random(-extent, extent), math.random(-extent, extent))
             rawEndPos = centerCF * Vector3.new(extent, math.random(-extent, extent), math.random(-extent, extent))
@@ -429,12 +469,10 @@ local function SpawnAFOSphere(centerCF)
             startPos, rawEndPos = rawEndPos, startPos
         end
 
-        -- Detección de colisiones: si hay un jugador, el rayo se detiene en él
         local direction = rawEndPos - startPos
         local rayResult = workspace:Raycast(startPos, direction, raycastParams)
         local finalTargetPos = rayResult and rayResult.Position or rawEndPos
 
-        -- Generar puntos para el zigzag
         local dist = (finalTargetPos - startPos).Magnitude
         local numSegments = math.clamp(math.floor(dist / 5), 6, 12)
         local points = {startPos}
@@ -447,10 +485,9 @@ local function SpawnAFOSphere(centerCF)
         end
         table.insert(points, finalTargetPos)
 
-        -- Animación progresiva del rayo
         task.spawn(function()
             local beamWidth = math.random(12, 20)
-            local debrisTable = {} -- Guardamos las partes para eliminarlas juntas al final
+            local debrisTable = {} 
 
             for i = 1, #points - 1 do
                 if not lightningHub.Parent then break end
@@ -497,7 +534,7 @@ local function SpawnAFOSphere(centerCF)
                 table.insert(debrisTable, yellowBeam)
                 table.insert(debrisTable, blackBeam)
 
-                task.wait(0.008) -- Efecto visual de viaje
+                task.wait(0.008) 
             end
 
             task.wait(0.06)
@@ -507,9 +544,9 @@ local function SpawnAFOSphere(centerCF)
         end)
     end
 
-    -- Iniciar la tormenta eléctrica después de la mitad del tiempo
+    -- CORRECCIÓN: Iniciar casi de inmediato (0.5s en lugar de 3.5s)
     task.spawn(function()
-        task.wait(3.5)
+        task.wait(0.5) 
         local currentDelay = 0.5
         local minDelay = 0.05
         local acceleration = 0.88
@@ -521,7 +558,7 @@ local function SpawnAFOSphere(centerCF)
         end
     end)
 
-    -- --- 4. BUCLE DE ANIMACIÓN ORIGINAL ---
+    -- --- 5. BUCLE DE ANIMACIÓN ORIGINAL ---
     local startTime = os.clock()
     local conn
     
