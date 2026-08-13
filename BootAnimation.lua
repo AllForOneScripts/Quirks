@@ -1,9 +1,9 @@
-if getgenv()._SummonRunning then
+if getgenv()._GarouAnimRunning then
     return
 end
-getgenv()._SummonRunning = true
+getgenv()._GarouAnimRunning = true
 local function LiberarCinematica()
-    getgenv()._SummonRunning = false
+    getgenv()._GarouAnimRunning = false
 end
 
 local Players = game:GetService("Players")
@@ -15,14 +15,14 @@ local player = Players.LocalPlayer
 local cam = workspace.CurrentCamera
 local pGui = player:WaitForChild("PlayerGui")
 
-local bootGui = Instance.new("ScreenGui")
-bootGui.IgnoreGuiInset = true
-bootGui.ResetOnSpawn = false
-bootGui.DisplayOrder = 9999
-local bootFrame = Instance.new("Frame", bootGui)
-bootFrame.BackgroundColor3 = Color3.new(1, 1, 1)
-bootFrame.Size = UDim2.new(1, 0, 1, 0)
-bootGui.Parent = pGui
+local flashGui = Instance.new("ScreenGui")
+flashGui.IgnoreGuiInset = true
+flashGui.ResetOnSpawn = false
+flashGui.DisplayOrder = 9999
+local flashFrame = Instance.new("Frame", flashGui)
+flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
+flashFrame.Size = UDim2.new(1, 0, 1, 0)
+flashGui.Parent = pGui
 
 RunService.RenderStepped:Wait()
 
@@ -30,7 +30,7 @@ local char = player.Character or player.CharacterAdded:Wait()
 local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
-local bootCamWatchdog = RunService.Heartbeat:Connect(function()
+local cameraWatchdog = RunService.Heartbeat:Connect(function()
     if cam.CameraType ~= Enum.CameraType.Scriptable then
         cam.CameraType = Enum.CameraType.Scriptable
     end
@@ -47,8 +47,8 @@ local cloneChar = char:Clone()
 pcall(function() char.Archivable = false end)
 
 if not cloneChar then
-    bootGui:Destroy()
-    if bootCamWatchdog then bootCamWatchdog:Disconnect() end
+    flashGui:Destroy()
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
     LiberarCinematica()
     return
 end
@@ -113,43 +113,48 @@ for _, acc in ipairs(char:GetChildren()) do
     end
 end
 
-local summonActive = true
-local summonSkyY = originalGroundY + 1500
+local in4DMode = true
+local skyWorldY = originalGroundY + 1500
 
--- FIX ANTICHEAT: Se elimina hum.PlatformStand = true aquí
+-- ==========================================
+-- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
+-- ==========================================
+-- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
-local bootBV = Instance.new("BodyVelocity", root)
-bootBV.Name = "BootBV"
-bootBV.Velocity = Vector3.new(0, 600, 0)
-bootBV.MaxForce = Vector3.new(0, 9e8, 0)
-local bootBP = nil
+local skyBV = Instance.new("BodyVelocity", root)
+skyBV.Name = "SkyBV_4D"
+skyBV.Velocity = Vector3.new(0, 600, 0)
+skyBV.MaxForce = Vector3.new(0, 9e8, 0)
+local skyBP = nil
 
 task.spawn(function()
     local t0 = tick()
-    while tick() - t0 < 10 and summonActive do
-        if root and root.Parent and root.Position.Y >= summonSkyY - 20 then break end
+    while tick() - t0 < 10 and in4DMode do
+        if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
         task.wait(0.05)
     end
-    if not summonActive then return end
-    if bootBV then bootBV:Destroy(); bootBV = nil end
+    if not in4DMode then return end
+    if skyBV then skyBV:Destroy(); skyBV = nil end
     if not root or not root.Parent then return end
     
-    bootBP = Instance.new("BodyPosition", root)
-    bootBP.Name = "BootBP"
-    bootBP.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
-    bootBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    bootBP.P = 60000
-    bootBP.D = 2500
+    skyBP = Instance.new("BodyPosition", root)
+    skyBP.Name = "SkyBP_4D"
+    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
+    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    skyBP.P = 60000
+    skyBP.D = 2500
 end)
 
-local summonMaintainer = RunService.Heartbeat:Connect(function()
-    if summonActive and root then
-        if math.abs(root.Position.Y - summonSkyY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+local heightMaintainer = RunService.Heartbeat:Connect(function()
+    if in4DMode and root then
+        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
+        if math.abs(root.Position.Y - skyWorldY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
+-- ==========================================
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -424,9 +429,9 @@ end
 
 local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
 if not s or not Asset then
-    bootGui:Destroy()
+    flashGui:Destroy()
     RestoreHighlights()
-    if bootCamWatchdog then bootCamWatchdog:Disconnect() end
+    if cameraWatchdog then cameraWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
     LiberarCinematica()
@@ -484,9 +489,9 @@ cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
-local fadeOutTw = TweenService:Create(bootFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
-fadeOutTw.Completed:Connect(function() bootGui:Destroy() end)
+fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
 
 local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
@@ -525,10 +530,10 @@ local OFFSET_Y = 0.5
 local targetPos = finalPos + Vector3.new(0, OFFSET_Y, 0)
 local targetCF = CFrame.new(targetPos) * finalRot
 
-if bootCamWatchdog then bootCamWatchdog:Disconnect() end
+if cameraWatchdog then cameraWatchdog:Disconnect() end
 
-pcall(function() RunService:UnbindFromRenderStep("FollowSummon") end)
-getgenv()._StopSummon = true 
+pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
+getgenv()._StopCinematic = true 
 
 if snd then
     task.delay(5, function()
@@ -551,17 +556,20 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
--- FIX ANTICHEAT: Frenado en seco con BodyVelocity temporal para evitar inercia
-summonActive = false
-if summonMaintainer then summonMaintainer:Disconnect() end
-if bootBV then bootBV:Destroy() end
-if bootBP then bootBP:Destroy() end
+-- ==========================================
+-- DESCENSO Y ATERRIZAJE (omniAntiBounceLand)
+-- ==========================================
+in4DMode = false
+if heightMaintainer then heightMaintainer:Disconnect() end
+if skyBV then skyBV:Destroy() end
+if skyBP then skyBP:Destroy() end
 
 root.Anchored = false
 root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+-- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -575,6 +583,7 @@ task.defer(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
 end)
+-- ==========================================
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
@@ -616,7 +625,7 @@ camProxy.Value = cam.CFrame
 local fovProxy = Instance.new("NumberValue")
 fovProxy.Value = cam.FieldOfView
 
-local overrideId = "Summon_Absolute_Cam_Override"
+local overrideId = "Cinematic_Absolute_Cam_Override"
 RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
     cam.CameraType = Enum.CameraType.Scriptable
     cam.CFrame = camProxy.Value
