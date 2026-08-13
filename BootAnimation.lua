@@ -196,177 +196,112 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
+-- IDs de las texturas del efecto
+local TEXTURE_MAIN_ID    = "rbxassetid://72194288856630"
+local TEXTURE_OVERLAY_ID = "rbxassetid://5748262504"
 
-local function SpawnAFOSphere(centerCF)
+local function SpawnAFOSphere(centerCF, duration)
     local sphereFolder = Instance.new("Folder")
-    sphereFolder.Name = "AFO_Dimension"
+    sphereFolder.Name = "AFO_Sphere_Effect"
     sphereFolder.Parent = workspace
 
-    -- Radios y medidas
-    local rainRadius = 80 -- Radio donde caen las líneas deslizantes
-    local voidRadius = 100 -- Distancia de las paredes del vacío
+    local sphereRadius = 15
 
-    -- ## 1. EL VACÍO NEGRO INFINITO (Garantizado que se ve desde adentro)
-    -- Creamos 6 paredes gigantes para encerrar al jugador en un cuarto oscuro.
-    -- Al ser puramente negro y Neon, no hay sombras ni bordes visibles. Es un vacío perfecto.
-    local wallSize = voidRadius * 2.5
-    local wallThickness = 5
-    
-    local positions = {
-        CFrame.new(0, voidRadius, 0), -- Techo
-        CFrame.new(0, -voidRadius, 0), -- Suelo
-        CFrame.new(voidRadius, 0, 0), -- Pared Derecha
-        CFrame.new(-voidRadius, 0, 0), -- Pared Izquierda
-        CFrame.new(0, 0, voidRadius), -- Pared Frontal
-        CFrame.new(0, 0, -voidRadius) -- Pared Trasera
-    }
-    
-    local sizes = {
-        Vector3.new(wallSize, wallThickness, wallSize),
-        Vector3.new(wallSize, wallThickness, wallSize),
-        Vector3.new(wallThickness, wallSize, wallSize),
-        Vector3.new(wallThickness, wallSize, wallSize),
-        Vector3.new(wallSize, wallSize, wallThickness),
-        Vector3.new(wallSize, wallSize, wallThickness)
-    }
+    -- 1. Esfera base (núcleo negro)
+    local mainSphere = Instance.new("Part")
+    mainSphere.Name = "CoreSphere"
+    mainSphere.Shape = Enum.PartType.Ball
+    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    mainSphere.CFrame = centerCF
+    mainSphere.Color = Color3.fromRGB(0, 0, 0)
+    mainSphere.Material = Enum.Material.SmoothPlastic
+    mainSphere.Anchored = true
+    mainSphere.CanCollide = false
+    mainSphere.CanTouch = false
+    mainSphere.CanQuery = false
+    mainSphere.CastShadow = false
+    mainSphere.Parent = sphereFolder
 
-    for i = 1, 6 do
-        local voidWall = Instance.new("Part")
-        voidWall.Name = "VoidWall_" .. i
-        voidWall.Size = sizes[i]
-        voidWall.CFrame = centerCF * positions[i]
-        voidWall.Color = Color3.fromRGB(0, 0, 0)
-        voidWall.Material = Enum.Material.Neon
-        voidWall.Anchored = true
-        voidWall.CanCollide = false
-        voidWall.CanTouch = false
-        voidWall.CastShadow = false
-        voidWall.Parent = sphereFolder
-    end
+    -- 2. Capa principal: textura 72194288856630, oscurecida 50%, cayendo rápido con loop continuo.
+    -- Se usa un objeto "Texture" (no Decal) porque es el único que soporta OffsetStudsU/V,
+    -- necesario para animar el scroll. En un Part con Shape = Ball, la textura envuelve
+    -- toda la esfera sin importar la "Face" que se le asigne.
+    local mainTexture = Instance.new("Texture")
+    mainTexture.Name = "MainTexture"
+    mainTexture.Face = Enum.NormalId.Front
+    mainTexture.Texture = TEXTURE_MAIN_ID
+    mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
+    mainTexture.Transparency = 0
+    mainTexture.StudsPerTileU = sphereRadius * 1.2
+    mainTexture.StudsPerTileV = sphereRadius * 1.2
+    mainTexture.Parent = mainSphere
 
-    -- ## 2. HUMO / NIEBLA DE LA DIMENSIÓN
-    local fogPart = Instance.new("Part")
-    fogPart.Name = "FogCenter"
-    fogPart.Size = Vector3.new(1, 1, 1)
-    fogPart.CFrame = centerCF
-    fogPart.Anchored = true
-    fogPart.CanCollide = false
-    fogPart.Transparency = 1
-    fogPart.Parent = sphereFolder
+    -- 3. Capa overlay: textura 5748262504, 75% de transparencia.
+    -- Se usan DOS instancias de la misma textura (en caras distintas, ambas envuelven
+    -- la esfera igual) para lograr que "nazca" del centro y se deslice tanto hacia
+    -- arriba como hacia abajo de forma continua, en vez de moverse en una sola dirección.
+    local overlayUp = Instance.new("Texture")
+    overlayUp.Name = "OverlayUp"
+    overlayUp.Face = Enum.NormalId.Back
+    overlayUp.Texture = TEXTURE_OVERLAY_ID
+    overlayUp.Transparency = 0.75
+    overlayUp.StudsPerTileU = sphereRadius * 1.2
+    overlayUp.StudsPerTileV = sphereRadius * 1.2
+    overlayUp.OffsetStudsV = overlayUp.StudsPerTileV * 0.5 -- arranca centrada
+    overlayUp.Parent = mainSphere
 
-    local smoke = Instance.new("ParticleEmitter")
-    smoke.Name = "VoidMist"
-    smoke.Texture = "rbxasset://textures/particles/smoke_main.dds" -- Textura nativa de Roblox
-    smoke.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 0, 45)), -- Morado muy oscuro
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 0, 15))
-    })
-    smoke.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 20),
-        NumberSequenceKeypoint.new(1, 60) -- Nubes gigantes
-    })
-    smoke.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.3, 0.85), -- Muy sutil y tenue
-        NumberSequenceKeypoint.new(0.8, 0.85),
-        NumberSequenceKeypoint.new(1, 1)
-    })
-    smoke.Speed = NumberRange.new(2, 6)
-    smoke.Lifetime = NumberRange.new(5, 10)
-    smoke.Rate = 60
-    smoke.SpreadAngle = Vector2.new(180, 180) -- Emite en todas las direcciones
-    smoke.Shape = Enum.ParticleEmitterShape.Sphere
-    smoke.ShapeRadius = rainRadius - 5 -- Llena la esfera
-    smoke.ZOffset = 1
-    smoke.Parent = fogPart
+    local overlayDown = Instance.new("Texture")
+    overlayDown.Name = "OverlayDown"
+    overlayDown.Face = Enum.NormalId.Top
+    overlayDown.Texture = TEXTURE_OVERLAY_ID
+    overlayDown.Transparency = 0.75
+    overlayDown.StudsPerTileU = sphereRadius * 1.2
+    overlayDown.StudsPerTileV = sphereRadius * 1.2
+    overlayDown.OffsetStudsV = overlayDown.StudsPerTileV * 0.5 -- arranca centrada
+    overlayDown.Parent = mainSphere
 
-    -- ## 3. GENERACIÓN DE LA LLUVIA NEON (MÁS VISIBLE Y RÁPIDA)
-    local rainStreaks = {}
-    local numStreaks = 150 -- Más densidad
-    
-    -- Tonos basados estrictamente en la imagen (Magenta, Púrpura vibrante, Carmesí)
-    local streakColors = {
-        Color3.fromRGB(220, 20, 140),
-        Color3.fromRGB(180, 0, 120),
-        Color3.fromRGB(255, 0, 255),
-        Color3.fromRGB(100, 0, 80)
-    }
+    -- 4. Luz ambiental sutil para reforzar la atmósfera de la dimensión
+    local ambientLight = Instance.new("PointLight")
+    ambientLight.Color = Color3.fromRGB(160, 20, 90)
+    ambientLight.Range = sphereRadius * 3
+    ambientLight.Brightness = 1.5
+    ambientLight.Parent = mainSphere
 
-    for i = 1, numStreaks do
-        local streak = Instance.new("Part")
-        streak.Name = "NeonStreak"
-        -- TAMAÑO MAYOR: Más anchas (hasta 3 studs) y largas (hasta 60 studs) para ser visibles
-        local length = math.random(30, 60)
-        streak.Size = Vector3.new(math.random(15, 30) * 0.1, length, 0.1)
-        streak.Color = streakColors[math.random(1, #streakColors)]
-        streak.Material = Enum.Material.Neon
-        streak.Anchored = true
-        streak.CanCollide = false
-        streak.CanTouch = false
-        streak.CastShadow = false
-        streak.Parent = sphereFolder
+    -- Velocidades de scroll (studs/segundo)
+    local mainScrollSpeed = 45  -- textura principal: caída rápida
+    local overlaySpeed     = 12  -- overlay: se abre desde el centro, más lento
 
-        table.insert(rainStreaks, {
-            part = streak,
-            theta = math.random() * math.pi * 2,
-            phi = math.random() * math.pi,
-            -- VELOCIDAD ALTA: Se deslizan rapidísimo (efecto cortina de energía)
-            speed = math.random(30, 70) * 0.1,
-            baseTransparency = math.random(0, 2) * 0.1 -- Mucho más sólidas (0 a 0.2 de transp.)
-        })
-    end
+    -- 5. Bucle de animación
+    local startTime = os.clock()
+    local conn
 
-    -- ## 4. BUCLE DE ANIMACIÓN
-    local connection = RunService.RenderStepped:Connect(function(deltaTime)
-        if not sphereFolder.Parent then return end
+    conn = RunService.RenderStepped:Connect(function(deltaTime)
+        local elapsed = os.clock() - startTime
 
-        for _, data in ipairs(rainStreaks) do
-            data.phi = data.phi + (data.speed * deltaTime)
-            
-            -- Bucle de la lluvia
-            if data.phi > math.pi then
-                data.phi = 0
-                data.theta = math.random() * math.pi * 2
+        if elapsed >= duration or not sphereFolder.Parent then
+            if conn then conn:Disconnect() end
+            if sphereFolder and sphereFolder.Parent then
+                sphereFolder:Destroy()
             end
-
-            -- Cálculos esféricos
-            local sinPhi = math.sin(data.phi)
-            local cosPhi = math.cos(data.phi)
-            local sinTheta = math.sin(data.theta)
-            local cosTheta = math.cos(data.theta)
-
-            -- Posición en la esfera virtual de radio 80
-            local localPos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * rainRadius
-            
-            -- Vectores de alineación perfectos
-            local normal = localPos.Unit -- Apunta hacia afuera
-            local tangentDown = Vector3.new(cosPhi * cosTheta, -sinPhi, cosPhi * sinTheta).Unit -- Apunta curvo hacia abajo
-            
-            if tangentDown.Magnitude < 0.001 then
-                tangentDown = Vector3.new(1, 0, 0)
-            end
-            
-            local right = tangentDown:Cross(normal).Unit
-
-            -- Orientación asegurada: 
-            -- La cara frontal plana mira al centro (-normal), se acuesta en la pared de la esfera
-            data.part.CFrame = centerCF * CFrame.fromMatrix(localPos, right, -tangentDown, -normal)
-
-            -- Difuminado suave solo en las puntas (polos) para que aparezcan/desaparezcan naturalmente
-            if data.phi < 0.15 then
-                data.part.Transparency = 1 - (data.phi / 0.15) * (1 - data.baseTransparency)
-            elseif data.phi > (math.pi - 0.15) then
-                data.part.Transparency = 1 - ((math.pi - data.phi) / 0.15) * (1 - data.baseTransparency)
-            else
-                data.part.Transparency = data.baseTransparency
-            end
+            return
         end
+
+        -- Textura principal: cae continuamente, con módulo para loop perfecto sin saltos
+        mainTexture.OffsetStudsV = (mainTexture.OffsetStudsV + mainScrollSpeed * deltaTime) % mainTexture.StudsPerTileV
+
+        -- Overlay: una copia sube (offset decreciente) y la otra baja (offset creciente),
+        -- ambas partiendo del mismo punto central, cubriendo la esfera sin parar
+        overlayUp.OffsetStudsV = (overlayUp.OffsetStudsV - overlaySpeed * deltaTime) % overlayUp.StudsPerTileV
+        overlayDown.OffsetStudsV = (overlayDown.OffsetStudsV + overlaySpeed * deltaTime) % overlayDown.StudsPerTileV
     end)
 
-    -- Retorna la carpeta y el loop de animacion.
-    -- Para limpiar la dimension, solo debes hacer `connection:Disconnect()` y `sphereFolder:Destroy()` en tu script.
-    return sphereFolder, connection
+    -- 6. Limpieza de seguridad
+    task.delay(duration, function()
+        if conn then conn:Disconnect() end
+        if sphereFolder and sphereFolder.Parent then
+            sphereFolder:Destroy()
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
