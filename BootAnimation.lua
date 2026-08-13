@@ -193,16 +193,21 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
--- EFECTO BURBUJA Y LÍNEAS TRANSVERSALES (ALL FOR ONE / SHIGARAKI)
+----------------------INICIO-------------------------
+------------------EFECTO ESPECIAL--------------------
+-----------------------------------------------------
+local RunService = game:GetService("RunService")
+
 local function SpawnAFOSphere(centerCF, duration)
     local sphereFolder = Instance.new("Folder")
     sphereFolder.Name = "AFO_Sphere_Effect"
     sphereFolder.Parent = workspace
 
-    -- Esfera totalmente negra
+    -- 1. Esfera base totalmente negra
+    local sphereRadius = 15
     local mainSphere = Instance.new("Part")
     mainSphere.Shape = Enum.PartType.Ball
-    mainSphere.Size = Vector3.new(30, 30, 30)
+    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
     mainSphere.Material = Enum.Material.SmoothPlastic
@@ -212,56 +217,108 @@ local function SpawnAFOSphere(centerCF, duration)
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- Líneas gruesas transversales
-    local lineRings = {}
-    local numRings = 7
+    -- 2. Creación de las "rayas" (efecto lluvia)
+    local rainStreaks = {}
+    local numStreaks = 60 -- Cantidad de rayas simultáneas
+    local surfaceOffset = sphereRadius + 0.1 -- Ligeramente superior al radio para evitar Z-fighting
 
-    for i = 1, numRings do
-        local ring = Instance.new("Part")
-        ring.Size = Vector3.new(0.8, 31, 31)
-        ring.Color = (i % 2 == 0) and Color3.fromRGB(180, 0, 35) or Color3.fromRGB(240, 240, 240)
-        ring.Material = Enum.Material.Neon
-        ring.Anchored = true
-        ring.CanCollide = false
-        ring.CanTouch = false
-        ring.CastShadow = false
-        ring.Transparency = 0.1
+    -- Paleta de colores extraída de tu imagen (tonos magenta/carmesí)
+    local streakColors = {
+        Color3.fromRGB(200, 20, 100), -- Magenta brillante
+        Color3.fromRGB(150, 10, 80),  -- Magenta oscuro
+        Color3.fromRGB(100, 0, 50)    -- Carmesí profundo
+    }
 
-        local mesh = Instance.new("SpecialMesh")
-        mesh.MeshType = Enum.MeshType.FileMesh
-        mesh.MeshId = "rbxassetid://3270017" -- Torus / Anillo Mesh
-        mesh.Scale = Vector3.new(31, 31, 1.5)
-        mesh.Parent = ring
-        ring.Parent = sphereFolder
+    for i = 1, numStreaks do
+        local streak = Instance.new("Part")
+        -- Hacemos las rayas delgadas, planas y con longitudes variadas
+        local length = math.random(4, 9)
+        streak.Size = Vector3.new(math.random(2, 4) * 0.1, length, 0.05) 
+        streak.Color = streakColors[math.random(1, #streakColors)]
+        streak.Material = Enum.Material.Neon
+        streak.Anchored = true
+        streak.CanCollide = false
+        streak.CanTouch = false
+        streak.CastShadow = false
+        
+        -- Añadir un BlockMesh para suavizar la geometría si es necesario
+        local mesh = Instance.new("BlockMesh")
+        mesh.Parent = streak
 
-        table.insert(lineRings, {
-            part = ring,
-            speed = (i % 2 == 0 and 12 or -12) + math.random(-2, 2),
-            angleOffset = math.rad((360 / numRings) * i),
-            tilt = math.rad(35 + (i * 10)),
-            yOffsetSpeed = 4 + (i * 0.5)
+        streak.Parent = sphereFolder
+
+        -- Variables para la animación basada en coordenadas esféricas
+        table.insert(rainStreaks, {
+            part = streak,
+            theta = math.random() * math.pi * 2, -- Longitud (ángulo alrededor de la esfera)
+            phi = math.random() * math.pi,       -- Latitud (0 = arriba, pi = abajo)
+            speed = math.random(15, 30) * 0.05,  -- Velocidad a la que cae la raya
+            baseTransparency = math.random(2, 6) * 0.1
         })
     end
 
+    -- 3. Bucle de Animación
     local startTime = os.clock()
     local conn
-    conn = RunService.RenderStepped:Connect(function()
+    
+    -- Usamos deltaTime para un movimiento fluido independiente de los FPS
+    conn = RunService.RenderStepped:Connect(function(deltaTime)
         local elapsed = os.clock() - startTime
+        
         if elapsed >= duration or not sphereFolder.Parent then
             if conn then conn:Disconnect() end
-            sphereFolder:Destroy()
+            if sphereFolder and sphereFolder.Parent then
+                sphereFolder:Destroy()
+            end
             return
         end
 
-        for idx, data in ipairs(lineRings) do
-            local yRot = elapsed * data.speed + data.angleOffset
-            local yPos = math.sin(elapsed * data.yOffsetSpeed) * 6
-            data.part.CFrame = centerCF 
-                * CFrame.new(0, yPos, 0)
-                * CFrame.Angles(data.tilt, yRot, math.sin(elapsed * 4 + idx) * 0.5)
+        for _, data in ipairs(rainStreaks) do
+            -- Actualizamos el ángulo vertical (cayendo hacia abajo)
+            data.phi = data.phi + (data.speed * deltaTime)
+            
+            -- Si la raya llega al polo sur, la reiniciamos en el polo norte con una nueva posición
+            if data.phi > math.pi then
+                data.phi = 0
+                data.theta = math.random() * math.pi * 2 
+            end
+
+            -- Conversión de Coordenadas Esféricas a Cartesianas (X, Y, Z)
+            local sinPhi = math.sin(data.phi)
+            local cosPhi = math.cos(data.phi)
+            local sinTheta = math.sin(data.theta)
+            local cosTheta = math.cos(data.theta)
+
+            -- Posición de la raya relativa al centro de la esfera
+            local relativePos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * surfaceOffset
+            
+            -- Cálculo de vectores para alinear la raya perfectamente con la curvatura de la esfera
+            local surfaceNormal = relativePos.Unit
+            local tangentDown = Vector3.new(cosPhi * cosTheta, -sinPhi, cosPhi * sinTheta).Unit
+            
+            -- Prevención de errores matemáticos exactos en los polos
+            if tangentDown.Magnitude < 0.001 then
+                tangentDown = Vector3.new(1, 0, 0)
+            end
+            
+            local right = tangentDown:Cross(surfaceNormal).Unit
+
+            -- Construimos el CFrame: 
+            -- Right = Eje X (ancho), Up = -tangentDown (apuntando la raya hacia abajo), Look = surfaceNormal (cara plana hacia afuera)
+            local rotationMatrix = CFrame.fromMatrix(relativePos, right, -tangentDown, surfaceNormal)
+            data.part.CFrame = centerCF * rotationMatrix
+            
+            -- Efecto visual: difuminar las rayas cuando se acercan a los polos para que no se agrupen feo
+            if data.phi < 0.3 or data.phi > (math.pi - 0.3) then
+                -- Transición suave de transparencia
+                data.part.Transparency = 1 
+            else
+                data.part.Transparency = data.baseTransparency
+            end
         end
     end)
 
+    -- 4. Limpieza de seguridad
     task.delay(duration, function()
         if conn then conn:Disconnect() end
         if sphereFolder and sphereFolder.Parent then
@@ -269,6 +326,10 @@ local function SpawnAFOSphere(centerCF, duration)
         end
     end)
 end
+
+-----------------------------------------------------
+------------------EFECTO ESPECIAL--------------------
+------------------------FIN--------------------------
 
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
