@@ -196,6 +196,8 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -290,11 +292,10 @@ local function SpawnAFOSphere(centerCF)
         table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. SISTEMA DE HUMO BRILLANTE + MÁSCARA TV ERRÁTICA ---
+    -- --- 2. SISTEMA DE HUMO CENTRAL + MÁSCARA TV ERRÁTICA ---
     local smokeTextures = {
         "rbxassetid://13490928216", 
-        "rbxassetid://4231233461", 
-        "rbxassetid://6672985426"
+        "rbxassetid://4231233461"
     }
 
     local function createSmokeForPole(polePart, emitDirection)
@@ -382,194 +383,120 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. NUEVO SISTEMA: VIENTO AMBIENTAL (REMOLINO GRUESO Y LENTO) ---
-    local WIND_TEXTURE_ID = "rbxassetid://72770859533608"
+    -- --- 3. NUEVO VIENTO BRILLANTE (MOTAS DE LUZ TIPO IMAGEN) ---
+    local SPECKS_TEXTURE_ID = "rbxassetid://5860714768" -- Textura de círculo suave brillante
     
     local windVolume = Instance.new("Part")
-    windVolume.Name = "WindVolume"
-    windVolume.Size = Vector3.new(boxSize - 5, boxSize - 5, boxSize - 5)
+    windVolume.Name = "WindSpecksVolume"
+    windVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     windVolume.CFrame = centerCF
     windVolume.Anchored = true
     windVolume.CanCollide = false
     windVolume.Transparency = 1
     windVolume.Parent = dimensionFolder
 
-    local function createWindEmitter(name, color)
+    local function createSpeckEmitter(color, rate, sizeMultiplier)
         local emitter = Instance.new("ParticleEmitter")
-        emitter.Name = name
-        emitter.Texture = WIND_TEXTURE_ID
+        emitter.Name = "FloatingSpecks"
+        emitter.Texture = SPECKS_TEXTURE_ID
         emitter.Color = ColorSequence.new(color)
-        emitter.LightEmission = 0.8
+        emitter.LightEmission = 1 -- Brillo cegador
         emitter.ZOffset = 0
         
-        -- MUCHO MÁS GRUESO: Partículas gigantes para dar volumen
+        -- Partículas pequeñas simulando brasas o polvo estelar
         emitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
-            NumberSequenceKeypoint.new(0.3, 20),
-            NumberSequenceKeypoint.new(0.7, 28),
+            NumberSequenceKeypoint.new(0.1, 0.3 * sizeMultiplier),
+            NumberSequenceKeypoint.new(0.9, 0.3 * sizeMultiplier),
             NumberSequenceKeypoint.new(1, 0)
         })
         
         emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.5, 0.45), -- Un poco más transparentes porque son enormes
+            NumberSequenceKeypoint.new(0.3, 0), -- Totalmente sólidas en su clímax
+            NumberSequenceKeypoint.new(0.7, 0),
             NumberSequenceKeypoint.new(1, 1)
         })
         
-        emitter.Lifetime = NumberRange.new(8, 12)
-        emitter.Rate = 20 -- Menos cantidad necesaria porque cada partícula es inmensa
-        emitter.Speed = NumberRange.new(0.2, 0.8) -- MUY LENTO
+        emitter.Lifetime = NumberRange.new(3, 6)
+        emitter.Rate = rate
+        emitter.Speed = NumberRange.new(2, 6)
         emitter.SpreadAngle = Vector2.new(360, 360) 
-        emitter.Drag = 0.2
-        emitter.Acceleration = Vector3.new(0, 0, 0)
+        emitter.Drag = 1 -- Fricción para que floten erráticamente
+        emitter.Acceleration = Vector3.new(0, 1.5, 0) -- Tendencia a subir ligeramente
         
         emitter.Rotation = NumberRange.new(0, 360)
-        emitter.RotSpeed = NumberRange.new(-5, 5) -- Rotan muy despacio
-        emitter.Shape = Enum.ParticleEmitterShape.Sphere 
+        emitter.RotSpeed = NumberRange.new(-20, 20)
+        emitter.Shape = Enum.ParticleEmitterShape.Box 
         emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut
         
-        -- CRÍTICO: Esto hace que el viento gire al unísono con el bloque, formando el remolino
-        emitter.LockedToPart = true 
         emitter.Parent = windVolume
+        return emitter
     end
 
-    createWindEmitter("MagentaWind", Color3.fromRGB(255, 0, 255))
-    createWindEmitter("YellowWind", Color3.fromRGB(255, 230, 0))
+    -- Blanco puro y magenta claro para las motas flotantes
+    local specksWhite = createSpeckEmitter(Color3.fromRGB(255, 255, 255), 150, 1)
+    local specksMagenta = createSpeckEmitter(Color3.fromRGB(255, 100, 255), 100, 1.5)
 
-    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (POCOS PERO GIGANTES) ---
-    local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713"
-    
-    local lightningHub = Instance.new("Part")
-    lightningHub.Name = "LightningHub"
-    lightningHub.Anchored = true
-    lightningHub.CanCollide = false
-    lightningHub.Transparency = 1
-    lightningHub.CFrame = centerCF
-    lightningHub.Parent = dimensionFolder
 
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {dimensionFolder}
+    -- --- 4. SISTEMA DE TRANSFORMACIÓN (HORIZONTE MORADO SALVAJE) ---
+    -- Paredes falsas internas en los polos X (Izquierda y Derecha)
+    local leftHorizon = Instance.new("Part")
+    leftHorizon.Size = Vector3.new(2, boxSize, boxSize)
+    leftHorizon.CFrame = centerCF * CFrame.new(-half + 1, 0, 0)
+    leftHorizon.Anchored = true
+    leftHorizon.CanCollide = false
+    leftHorizon.Transparency = 1
+    leftHorizon.Parent = dimensionFolder
 
-    local function SpawnTravelingLightning()
-        local extent = half - 2
+    local rightHorizon = Instance.new("Part")
+    rightHorizon.Size = Vector3.new(2, boxSize, boxSize)
+    rightHorizon.CFrame = centerCF * CFrame.new(half - 1, 0, 0)
+    rightHorizon.Anchored = true
+    rightHorizon.CanCollide = false
+    rightHorizon.Transparency = 1
+    rightHorizon.Parent = dimensionFolder
+
+    -- Función para crear el aura de transformación
+    local horizonEmitters = {}
+    local function createHorizonFog(parentPart, emitDir)
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Texture = "rbxassetid://13490928216" -- Niebla densa
+        emitter.Color = ColorSequence.new(Color3.fromRGB(180, 0, 255)) -- Morado salvaje muy saturado
+        emitter.LightEmission = 0 -- Inicia oscuro
+        emitter.ZOffset = 0.5
         
-        local function getRandomPointInVolume()
-            return centerCF * Vector3.new(
-                (math.random() * 2 - 1) * extent,
-                (math.random() * 2 - 1) * extent,
-                (math.random() * 2 - 1) * extent
-            )
-        end
-
-        local startPos = getRandomPointInVolume()
-        local rawEndPos = getRandomPointInVolume()
-
-        while (rawEndPos - startPos).Magnitude < (boxSize * 0.4) do
-            rawEndPos = getRandomPointInVolume()
-        end
-
-        local direction = rawEndPos - startPos
-        local rayResult = workspace:Raycast(startPos, direction, raycastParams)
-        local finalTargetPos = rayResult and rayResult.Position or rawEndPos
-
-        local dist = (finalTargetPos - startPos).Magnitude
-        local numSegments = math.clamp(math.floor(dist / 5), 6, 12)
-        local points = {startPos}
-
-        for i = 1, numSegments - 1 do
-            local alpha = i / numSegments
-            local basePoint = startPos:Lerp(finalTargetPos, alpha)
-            local offset = Vector3.new(math.random(-6, 6), math.random(-6, 6), math.random(-6, 6))
-            table.insert(points, basePoint + offset)
-        end
-        table.insert(points, finalTargetPos)
-
-        task.spawn(function()
-            -- RAYOS GIGANTES (De 35 a 65 de grosor)
-            local beamWidth = math.random(35, 65) 
-            local debrisTable = {} 
-            local beamsList = {}
-
-            for i = 1, #points - 1 do
-                if not lightningHub.Parent then break end
-
-                local att0 = Instance.new("Attachment")
-                att0.WorldPosition = points[i]
-                att0.Parent = lightningHub
-
-                local att1 = Instance.new("Attachment")
-                att1.WorldPosition = points[i+1]
-                att1.Parent = lightningHub
-
-                local yellowBeam = Instance.new("Beam")
-                yellowBeam.Attachment0 = att0
-                yellowBeam.Attachment1 = att1
-                yellowBeam.Texture = LIGHTNING_TEXTURE_ID
-                yellowBeam.Color = ColorSequence.new(Color3.fromRGB(255, 230, 0))
-                yellowBeam.LightEmission = 1
-                yellowBeam.Width0 = beamWidth
-                yellowBeam.Width1 = beamWidth
-                yellowBeam.TextureMode = Enum.TextureMode.Wrap
-                yellowBeam.TextureLength = 10
-                yellowBeam.TextureSpeed = math.random(15, 30)
-                yellowBeam.FaceCamera = true
-                yellowBeam.Parent = lightningHub
-
-                local blackBeam = Instance.new("Beam")
-                blackBeam.Attachment0 = att0
-                blackBeam.Attachment1 = att1
-                blackBeam.Texture = LIGHTNING_TEXTURE_ID
-                blackBeam.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0))
-                blackBeam.LightEmission = 0
-                blackBeam.Width0 = beamWidth * 0.6
-                blackBeam.Width1 = beamWidth * 0.6
-                blackBeam.TextureMode = Enum.TextureMode.Wrap
-                blackBeam.TextureLength = 10
-                blackBeam.TextureSpeed = math.random(15, 30)
-                blackBeam.ZOffset = 0 
-                blackBeam.FaceCamera = true
-                blackBeam.Parent = lightningHub
-
-                table.insert(debrisTable, att0)
-                table.insert(debrisTable, att1)
-                table.insert(debrisTable, yellowBeam)
-                table.insert(debrisTable, blackBeam)
-                
-                table.insert(beamsList, yellowBeam)
-                table.insert(beamsList, blackBeam)
-
-                task.wait(0.02) -- Un pequeñísimo instante más lento para apreciar lo colosales que son
-            end
-
-            task.wait(0.2)
-            
-            for step = 1, 5 do
-                if not lightningHub.Parent then break end
-                local transAlpha = step / 5
-                for _, beam in ipairs(beamsList) do
-                    beam.Transparency = NumberSequence.new(transAlpha)
-                end
-                task.wait(0.04)
-            end
-
-            for _, item in ipairs(debrisTable) do
-                item:Destroy()
-            end
-        end)
+        emitter.Size = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 10),
+            NumberSequenceKeypoint.new(1, 45) -- Crece para engullir el espacio
+        })
+        
+        emitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.2, 0.8), 
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        
+        emitter.Lifetime = NumberRange.new(5, 8)
+        emitter.Rate = 0 -- Inicia en 0, aumentará con el tiempo
+        emitter.Speed = NumberRange.new(3, 10) 
+        emitter.EmissionDirection = emitDir
+        emitter.SpreadAngle = Vector2.new(20, 20)
+        
+        emitter.Rotation = NumberRange.new(0, 360)
+        emitter.RotSpeed = NumberRange.new(-5, 5)
+        emitter.Parent = parentPart
+        
+        table.insert(horizonEmitters, emitter)
     end
 
-    task.spawn(function()
-        task.wait(0.3) 
-        -- POCOS RAYOS: Ya no aceleran. Aparecen al azar cada 2 a 4.5 segundos.
-        while dimensionFolder.Parent do
-            SpawnTravelingLightning()
-            task.wait(math.random(20, 45) / 10) 
-        end
-    end)
+    createHorizonFog(leftHorizon, Enum.NormalId.Right)
+    createHorizonFog(rightHorizon, Enum.NormalId.Left)
 
-    -- --- 5. BUCLE DE ANIMACIÓN ORIGINAL + ROTACIÓN DEL REMOLINO ---
+
+    -- --- 5. BUCLE DE ANIMACIÓN Y EVOLUCIÓN DE LA DIMENSIÓN ---
     local startTime = os.clock()
+    local TRANSFORMATION_TIME = 15 -- Segundos que tarda en alcanzar su clímax
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
@@ -578,14 +505,33 @@ local function SpawnAFOSphere(centerCF)
             return
         end
 
-        local elapsed = os.clock() - startTime
+        local currentTime = os.clock()
+        local elapsed = currentTime - startTime
         
-        -- Hacemos girar el volumen del viento para crear el remolino grueso y lento
-        if windVolume.Parent then
-            windVolume.CFrame = centerCF * CFrame.Angles(0, elapsed * 0.25, 0)
+        -- === Lógica de Transformación (El clímax) ===
+        -- 'alpha' va de 0 a 1 dependiendo del tiempo transcurrido
+        local alpha = math.clamp(elapsed / TRANSFORMATION_TIME, 0, 1)
+        
+        for _, emitter in ipairs(horizonEmitters) do
+            -- Aumenta dramáticamente la cantidad de niebla brillante desde los horizontes
+            emitter.Rate = math.floor(alpha * 150)
+            
+            -- La niebla se vuelve cada vez más emisiva (luz pura)
+            emitter.LightEmission = alpha * 1.5 
+            
+            -- La niebla se hace más opaca/densa
+            emitter.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.2, 1 - (alpha * 0.95)), -- Se vuelve casi sólida (0.05)
+                NumberSequenceKeypoint.new(1, 1)
+            })
         end
+        
+        -- Aceleramos sutilmente el "viento" (las motas) para transmitir aumento de poder
+        specksWhite.Speed = NumberRange.new(2 + (alpha * 6), 6 + (alpha * 6))
+        specksMagenta.Speed = NumberRange.new(2 + (alpha * 6), 6 + (alpha * 6))
 
-        -- Animación de las paredes
+        -- === Movimiento de Texturas Base ===
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
