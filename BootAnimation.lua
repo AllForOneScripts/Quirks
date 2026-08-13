@@ -196,8 +196,6 @@ end
 ----------------------INICIO-------------------------
 ------------------EFECTO ESPECIAL--------------------
 -----------------------------------------------------
-local RunService = game:GetService("RunService")
-
 -- Retorna el folder de la esfera y la conexión del bucle para que puedas detenerlo desde tu script principal
 local function SpawnAFOSphere(centerCF)
     local sphereFolder = Instance.new("Folder")
