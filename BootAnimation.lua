@@ -1,5 +1,3 @@
-print("this is a test of the BootAnimation")
-
 if getgenv()._BootAnimRunning then
     return
 end
@@ -124,39 +122,41 @@ end
 local summonActive = true
 local summonSkyY = originalGroundY + 1500
 
+-- FIX ANTICHEAT: Caja de colisión en el cielo para atrapar al jugador sin alterar físicas
+local skyBoxFolder = Instance.new("Folder", workspace)
+skyBoxFolder.Name = "SkyBoxAFO"
+
+local floor = Instance.new("Part", skyBoxFolder)
+floor.Anchored = true
+floor.Size = Vector3.new(20, 2, 20)
+floor.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
+floor.Transparency = 1
+
+local roof = floor:Clone()
+roof.Position = floor.Position + Vector3.new(0, 15, 0)
+roof.Parent = skyBoxFolder
+
+local wall1 = floor:Clone()
+wall1.Size = Vector3.new(20, 15, 2)
+wall1.Position = floor.Position + Vector3.new(0, 7.5, 10)
+wall1.Parent = skyBoxFolder
+
+local wall2 = wall1:Clone()
+wall2.Position = floor.Position + Vector3.new(0, 7.5, -10)
+wall2.Parent = skyBoxFolder
+
+local wall3 = floor:Clone()
+wall3.Size = Vector3.new(2, 15, 20)
+wall3.Position = floor.Position + Vector3.new(10, 7.5, 0)
+wall3.Parent = skyBoxFolder
+
+local wall4 = wall3:Clone()
+wall4.Position = floor.Position + Vector3.new(-10, 7.5, 0)
+wall4.Parent = skyBoxFolder
+
+-- Teletransportar al jugador adentro
+root.CFrame = CFrame.new(originalRootPos.X, summonSkyY + 3, originalRootPos.Z)
 root.Anchored = false 
-
-local bootBV = Instance.new("BodyVelocity", root)
-bootBV.Name = "BootBV"
-bootBV.Velocity = Vector3.new(0, 600, 0)
-bootBV.MaxForce = Vector3.new(0, 9e8, 0)
-local bootBP = nil
-
-task.spawn(function()
-    local t0 = tick()
-    while tick() - t0 < 10 and summonActive do
-        if root and root.Parent and root.Position.Y >= summonSkyY - 20 then break end
-        task.wait(0.05)
-    end
-    if not summonActive then return end
-    if bootBV then bootBV:Destroy(); bootBV = nil end
-    if not root or not root.Parent then return end
-    
-    bootBP = Instance.new("BodyPosition", root)
-    bootBP.Name = "BootBP"
-    bootBP.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
-    bootBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    bootBP.P = 60000
-    bootBP.D = 2500
-end)
-
-local summonMaintainer = RunService.Heartbeat:Connect(function()
-    if summonActive and root then
-        if math.abs(root.Position.Y - summonSkyY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
-        end
-    end
-end)
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -198,9 +198,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
-
 local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
@@ -212,17 +209,18 @@ local function SpawnAFODimension(centerCF)
 
     -- --- ASSETS Y CONFIGURACIÓN ---
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
-    local BG_TEXTURE_ID = "rbxassetid://72194288856630"
-    local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
+    local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
+    local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
     -- Paleta de Colores Abisal (Violeta / Carmesí / Vacío)
-    local AFO_ABYSSAL = Color3.fromRGB(35, 5, 55)   -- Morado Abisal (#230537)
-    local AFO_VIOLET = Color3.fromRGB(85, 15, 110)  -- Violeta Eléctrico (#550F6E)
-    local AFO_CRIMSON = Color3.fromRGB(150, 10, 30) -- Rojo Carmesí AFO (#960A1E)
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)       -- Vacío Absoluto
+    local AFO_CRIMSON = Color3.fromRGB(150, 10, 30)      -- Rojo Carmesí AFO
+    local AFO_DEEP_PURPLE = Color3.fromRGB(35, 5, 55)    -- Morado Abisal
+    local AFO_ELECTRIC_PURPLE = Color3.fromRGB(85, 15, 110) -- Violeta Eléctrico
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)            -- Paredes y Vacío
+    local AFO_RUIDO = Color3.fromRGB(200, 50, 50)        -- Chispas de Ruido
 
-    local NEON_SPEED = 180 
+    local NEON_SPEED = 180
     local BG_SPEED = 12    
     local CLIMAX_TIME = 20 
 
@@ -244,7 +242,7 @@ local function SpawnAFODimension(centerCF)
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = AFO_BLACK
+        wall.Color = AFO_BLACK 
         wall.Material = Enum.Material.SmoothPlastic
         wall.Anchored = true
         wall.CanCollide = false
@@ -252,12 +250,12 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo Scrolling (Se ajusta opacidad para no saturar)
+        -- Fondo Scrolling
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
-        bgUp.Transparency = 0.5 -- Transparencia aumentada (antes 0.2)
-        bgUp.Color3 = AFO_ABYSSAL 
+        bgUp.Transparency = 0.2
+        bgUp.Color3 = AFO_DEEP_PURPLE 
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
         bgUp.StudsPerTileV = boxSize / 1.5
@@ -270,11 +268,11 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Suavizado)
+        -- Glow Neon
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
-        texNeonGlow.Transparency = 0.7 -- Más sutil para dejar brillar las luces internas
+        texNeonGlow.Transparency = 0.4 
         texNeonGlow.Color3 = AFO_CRIMSON 
         texNeonGlow.Face = data.innerFace
         texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
@@ -283,12 +281,12 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal 
+        -- Neon Principal
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
-        texNeon.Transparency = 0.3 -- Opacidad ajustada para evitar sobresaturación (antes 0)
-        texNeon.Color3 = AFO_VIOLET -- Mezcla visual con los bordes
+        texNeon.Transparency = 0 
+        texNeon.Color3 = AFO_CRIMSON
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
@@ -311,44 +309,40 @@ local function SpawnAFODimension(centerCF)
     bottomPole.Parent = dimensionFolder
 
     local function createSinisterSmoke(polePart, emitDirection)
-        -- Humo Denso Multicapa (Violeta -> Carmesí -> Negro)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
         smokeEmitter.LightEmission = 0.1 
         smokeEmitter.ZOffset = 0.5 
         smokeEmitter.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, AFO_VIOLET),
-            ColorSequenceKeypoint.new(0.4, AFO_CRIMSON),
+            ColorSequenceKeypoint.new(0, AFO_ELECTRIC_PURPLE),
+            ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
             ColorSequenceKeypoint.new(1, AFO_BLACK)
         })
-        smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 45)})
-        -- Curvas suavizadas para evitar bordes duros
+        smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
         smokeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1), 
-            NumberSequenceKeypoint.new(0.3, 0.85), 
-            NumberSequenceKeypoint.new(0.7, 0.85), 
+            NumberSequenceKeypoint.new(0.3, 0.7), 
             NumberSequenceKeypoint.new(1, 1)
         })
-        smokeEmitter.Lifetime = NumberRange.new(5, 7)
-        smokeEmitter.Rate = 25 
-        smokeEmitter.Speed = NumberRange.new(5, 12) 
+        smokeEmitter.Lifetime = NumberRange.new(4, 6)
+        smokeEmitter.Rate = 20 
+        smokeEmitter.Speed = NumberRange.new(5, 10) 
         smokeEmitter.EmissionDirection = emitDirection
         smokeEmitter.Rotation = NumberRange.new(0, 360)
-        smokeEmitter.RotSpeed = NumberRange.new(-8, 8)
+        smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
 
-        -- Ruido/Chispas
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Texture = NOISE_TEXTURE_ID
         noiseEmitter.LightEmission = 0.8 
         noiseEmitter.ZOffset = 0.6 
-        noiseEmitter.Color = ColorSequence.new(AFO_CRIMSON)
-        noiseEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 4), NumberSequenceKeypoint.new(1, 12)})
-        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0.2), NumberSequenceKeypoint.new(1, 1)})
+        noiseEmitter.Color = ColorSequence.new(AFO_RUIDO)
+        noiseEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 15)})
+        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0), NumberSequenceKeypoint.new(1, 1)})
         noiseEmitter.Lifetime = NumberRange.new(1, 3)
-        noiseEmitter.Rate = 12 
-        noiseEmitter.Speed = NumberRange.new(20, 45) 
-        noiseEmitter.Drag = 4 
+        noiseEmitter.Rate = 15 
+        noiseEmitter.Speed = NumberRange.new(20, 50) 
+        noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
         noiseEmitter.Parent = polePart
@@ -357,7 +351,7 @@ local function SpawnAFODimension(centerCF)
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. EFECTO "SOFT" PROGRESIVO Y LUZ CENTRAL (NÚCLEO) ---
+    -- --- 3. EFECTO "SOFT" PROGRESIVO (NIEBLA INTERNA CENTRAL) ---
     local softVolume = Instance.new("Part")
     softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     softVolume.CFrame = centerCF
@@ -366,23 +360,15 @@ local function SpawnAFODimension(centerCF)
     softVolume.Transparency = 1
     softVolume.Parent = dimensionFolder
 
-    -- Sistema de Luz Dual: Núcleo Central
-    local centerLight = Instance.new("PointLight")
-    centerLight.Color = AFO_VIOLET -- Iluminación suave en los modelos/personajes
-    centerLight.Range = boxSize * 0.9
-    centerLight.Brightness = 0 -- Se anima
-    centerLight.Shadows = false -- Sin sombras para rellenar de manera ambiental
-    centerLight.Parent = softVolume
-
     local hazeEmitter = Instance.new("ParticleEmitter")
     hazeEmitter.Name = "InternalHaze"
     hazeEmitter.Texture = SMOKE_TEXTURE_ID 
-    hazeEmitter.Color = ColorSequence.new(AFO_ABYSSAL)
-    hazeEmitter.LightEmission = 0.08 
+    hazeEmitter.Color = ColorSequence.new(AFO_DEEP_PURPLE)
+    hazeEmitter.LightEmission = 0.05 
     hazeEmitter.ZOffset = -1 
-    hazeEmitter.Size = NumberSequence.new(boxSize * 0.9) 
+    hazeEmitter.Size = NumberSequence.new(boxSize * 0.8) 
     hazeEmitter.Transparency = NumberSequence.new(1) 
-    hazeEmitter.Lifetime = NumberRange.new(12) 
+    hazeEmitter.Lifetime = NumberRange.new(10) 
     hazeEmitter.Rate = 0 
     hazeEmitter.Speed = NumberRange.new(0) 
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
@@ -392,28 +378,26 @@ local function SpawnAFODimension(centerCF)
     local windVolume = softVolume:Clone()
     windVolume.Name = "WindVolume"
     windVolume.Parent = dimensionFolder
-    windVolume:ClearAllChildren() -- Limpiar luces o emisores clonados por error
 
     local chaoticWind = Instance.new("ParticleEmitter")
     chaoticWind.Name = "ChaoticWind"
-    chaoticWind.Texture = NOISE_TEXTURE_ID 
+    chaoticWind.Texture = NOISE_TEXTURE_ID
     chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_VIOLET),
-        ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
+        ColorSequenceKeypoint.new(0, AFO_CRIMSON),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
     })
-    chaoticWind.LightEmission = 0.3
-    chaoticWind.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 2.5), NumberSequenceKeypoint.new(1, 0)})
-    chaoticWind.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.6), NumberSequenceKeypoint.new(1, 1)})
+    chaoticWind.LightEmission = 0.2
+    chaoticWind.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 2), NumberSequenceKeypoint.new(1, 0)})
+    chaoticWind.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 1)})
     chaoticWind.Lifetime = NumberRange.new(3, 5)
-    chaoticWind.Rate = 80 
-    chaoticWind.Speed = NumberRange.new(10, 25) 
+    chaoticWind.Rate = 100 
+    chaoticWind.Speed = NumberRange.new(10, 20) 
     chaoticWind.SpreadAngle = Vector2.new(360, 360) 
-    chaoticWind.Acceleration = Vector3.new(0, -3, 0) 
+    chaoticWind.Acceleration = Vector3.new(0, -2, 0) 
     chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
     chaoticWind.Parent = windVolume
 
-    -- --- 5. LUZ SUR Y PARTÍCULAS ENVOLVENTES ---
+    -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -422,7 +406,6 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- Sistema de Luz Dual: Sur (Gran Cobertura)
     local southLight = Instance.new("PointLight")
     southLight.Color = AFO_CRIMSON 
     southLight.Range = boxSize * 1.62 
@@ -435,24 +418,23 @@ local function SpawnAFODimension(centerCF)
     southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
-        ColorSequenceKeypoint.new(0.4, AFO_CRIMSON),
-        ColorSequenceKeypoint.new(0.8, AFO_VIOLET),
-        ColorSequenceKeypoint.new(1, AFO_ABYSSAL)
+        ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
+        ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
     })
-    southParticles.LightEmission = 0.15
+    southParticles.LightEmission = 0.1
     southParticles.ZOffset = 0.2
-    southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 12), NumberSequenceKeypoint.new(1, 0)})
-    southParticles.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0.4), NumberSequenceKeypoint.new(0.8, 0.4), NumberSequenceKeypoint.new(1, 1)})
-    southParticles.Lifetime = NumberRange.new(5, 8)
+    southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 10), NumberSequenceKeypoint.new(1, 0)})
+    southParticles.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0.2), NumberSequenceKeypoint.new(0.8, 0.2), NumberSequenceKeypoint.new(1, 1)})
+    southParticles.Lifetime = NumberRange.new(5, 7)
     southParticles.Rate = 0 
-    southParticles.Speed = NumberRange.new(20, 45) 
+    southParticles.Speed = NumberRange.new(20, 40) 
     southParticles.EmissionDirection = Enum.NormalId.Front
     southParticles.SpreadAngle = Vector2.new(80, 80) 
     southParticles.Drag = 3 
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 6. BUCLE DE ANIMACIÓN VFX PURO ---
+    -- --- 6. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
     local startTime = os.clock()
     local conn
     
@@ -465,25 +447,18 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- SISTEMA DE ILUMINACIÓN DUAL PROGRESIVO
-        southLight.Brightness = alpha * 12    -- Luz intensa y malvada que envuelve
-        centerLight.Brightness = alpha * 4.5  -- Luz suave en el núcleo (Violeta ambiental)
+        southLight.Brightness = alpha * 15 
+        southParticles.Rate = alpha * 400
 
-        southParticles.Rate = alpha * 350
-
-        -- ATMÓSFERA "SOFT" INTERNA
-        hazeEmitter.Rate = alpha * 15 
-        
-        -- Transición de transparencia gradual para la niebla
-        local softTrans = 1 - (alpha * 0.85) -- Llega a 0.15, voluminoso pero no 100% opaco
+        hazeEmitter.Rate = alpha * 10 
+        local softTrans = 1 - (alpha * 0.9) 
         hazeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
             NumberSequenceKeypoint.new(0.5, softTrans),
             NumberSequenceKeypoint.new(1, 1)
         })
-        hazeEmitter.Size = NumberSequence.new((boxSize * 0.8) + (alpha * boxSize * 0.25))
+        hazeEmitter.Size = NumberSequence.new((boxSize * 0.8) + (alpha * boxSize * 0.2))
 
-        -- ANIMACIÓN DE TEXTURAS
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
@@ -798,6 +773,7 @@ if not s or not Asset then
     if cameraWatchdog then cameraWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
+    if skyBoxFolder then skyBoxFolder:Destroy() end
     FreeCinematic()
     return
 end
@@ -847,8 +823,8 @@ repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - st
 cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 
--- SE INICIA LA BURBUJA NEGRA AFO DURANTE LOS PRIMEROS 8.5 SEGUNDOS
-SpawnAFOSphere(CINEMATIC_CF, 8.5)
+-- SE INICIA LA DIMENSIÓN AFO
+SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
@@ -917,14 +893,24 @@ for _, motor in ipairs(char:GetDescendants()) do
 end
 
 summonActive = false
-if summonMaintainer then summonMaintainer:Disconnect() end
-if bootBV then bootBV:Destroy() end
-if bootBP then bootBP:Destroy() end
+if skyBoxFolder then skyBoxFolder:Destroy() end
 
-root.Anchored = false
-root.CFrame = targetCF
-root.AssemblyLinearVelocity = Vector3.zero
-root.AssemblyAngularVelocity = Vector3.zero
+-- BUCLE DE RETORNO Y FIX PARA EL BUG DEL CIELO
+task.spawn(function()
+    for i = 1, 30 do -- Múltiples llamadas para asegurar que regresas al suelo[cite: 1]
+        if not root or not root.Parent then break end
+        
+        -- Si la Y actual está lo suficientemente cerca del suelo objetivo, se interrumpe el bucle
+        if math.abs(root.Position.Y - targetPos.Y) < 5 then
+            break
+        end
+        
+        root.CFrame = targetCF
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.1)
+    end
+end)
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
