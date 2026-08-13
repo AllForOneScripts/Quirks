@@ -196,8 +196,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -292,102 +290,60 @@ local function SpawnAFOSphere(centerCF)
         table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. SISTEMA DE HUMO CENTRAL + MÁSCARA TV ERRÁTICA ---
-    local smokeTextures = {
-        "rbxassetid://13490928216", 
-        "rbxassetid://4231233461"
-    }
-
-    local function createSmokeForPole(polePart, emitDirection)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25)
-
-        for _, texID in ipairs(smokeTextures) do
-            local smokeEmitter = Instance.new("ParticleEmitter")
-            smokeEmitter.Name = "GlowingWisps"
-            smokeEmitter.Texture = texID
-            smokeEmitter.LightEmission = 0.55 
-            smokeEmitter.ZOffset = 0.5 
-            smokeEmitter.Color = ColorSequence.new(hdrColor)
-            
-            smokeEmitter.Size = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 15),
-                NumberSequenceKeypoint.new(1, 35) 
-            })
-            
-            smokeEmitter.Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.3, 0.95),
-                NumberSequenceKeypoint.new(0.7, 0.95),
-                NumberSequenceKeypoint.new(1, 1)
-            })
-            
-            smokeEmitter.Lifetime = NumberRange.new(3, 5)
-            smokeEmitter.Rate = 6 
-            smokeEmitter.Speed = NumberRange.new(2, 6) 
-            smokeEmitter.EmissionDirection = emitDirection
-            
-            smokeEmitter.Rotation = NumberRange.new(0, 360)
-            smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
-            smokeEmitter.Parent = polePart
-        end
-
-        local noiseEmitter = Instance.new("ParticleEmitter")
-        noiseEmitter.Name = "TVNoiseMask"
-        noiseEmitter.Texture = NOISE_TEXTURE_ID
-        noiseEmitter.LightEmission = 0.44 
-        noiseEmitter.ZOffset = 0.6 
-        noiseEmitter.Color = ColorSequence.new(hdrColor)
-        
-        noiseEmitter.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 15),
-            NumberSequenceKeypoint.new(1, 40) 
-        })
-        
-        noiseEmitter.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.85), 
-            NumberSequenceKeypoint.new(0.8, 0.85), 
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        
-        noiseEmitter.Lifetime = NumberRange.new(2, 4)
-        noiseEmitter.Rate = 12 
-        
-        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Speed = NumberRange.new(25, 60)
-        noiseEmitter.Drag = 8 
-        noiseEmitter.EmissionDirection = emitDirection
-        
-        noiseEmitter.Rotation = NumberRange.new(0, 360)
-        noiseEmitter.RotSpeed = NumberRange.new(-80, 80)
-        noiseEmitter.Parent = polePart
-    end
-
+    -- --- 2. HUMO CENTRAL Y MÁSCARA TV ---
     local topPole = Instance.new("Part")
-    topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
     topPole.Transparency = 1
     topPole.Anchored = true
     topPole.CanCollide = false
     topPole.Parent = dimensionFolder
-    createSmokeForPole(topPole, Enum.NormalId.Bottom)
 
     local bottomPole = Instance.new("Part")
-    bottomPole.Name = "BottomPoleSmoke"
     bottomPole.Size = Vector3.new(boxSize, 1, boxSize)
     bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
     bottomPole.Transparency = 1
     bottomPole.Anchored = true
     bottomPole.CanCollide = false
     bottomPole.Parent = dimensionFolder
-    createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. NUEVO VIENTO BRILLANTE (MOTAS DE LUZ TIPO IMAGEN) ---
-    local SPECKS_TEXTURE_ID = "rbxassetid://5860714768" -- Textura de círculo suave brillante
-    
+    local function createCentralSmoke(polePart, emitDirection)
+        local smokeEmitter = Instance.new("ParticleEmitter")
+        smokeEmitter.Texture = "rbxassetid://13490928216"
+        smokeEmitter.LightEmission = 0.55 
+        smokeEmitter.ZOffset = 0.5 
+        smokeEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
+        smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 15), NumberSequenceKeypoint.new(1, 35)})
+        smokeEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.95), NumberSequenceKeypoint.new(1, 1)})
+        smokeEmitter.Lifetime = NumberRange.new(3, 5)
+        smokeEmitter.Rate = 6 
+        smokeEmitter.Speed = NumberRange.new(2, 6) 
+        smokeEmitter.EmissionDirection = emitDirection
+        smokeEmitter.Rotation = NumberRange.new(0, 360)
+        smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
+        smokeEmitter.Parent = polePart
+
+        local noiseEmitter = Instance.new("ParticleEmitter")
+        noiseEmitter.Texture = NOISE_TEXTURE_ID
+        noiseEmitter.LightEmission = 0.44 
+        noiseEmitter.ZOffset = 0.6 
+        noiseEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
+        noiseEmitter.Size = NumberSequence.new(15, 40)
+        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 1)})
+        noiseEmitter.Lifetime = NumberRange.new(2, 4)
+        noiseEmitter.Rate = 12 
+        noiseEmitter.Speed = NumberRange.new(25, 60)
+        noiseEmitter.Drag = 8 
+        noiseEmitter.EmissionDirection = emitDirection
+        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
+        noiseEmitter.Parent = polePart
+    end
+
+    createCentralSmoke(topPole, Enum.NormalId.Bottom)
+    createCentralSmoke(bottomPole, Enum.NormalId.Top)
+
+    -- --- 3. VIENTO BRILLANTE (MOTAS BLANCAS ANGELICALES) ---
     local windVolume = Instance.new("Part")
-    windVolume.Name = "WindSpecksVolume"
     windVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     windVolume.CFrame = centerCF
     windVolume.Anchored = true
@@ -395,108 +351,73 @@ local function SpawnAFOSphere(centerCF)
     windVolume.Transparency = 1
     windVolume.Parent = dimensionFolder
 
-    local function createSpeckEmitter(color, rate, sizeMultiplier)
+    local angelicWind = Instance.new("ParticleEmitter")
+    angelicWind.Name = "AngelicWind"
+    angelicWind.Texture = "rbxassetid://5860714768" -- Mota suave
+    -- Blanco HDR para que brille intensamente
+    angelicWind.Color = ColorSequence.new(Color3.new(3, 3, 3)) 
+    angelicWind.LightEmission = 1 
+    angelicWind.ZOffset = 0
+    angelicWind.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(0.2, 0.4), -- Pequeñas y sutiles
+        NumberSequenceKeypoint.new(0.8, 0.4),
+        NumberSequenceKeypoint.new(1, 0)
+    })
+    angelicWind.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.2, 0.2), -- Muy visibles
+        NumberSequenceKeypoint.new(0.8, 0.2),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    angelicWind.Lifetime = NumberRange.new(4, 7)
+    angelicWind.Rate = 150 -- Suficientes para llenar el espacio
+    angelicWind.Speed = NumberRange.new(1, 3) -- Movimiento elegante y lento
+    angelicWind.SpreadAngle = Vector2.new(360, 360) 
+    angelicWind.Acceleration = Vector3.new(0, 0.5, 0) 
+    angelicWind.Shape = Enum.ParticleEmitterShape.Box 
+    angelicWind.Parent = windVolume
+
+    -- --- 4. HORIZONTE ANGELICAL (ILUMINACIÓN BLANCA EN LOS POLOS HORIZONTALES) ---
+    local leftPole = Instance.new("Part")
+    leftPole.Size = Vector3.new(2, boxSize, boxSize)
+    leftPole.CFrame = centerCF * CFrame.new(-half + 1, 0, 0)
+    leftPole.Anchored = true
+    leftPole.CanCollide = false
+    leftPole.Transparency = 1
+    leftPole.Parent = dimensionFolder
+
+    local rightPole = Instance.new("Part")
+    rightPole.Size = Vector3.new(2, boxSize, boxSize)
+    rightPole.CFrame = centerCF * CFrame.new(half - 1, 0, 0)
+    rightPole.Anchored = true
+    rightPole.CanCollide = false
+    rightPole.Transparency = 1
+    rightPole.Parent = dimensionFolder
+
+    local function createHolyGlow(parentPart, face)
         local emitter = Instance.new("ParticleEmitter")
-        emitter.Name = "FloatingSpecks"
-        emitter.Texture = SPECKS_TEXTURE_ID
-        emitter.Color = ColorSequence.new(color)
-        emitter.LightEmission = 1 -- Brillo cegador
-        emitter.ZOffset = 0
-        
-        -- Partículas pequeñas simulando brasas o polvo estelar
-        emitter.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 0),
-            NumberSequenceKeypoint.new(0.1, 0.3 * sizeMultiplier),
-            NumberSequenceKeypoint.new(0.9, 0.3 * sizeMultiplier),
-            NumberSequenceKeypoint.new(1, 0)
-        })
-        
-        emitter.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.3, 0), -- Totalmente sólidas en su clímax
-            NumberSequenceKeypoint.new(0.7, 0),
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        
-        emitter.Lifetime = NumberRange.new(3, 6)
-        emitter.Rate = rate
-        emitter.Speed = NumberRange.new(2, 6)
-        emitter.SpreadAngle = Vector2.new(360, 360) 
-        emitter.Drag = 1 -- Fricción para que floten erráticamente
-        emitter.Acceleration = Vector3.new(0, 1.5, 0) -- Tendencia a subir ligeramente
-        
+        emitter.Texture = "rbxassetid://13490928216" -- Textura muy suave
+        emitter.Color = ColorSequence.new(Color3.new(5, 5, 5)) -- Blanco cegador
+        emitter.LightEmission = 1
+        emitter.ZOffset = 0.5
+        emitter.Size = NumberSequence.new(40, 50) -- Enormes para simular iluminación
+        emitter.Lifetime = NumberRange.new(3, 5)
+        emitter.Rate = 0 -- Inicia apagado
+        emitter.Speed = NumberRange.new(0.5, 1) -- Casi estático
+        emitter.EmissionDirection = face
         emitter.Rotation = NumberRange.new(0, 360)
-        emitter.RotSpeed = NumberRange.new(-20, 20)
-        emitter.Shape = Enum.ParticleEmitterShape.Box 
-        emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut
-        
-        emitter.Parent = windVolume
+        emitter.RotSpeed = NumberRange.new(-2, 2)
+        emitter.Parent = parentPart
         return emitter
     end
 
-    -- Blanco puro y magenta claro para las motas flotantes
-    local specksWhite = createSpeckEmitter(Color3.fromRGB(255, 255, 255), 150, 1)
-    local specksMagenta = createSpeckEmitter(Color3.fromRGB(255, 100, 255), 100, 1.5)
+    local leftGlow = createHolyGlow(leftPole, Enum.NormalId.Right)
+    local rightGlow = createHolyGlow(rightPole, Enum.NormalId.Left)
 
-
-    -- --- 4. SISTEMA DE TRANSFORMACIÓN (HORIZONTE MORADO SALVAJE) ---
-    -- Paredes falsas internas en los polos X (Izquierda y Derecha)
-    local leftHorizon = Instance.new("Part")
-    leftHorizon.Size = Vector3.new(2, boxSize, boxSize)
-    leftHorizon.CFrame = centerCF * CFrame.new(-half + 1, 0, 0)
-    leftHorizon.Anchored = true
-    leftHorizon.CanCollide = false
-    leftHorizon.Transparency = 1
-    leftHorizon.Parent = dimensionFolder
-
-    local rightHorizon = Instance.new("Part")
-    rightHorizon.Size = Vector3.new(2, boxSize, boxSize)
-    rightHorizon.CFrame = centerCF * CFrame.new(half - 1, 0, 0)
-    rightHorizon.Anchored = true
-    rightHorizon.CanCollide = false
-    rightHorizon.Transparency = 1
-    rightHorizon.Parent = dimensionFolder
-
-    -- Función para crear el aura de transformación
-    local horizonEmitters = {}
-    local function createHorizonFog(parentPart, emitDir)
-        local emitter = Instance.new("ParticleEmitter")
-        emitter.Texture = "rbxassetid://13490928216" -- Niebla densa
-        emitter.Color = ColorSequence.new(Color3.fromRGB(180, 0, 255)) -- Morado salvaje muy saturado
-        emitter.LightEmission = 0 -- Inicia oscuro
-        emitter.ZOffset = 0.5
-        
-        emitter.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 10),
-            NumberSequenceKeypoint.new(1, 45) -- Crece para engullir el espacio
-        })
-        
-        emitter.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.8), 
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        
-        emitter.Lifetime = NumberRange.new(5, 8)
-        emitter.Rate = 0 -- Inicia en 0, aumentará con el tiempo
-        emitter.Speed = NumberRange.new(3, 10) 
-        emitter.EmissionDirection = emitDir
-        emitter.SpreadAngle = Vector2.new(20, 20)
-        
-        emitter.Rotation = NumberRange.new(0, 360)
-        emitter.RotSpeed = NumberRange.new(-5, 5)
-        emitter.Parent = parentPart
-        
-        table.insert(horizonEmitters, emitter)
-    end
-
-    createHorizonFog(leftHorizon, Enum.NormalId.Right)
-    createHorizonFog(rightHorizon, Enum.NormalId.Left)
-
-
-    -- --- 5. BUCLE DE ANIMACIÓN Y EVOLUCIÓN DE LA DIMENSIÓN ---
+    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO DE LA LUZ ---
     local startTime = os.clock()
-    local TRANSFORMATION_TIME = 15 -- Segundos que tarda en alcanzar su clímax
+    local CLIMAX_TIME = 20 -- Segundos para que los polos alcancen su máximo brillo angelical
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
@@ -505,33 +426,28 @@ local function SpawnAFOSphere(centerCF)
             return
         end
 
-        local currentTime = os.clock()
-        local elapsed = currentTime - startTime
+        local elapsed = os.clock() - startTime
         
-        -- === Lógica de Transformación (El clímax) ===
-        -- 'alpha' va de 0 a 1 dependiendo del tiempo transcurrido
-        local alpha = math.clamp(elapsed / TRANSFORMATION_TIME, 0, 1)
+        -- Evolución suave del brillo en los horizontes
+        local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        for _, emitter in ipairs(horizonEmitters) do
-            -- Aumenta dramáticamente la cantidad de niebla brillante desde los horizontes
-            emitter.Rate = math.floor(alpha * 150)
-            
-            -- La niebla se vuelve cada vez más emisiva (luz pura)
-            emitter.LightEmission = alpha * 1.5 
-            
-            -- La niebla se hace más opaca/densa
-            emitter.Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.2, 1 - (alpha * 0.95)), -- Se vuelve casi sólida (0.05)
-                NumberSequenceKeypoint.new(1, 1)
-            })
-        end
+        -- La cantidad de luz en los polos horizontales va aumentando sutilmente
+        local targetRate = math.floor(alpha * 12) 
+        leftGlow.Rate = targetRate
+        rightGlow.Rate = targetRate
         
-        -- Aceleramos sutilmente el "viento" (las motas) para transmitir aumento de poder
-        specksWhite.Speed = NumberRange.new(2 + (alpha * 6), 6 + (alpha * 6))
-        specksMagenta.Speed = NumberRange.new(2 + (alpha * 6), 6 + (alpha * 6))
+        -- La luz se va haciendo menos transparente hasta formar una pared blanca suave
+        local currentTrans = 1 - (alpha * 0.85) -- Llega hasta 0.15 de opacidad
+        local transSequence = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.3, currentTrans),
+            NumberSequenceKeypoint.new(0.7, currentTrans),
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        leftGlow.Transparency = transSequence
+        rightGlow.Transparency = transSequence
 
-        -- === Movimiento de Texturas Base ===
+        -- Movimiento de las texturas de las paredes
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
