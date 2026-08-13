@@ -206,14 +206,13 @@ local function SpawnAFOSphere(centerCF)
     local wallThickness = 2
 
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
-    local AURA_TEXTURE_ID = "rbxassetid://5748262504"
+    local BG_TEXTURE_ID = "rbxassetid://72194288856630" -- El ID correcto del fondo
     
-    -- ¡Valores HDR extremos! 
-    -- 12 y 10 en R y B dan un magenta puro, y el 1 en G le da ese toque rosado/blanco en el núcleo que lo hace ver súper energético y brillante.
+    -- Magenta Rosadito Energético (HDR extremo)
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
     
     local NEON_SPEED = 180 
-    local AURA_SPEED = 12
+    local BG_SPEED = 12
 
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
@@ -240,49 +239,62 @@ local function SpawnAFOSphere(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- 1. TEXTURA DE AURA HACIA ARRIBA (Fondo - ZIndex 1)
-        local auraUp = Instance.new("Texture")
-        auraUp.Name = "AuraUp"
-        auraUp.Texture = AURA_TEXTURE_ID
-        -- Transparencia a 0 para que no se vea oscura, y color por encima de 1 para que resalte
-        auraUp.Transparency = 0
-        auraUp.Color3 = Color3.new(1.5, 1.5, 1.5)
-        auraUp.Face = data.innerFace
-        auraUp.StudsPerTileU = boxSize / 1.5
-        auraUp.StudsPerTileV = boxSize / 1.5
-        auraUp.ZIndex = 1 
-        auraUp.Parent = wall
-        table.insert(allTextures, auraUp)
+        -- 1. TEXTURA FONDO HACIA ARRIBA (ZIndex 1) - Transparencia 0 y colores claros
+        local bgUp = Instance.new("Texture")
+        bgUp.Name = "BgUp"
+        bgUp.Texture = BG_TEXTURE_ID
+        bgUp.Transparency = 0
+        bgUp.Color3 = Color3.new(1.5, 1.5, 1.5)
+        bgUp.Face = data.innerFace
+        bgUp.StudsPerTileU = boxSize / 1.5
+        bgUp.StudsPerTileV = boxSize / 1.5
+        bgUp.ZIndex = 1 
+        bgUp.Parent = wall
+        table.insert(allTextures, bgUp)
 
-        -- 2. TEXTURA DE AURA HACIA ABAJO (Fondo - ZIndex 1)
-        local auraDown = Instance.new("Texture")
-        auraDown.Name = "AuraDown"
-        auraDown.Texture = AURA_TEXTURE_ID
-        -- Transparencia a 0 y color HDR suave
-        auraDown.Transparency = 0
-        auraDown.Color3 = Color3.new(1.5, 1.5, 1.5)
-        auraDown.Face = data.innerFace
-        auraDown.StudsPerTileU = boxSize / 1.5
-        auraDown.StudsPerTileV = boxSize / 1.5
-        auraDown.ZIndex = 1 
-        auraDown.Parent = wall
-        table.insert(allTextures, auraDown)
+        -- 2. TEXTURA FONDO HACIA ABAJO (ZIndex 1)
+        local bgDown = Instance.new("Texture")
+        bgDown.Name = "BgDown"
+        bgDown.Texture = BG_TEXTURE_ID
+        bgDown.Transparency = 0
+        bgDown.Color3 = Color3.new(1.5, 1.5, 1.5)
+        bgDown.Face = data.innerFace
+        bgDown.StudsPerTileU = boxSize / 1.5
+        bgDown.StudsPerTileV = boxSize / 1.5
+        bgDown.ZIndex = 1 
+        bgDown.Parent = wall
+        table.insert(allTextures, bgDown)
 
-        -- 3. TEXTURA NEON PRINCIPAL (Frente - ZIndex 2)
+        -- 3. TEXTURA NEÓN SECUNDARIA (Borde / Aura externa - ZIndex 2)
+        local texNeonGlow = Instance.new("Texture")
+        texNeonGlow.Name = "NeonGlow"
+        texNeonGlow.Texture = NEON_TEXTURE_ID
+        texNeonGlow.Transparency = 0.35 -- 35% de transparencia
+        texNeonGlow.Color3 = NEON_MAGENTA 
+        texNeonGlow.Face = data.innerFace
+        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 -- 35% más de zoom
+        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 -- 35% más de zoom
+        texNeonGlow.Rotation = 45 -- Gira las diagonales para que queden rectas
+        texNeonGlow.ZIndex = 2 
+        texNeonGlow.Parent = wall
+        table.insert(allTextures, texNeonGlow)
+
+        -- 4. TEXTURA NEÓN PRINCIPAL (Centro brillante - ZIndex 3)
         local texNeon = Instance.new("Texture")
-        texNeon.Name = "NeonTexture"
+        texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = NEON_MAGENTA -- Aplicando el rosa/magenta súper brillante
+        texNeon.Color3 = NEON_MAGENTA 
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
-        texNeon.ZIndex = 2 
+        texNeon.Rotation = 45 -- Alineado con la capa Glow
+        texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
     end
 
-    -- Bucle de Animación infinito (solo para el VFX visual)
+    -- Bucle de Animación infinito
     local startTime = os.clock()
     local conn
     
@@ -294,19 +306,16 @@ local function SpawnAFOSphere(centerCF)
 
         local elapsed = os.clock() - startTime
         local offsetNeon = elapsed * NEON_SPEED
-        local offsetAura = elapsed * AURA_SPEED
+        local offsetBg = elapsed * BG_SPEED
 
         for _, tex in ipairs(allTextures) do
-            if tex.Name == "NeonTexture" then
-                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                    tex.OffsetStudsV = offsetNeon
-                else
-                    tex.OffsetStudsU = offsetNeon
-                end
-            elseif tex.Name == "AuraUp" then
-                tex.OffsetStudsV = -offsetAura
-            elseif tex.Name == "AuraDown" then
-                tex.OffsetStudsV = offsetAura
+            if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
+                -- Al rotar la textura 45 grados, modificar el eje V empuja las líneas de arriba hacia abajo (polo alto a polo bajo)
+                tex.OffsetStudsV = offsetNeon
+            elseif tex.Name == "BgUp" then
+                tex.OffsetStudsV = -offsetBg
+            elseif tex.Name == "BgDown" then
+                tex.OffsetStudsV = offsetBg
             end
         end
     end)
