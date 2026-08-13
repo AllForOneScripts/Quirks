@@ -201,34 +201,35 @@ local Lighting = game:GetService("Lighting")
 
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
-    dimensionFolder.Name = "AFO_Glitch_Dimension"
+    dimensionFolder.Name = "AFO_Engulf_Dimension"
     dimensionFolder.Parent = workspace
 
-    local boxSize = 75 
+    local boxSize = 60 
     local half = boxSize / 2
     local wallThickness = 2
 
-    -- TEXTURAS
+    -- TEXTURAS ORIGINALES
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
     
-    local ABYSSAL_PURPLE = Color3.new(3.5, 0.1, 4.0) -- Más brillante y agresivo
-    local GLITCH_RED = Color3.new(5, 0, 0) -- Para saltos de inestabilidad
+    -- COLORES (Controlados para no cegar, pero intensos)
+    local NEON_MAGENTA = Color3.new(4.5, 0.2, 5.0) -- Brillo agresivo pero no invasivo
+    local GLITCH_COLOR = Color3.new(8.0, 0.0, 1.0) -- Color que salta en los errores
     
-    local NEON_SPEED = 250 -- Velocidad absurda para las líneas
-    local BG_SPEED = 15
+    local FLOW_SPEED = 280 -- Velocidad absurda para las líneas disparándose
+    local BG_SPEED = 40
 
-    -- --- 1. EFECTOS DE POST-PROCESADO (GLITCH Y CAOS) ---
+    -- --- 1. EFECTOS DE CÁMARA (INASTABILIDAD Y GLITCH) ---
     local cc = Instance.new("ColorCorrectionEffect")
-    cc.Brightness = -0.1
-    cc.Contrast = 0.3
-    cc.Saturation = 0.2
-    cc.TintColor = Color3.fromRGB(230, 210, 255)
+    cc.Brightness = -0.15
+    cc.Contrast = 0.4
+    cc.Saturation = 0.3
+    cc.TintColor = Color3.fromRGB(230, 200, 255)
     cc.Parent = Lighting
 
     local bloom = Instance.new("BloomEffect")
-    bloom.Intensity = 0.5
+    bloom.Intensity = 0.6
     bloom.Size = 24
     bloom.Threshold = 1.5
     bloom.Parent = Lighting
@@ -238,17 +239,20 @@ local function SpawnAFOSphere(centerCF)
         bloom:Destroy()
     end)
 
-    -- --- 2. CONSTRUCCIÓN DE LA PRISIÓN DIMENSIONAL ---
+    -- --- 2. CONSTRUCCIÓN DEL TÚNEL DE EMBUYIMIENTO ---
+    -- scrollAxis: Define qué eje de la textura se alinea con la dirección Sur -> Norte
+    -- scrollMult: Ajusta la dirección matemática para que todas vayan hacia el Norte (-Z)
     local facesData = {
-        {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
-        {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
-        {name = "North",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},  -- TU POSICIÓN
-        {name = "South",  offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front}, -- EL SER
-        {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
-        {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
+        {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom, scrollAxis = "V", scrollMult = 1},
+        {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top,    scrollAxis = "V", scrollMult = -1},
+        {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left,   scrollAxis = "U", scrollMult = 1},
+        {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right,  scrollAxis = "U", scrollMult = -1},
+        -- Norte y Sur actúan como tapas emisoras/receptoras, el patrón aquí hierve en vez de fluir linealmente
+        {name = "North",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back,   scrollAxis = "None"},
+        {name = "South",  offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front,  scrollAxis = "None"}
     }
 
-    local allTextures = {}
+    local movingTextures = {}
     local glitchTextures = {}
 
     for _, data in ipairs(facesData) do
@@ -257,99 +261,106 @@ local function SpawnAFOSphere(centerCF)
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = Color3.fromRGB(0, 0, 0)
+        wall.Color = Color3.fromRGB(5, 0, 10)
         wall.Material = Enum.Material.Neon
         wall.Anchored = true
         wall.CanCollide = false
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo inestable
+        -- FONDO BASE (Ruido lento que viaja Sur -> Norte)
         local bgTex = Instance.new("Texture")
         bgTex.Name = "BgBase"
         bgTex.Texture = BG_TEXTURE_ID
-        bgTex.Transparency = 0.6 
-        bgTex.Color3 = Color3.new(0.6, 0.4, 1)
+        bgTex.Transparency = 0.5
+        bgTex.Color3 = Color3.new(1, 0.5, 1.5)
         bgTex.Face = data.innerFace
-        bgTex.StudsPerTileU = boxSize / 1.5
-        bgTex.StudsPerTileV = boxSize / 1.5
+        bgTex.StudsPerTileU = boxSize
+        bgTex.StudsPerTileV = boxSize
         bgTex.Parent = wall
-        table.insert(allTextures, bgTex)
-        table.insert(glitchTextures, bgTex)
+        table.insert(movingTextures, {tex = bgTex, axis = data.scrollAxis, mult = data.scrollMult, speed = BG_SPEED})
 
-        -- NIEBLA DE RUIDO EN LAS PAREDES (Efecto de estática/Glitch)
+        -- RUIDO DE INESTABILIDAD (Estática pegada a las paredes)
         local noiseTex = Instance.new("Texture")
         noiseTex.Name = "NoiseStatic"
         noiseTex.Texture = NOISE_TEXTURE_ID
-        noiseTex.Transparency = 0.5
-        noiseTex.Color3 = ABYSSAL_PURPLE
+        noiseTex.Transparency = 0.6
+        noiseTex.Color3 = NEON_MAGENTA
         noiseTex.Face = data.innerFace
         noiseTex.StudsPerTileU = boxSize * 1.5
         noiseTex.StudsPerTileV = boxSize * 1.5
         noiseTex.Parent = wall
-        table.insert(allTextures, noiseTex)
+        table.insert(glitchTextures, noiseTex)
 
-        -- LÍNEAS AGRESIVAS (Grid de contención distorsionado)
+        -- LÍNEAS AGRESIVAS DE EMBUYIMIENTO
+        -- El secreto: Estiramos la textura muchísimo en la dirección del viaje y la apretamos en la otra.
         local texLines = Instance.new("Texture")
         texLines.Name = "NeonLines"
         texLines.Texture = NEON_TEXTURE_ID
-        texLines.Transparency = 0.2
-        texLines.Color3 = ABYSSAL_PURPLE
+        texLines.Transparency = 0.15 
+        texLines.Color3 = NEON_MAGENTA
         texLines.Face = data.innerFace
-        -- Aquí está el truco: estiramos la textura extremo en un eje y la comprimimos en otro
-        texLines.StudsPerTileU = boxSize * 4
-        texLines.StudsPerTileV = 2 -- Crea el efecto de líneas veloces
+        
+        if data.scrollAxis == "V" then
+            texLines.StudsPerTileU = boxSize / 4 -- Apretado horizontalmente
+            texLines.StudsPerTileV = boxSize * 4 -- Estirado infinitamente hacia el Norte
+        elseif data.scrollAxis == "U" then
+            texLines.StudsPerTileU = boxSize * 4 -- Estirado infinitamente hacia el Norte
+            texLines.StudsPerTileV = boxSize / 4 -- Apretado verticalmente
+        else
+            -- Para Norte y Sur, un patrón de ebullición grande
+            texLines.StudsPerTileU = boxSize * 2
+            texLines.StudsPerTileV = boxSize * 2
+        end
+        
         texLines.Parent = wall
-        table.insert(allTextures, texLines)
+        table.insert(movingTextures, {tex = texLines, axis = data.scrollAxis, mult = data.scrollMult, speed = FLOW_SPEED})
         table.insert(glitchTextures, texLines)
     end
 
-    -- --- 3. HUMO VIOLENTO (MIASMA DESDE EL SUR) ---
-    -- En vez de nubes aburridas, son disparos de energía oscura que intentan alcanzarte pero se rompen
-    local entityOrigin = Instance.new("Part")
-    entityOrigin.Size = Vector3.new(boxSize, boxSize/2, 2)
-    entityOrigin.CFrame = centerCF * CFrame.new(0, 0, half - 2)
-    entityOrigin.Transparency = 1
-    entityOrigin.Anchored = true
-    entityOrigin.Parent = dimensionFolder
+    -- --- 3. MIASMA Y ENERGÍA DESDE EL SUR (EL ENTE MALIGNO) ---
+    local southOrigin = Instance.new("Part")
+    southOrigin.Size = Vector3.new(boxSize - 5, boxSize - 5, 2)
+    southOrigin.CFrame = centerCF * CFrame.new(0, 0, half - 2) -- Pegado a la pared Sur
+    southOrigin.Transparency = 1
+    southOrigin.Anchored = true
+    southOrigin.Parent = dimensionFolder
 
-    local miasmaEmitter = Instance.new("ParticleEmitter")
-    miasmaEmitter.Texture = NOISE_TEXTURE_ID
-    miasmaEmitter.Color = ColorSequence.new(ABYSSAL_PURPLE)
-    miasmaEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
-    miasmaEmitter.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.2), -- Nace visible y agresivo
-        NumberSequenceKeypoint.new(0.6, 0.8), 
+    -- Disparos de humo/energía oscura hacia el Norte (-Z)
+    local miasmaBlast = Instance.new("ParticleEmitter")
+    miasmaBlast.Texture = NOISE_TEXTURE_ID
+    miasmaBlast.Color = ColorSequence.new(NEON_MAGENTA)
+    miasmaBlast.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 25)})
+    miasmaBlast.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2), -- Nace muy visible
+        NumberSequenceKeypoint.new(0.5, 0.8), -- Se desvanece antes de tapar la cámara central
         NumberSequenceKeypoint.new(1, 1)
     })
-    miasmaEmitter.LightEmission = 0.6
-    miasmaEmitter.Lifetime = NumberRange.new(1.5, 2.5) -- Vida corta para que no tape todo
-    miasmaEmitter.Rate = 45 
-    miasmaEmitter.Speed = NumberRange.new(80, 120) -- Disparado con una fuerza brutal
-    miasmaEmitter.Drag = 12 -- Frena drásticamente en el centro de la escena
-    miasmaEmitter.SpreadAngle = Vector2.new(15, 15) -- Muy concentrado hacia ti
-    miasmaEmitter.EmissionDirection = Enum.NormalId.Back
-    miasmaEmitter.Rotation = NumberRange.new(0, 360)
-    miasmaEmitter.RotSpeed = NumberRange.new(-45, 45) -- Giro caótico
-    miasmaEmitter.Parent = entityOrigin
+    miasmaBlast.LightEmission = 0.5
+    miasmaBlast.Lifetime = NumberRange.new(1.5, 2.5) 
+    miasmaBlast.Rate = 60 
+    miasmaBlast.Speed = NumberRange.new(80, 150) -- Disparado con una violencia brutal
+    miasmaBlast.Drag = 4 -- Frena suavemente al acercarse a ti
+    miasmaBlast.EmissionDirection = Enum.NormalId.Back -- Hacia el Norte
+    miasmaBlast.Rotation = NumberRange.new(0, 360)
+    miasmaBlast.RotSpeed = NumberRange.new(-20, 20)
+    miasmaBlast.Parent = southOrigin
 
-    -- Mota de inestabilidad tipo chispa/glitch
+    -- Chispas de glitch disparadas como proyectiles
     local glitchSparks = Instance.new("ParticleEmitter")
     glitchSparks.Texture = "rbxassetid://5860714768"
-    glitchSparks.Color = ColorSequence.new(Color3.new(5, 5, 5))
-    glitchSparks.Size = NumberSequence.new(0.2, 0.8)
+    glitchSparks.Color = ColorSequence.new(Color3.new(5, 3, 5))
+    glitchSparks.Size = NumberSequence.new(0.2, 1)
     glitchSparks.Transparency = NumberSequence.new(0, 1)
     glitchSparks.LightEmission = 1
-    glitchSparks.Lifetime = NumberRange.new(0.5, 1.5)
-    glitchSparks.Rate = 100
-    glitchSparks.Speed = NumberRange.new(20, 50)
-    glitchSparks.Drag = 5
-    glitchSparks.SpreadAngle = Vector2.new(90, 90)
+    glitchSparks.Lifetime = NumberRange.new(0.5, 1)
+    glitchSparks.Rate = 120
+    glitchSparks.Speed = NumberRange.new(100, 200)
     glitchSparks.EmissionDirection = Enum.NormalId.Back
-    glitchSparks.Parent = entityOrigin
+    glitchSparks.SpreadAngle = Vector2.new(10, 10) -- Muy concentrado apuntándote
+    glitchSparks.Parent = southOrigin
 
-
-    -- --- 4. BUCLE DE INESTABILIDAD (GLITCH Y LÍNEAS) ---
+    -- --- 4. ANIMACIÓN Y BUCLE DE INESTABILIDAD (GLITCH) ---
     local startTime = os.clock()
     local conn
     
@@ -360,60 +371,48 @@ local function SpawnAFOSphere(centerCF)
         end
 
         local elapsed = os.clock() - startTime
+        local isGlitching = math.random() > 0.94 -- 6% de probabilidad de colapso visual por frame
         
-        -- Movimiento constante altísimo para las líneas de energía
-        local offsetLines = elapsed * NEON_SPEED
-        local offsetBg = elapsed * BG_SPEED
-        
-        -- SISTEMA DE GLITCH (Aleatoriedad para simular colapso)
-        local isGlitching = math.random() > 0.92 -- 8% de probabilidad por frame de romperse
-        
+        -- MOVIMIENTO DEL TÚNEL (Embuyimiento constante)
+        for _, data in ipairs(movingTextures) do
+            if data.axis == "V" then
+                data.tex.OffsetStudsV = (elapsed * data.speed) * data.mult
+            elseif data.axis == "U" then
+                data.tex.OffsetStudsU = (elapsed * data.speed) * data.mult
+            end
+        end
+
         if isGlitching then
-            -- Efecto de cámara Glitch
+            -- EL SISTEMA COLAPSA (Luz parpadea y texturas saltan)
             cc.Contrast = 0.8
-            cc.Brightness = 0.1
-            cc.TintColor = Color3.fromRGB(255, 180, 255) -- Destello magenta agresivo
-            bloom.Intensity = 1.5
+            cc.Brightness = 0.2
+            cc.TintColor = Color3.fromRGB(255, 150, 255)
+            bloom.Intensity = 1.2
             
-            -- Las partículas se vuelven locas
-            miasmaEmitter.RotSpeed = NumberRange.new(-180, 180)
-            
-            -- Salto de texturas (Tearing dimensional)
             for _, tex in ipairs(glitchTextures) do
-                tex.OffsetStudsU = math.random(-100, 100)
-                tex.OffsetStudsV = math.random(-100, 100)
-                if tex.Name == "NeonLines" then
-                    tex.Color3 = GLITCH_RED
+                if tex.Name == "NoiseStatic" then
+                    -- El ruido salta bruscamente
+                    tex.OffsetStudsU = math.random(-50, 50)
+                    tex.OffsetStudsV = math.random(-50, 50)
+                elseif tex.Name == "NeonLines" then
+                    -- Las líneas se tornan de un color inestable
+                    tex.Color3 = GLITCH_COLOR
                 end
             end
         else
-            -- Retorno a la normalidad opresiva
-            cc.Contrast = 0.3
-            cc.Brightness = -0.1
-            cc.TintColor = Color3.fromRGB(230, 210, 255)
-            bloom.Intensity = 0.5
+            -- RETORNO A LA PRESIÓN NORMAL
+            cc.Contrast = 0.4
+            cc.Brightness = -0.15
+            cc.TintColor = Color3.fromRGB(230, 200, 255)
+            bloom.Intensity = 0.6
             
-            miasmaEmitter.RotSpeed = NumberRange.new(-45, 45)
-            
-            -- Movimiento continuo
-            for _, tex in ipairs(allTextures) do
+            for _, tex in ipairs(glitchTextures) do
                 if tex.Name == "NeonLines" then
-                    tex.Color3 = ABYSSAL_PURPLE
-                    if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                        tex.OffsetStudsU = offsetLines
-                    else
-                        tex.OffsetStudsV = offsetLines
-                    end
-                elseif tex.Name == "BgBase" then
-                    if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                        tex.OffsetStudsV = -offsetBg
-                    else
-                        tex.OffsetStudsU = offsetBg
-                    end
+                    tex.Color3 = NEON_MAGENTA
                 elseif tex.Name == "NoiseStatic" then
-                    -- El ruido hierve de manera caótica sin moverse en una sola dirección
-                    tex.OffsetStudsU = math.sin(elapsed * 10) * 5
-                    tex.OffsetStudsV = math.cos(elapsed * 12) * 5
+                    -- El ruido hierve sutilmente
+                    tex.OffsetStudsU = math.sin(elapsed * 8) * 3
+                    tex.OffsetStudsV = math.cos(elapsed * 10) * 3
                 end
             end
         end
