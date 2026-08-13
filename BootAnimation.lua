@@ -113,43 +113,48 @@ for _, acc in ipairs(char:GetChildren()) do
     end
 end
 
-local in4DMode = true
-local skyWorldY = originalGroundY + 1500
+local summonActive = true
+local summonSkyY = originalGroundY + 1500
 
-hum.PlatformStand = true
+-- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
+-- ==========================================
+
+-- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
-local skyBV = Instance.new("BodyVelocity", root)
-skyBV.Name = "SkyBV_4D"
-skyBV.Velocity = Vector3.new(0, 600, 0)
-skyBV.MaxForce = Vector3.new(0, 9e8, 0)
-local skyBP = nil
+local bootBV = Instance.new("BodyVelocity", root)
+bootBV.Name = "BootBV"
+bootBV.Velocity = Vector3.new(0, 600, 0)
+bootBV.MaxForce = Vector3.new(0, 9e8, 0)
+local bootBP = nil
 
 task.spawn(function()
     local t0 = tick()
-    while tick() - t0 < 10 and in4DMode do
-        if root and root.Parent and root.Position.Y >= skyWorldY - 20 then break end
+    while tick() - t0 < 10 and summonActive do
+        if root and root.Parent and root.Position.Y >= summonSkyY - 20 then break end
         task.wait(0.05)
     end
-    if not in4DMode then return end
-    if skyBV then skyBV:Destroy(); skyBV = nil end
+    if not summonActive then return end
+    if bootBV then bootBV:Destroy(); bootBV = nil end
     if not root or not root.Parent then return end
     
-    skyBP = Instance.new("BodyPosition", root)
-    skyBP.Name = "SkyBP_4D"
-    skyBP.Position = Vector3.new(originalRootPos.X, skyWorldY, originalRootPos.Z)
-    skyBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    skyBP.P = 60000
-    skyBP.D = 2500
+    bootBP = Instance.new("BodyPosition", root)
+    bootBP.Name = "BootBP"
+    bootBP.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
+    bootBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    bootBP.P = 60000
+    bootBP.D = 2500
 end)
 
-local heightMaintainer = RunService.Heartbeat:Connect(function()
-    if in4DMode and root then
-        if math.abs(root.Position.Y - skyWorldY) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+local summonMaintainer = RunService.Heartbeat:Connect(function()
+    if summonActive and root then
+        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
+        if math.abs(root.Position.Y - summonSkyY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
+-- ==========================================
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -551,16 +556,20 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
-in4DMode = false
-if heightMaintainer then heightMaintainer:Disconnect() end
-if skyBV then skyBV:Destroy() end
-if skyBP then skyBP:Destroy() end
+-- ==========================================
+-- DESCENSO Y ATERRIZAJE (omniAntiBounceLand)
+-- ==========================================
+summonActive = false
+if summonMaintainer then summonMaintainer:Disconnect() end
+if bootBV then bootBV:Destroy() end
+if bootBP then bootBP:Destroy() end
 
 root.Anchored = false
 root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+-- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -574,6 +583,7 @@ task.defer(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
 end)
+-- ==========================================
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
