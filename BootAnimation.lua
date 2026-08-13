@@ -208,8 +208,10 @@ local function SpawnAFOSphere(centerCF)
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local AURA_TEXTURE_ID = "rbxassetid://5748262504"
     
-    -- Colores y velocidades
-    local NEON_MAGENTA = Color3.new(3, 0, 3) -- Brillo HDR Neon
+    -- ¡Valores HDR extremos! 
+    -- 12 y 10 en R y B dan un magenta puro, y el 1 en G le da ese toque rosado/blanco en el núcleo que lo hace ver súper energético y brillante.
+    local NEON_MAGENTA = Color3.new(12, 1, 10) 
+    
     local NEON_SPEED = 180 
     local AURA_SPEED = 12
 
@@ -242,12 +244,13 @@ local function SpawnAFOSphere(centerCF)
         local auraUp = Instance.new("Texture")
         auraUp.Name = "AuraUp"
         auraUp.Texture = AURA_TEXTURE_ID
-        auraUp.Transparency = 0.3
-        auraUp.Color3 = Color3.new(1, 1, 1)
+        -- Transparencia a 0 para que no se vea oscura, y color por encima de 1 para que resalte
+        auraUp.Transparency = 0
+        auraUp.Color3 = Color3.new(1.5, 1.5, 1.5)
         auraUp.Face = data.innerFace
         auraUp.StudsPerTileU = boxSize / 1.5
         auraUp.StudsPerTileV = boxSize / 1.5
-        auraUp.ZIndex = 1 -- Lo coloca detrás
+        auraUp.ZIndex = 1 
         auraUp.Parent = wall
         table.insert(allTextures, auraUp)
 
@@ -255,12 +258,13 @@ local function SpawnAFOSphere(centerCF)
         local auraDown = Instance.new("Texture")
         auraDown.Name = "AuraDown"
         auraDown.Texture = AURA_TEXTURE_ID
-        auraDown.Transparency = 0.3
-        auraDown.Color3 = Color3.new(1, 1, 1)
+        -- Transparencia a 0 y color HDR suave
+        auraDown.Transparency = 0
+        auraDown.Color3 = Color3.new(1.5, 1.5, 1.5)
         auraDown.Face = data.innerFace
         auraDown.StudsPerTileU = boxSize / 1.5
         auraDown.StudsPerTileV = boxSize / 1.5
-        auraDown.ZIndex = 1 -- Lo coloca detrás
+        auraDown.ZIndex = 1 
         auraDown.Parent = wall
         table.insert(allTextures, auraDown)
 
@@ -269,11 +273,11 @@ local function SpawnAFOSphere(centerCF)
         texNeon.Name = "NeonTexture"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = NEON_MAGENTA
+        texNeon.Color3 = NEON_MAGENTA -- Aplicando el rosa/magenta súper brillante
         texNeon.Face = data.innerFace
-        texNeon.StudsPerTileU = boxSize * 3 -- 50% extra de zoom
-        texNeon.StudsPerTileV = boxSize * 3 -- 50% extra de zoom
-        texNeon.ZIndex = 2 -- Lo coloca al frente
+        texNeon.StudsPerTileU = boxSize * 3 
+        texNeon.StudsPerTileV = boxSize * 3 
+        texNeon.ZIndex = 2 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
     end
@@ -283,7 +287,6 @@ local function SpawnAFOSphere(centerCF)
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
-        -- Detener la animación si la carpeta se elimina para no causar memory leaks
         if not dimensionFolder.Parent then
             if conn then conn:Disconnect() end
             return
@@ -295,7 +298,6 @@ local function SpawnAFOSphere(centerCF)
 
         for _, tex in ipairs(allTextures) do
             if tex.Name == "NeonTexture" then
-                -- Movimiento lateral para las paredes, y en V para el techo/suelo
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
                 else
