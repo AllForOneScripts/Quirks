@@ -651,4 +651,4 @@ task.spawn(function()
     end
     
     LiberarCinematica()
-end
+end)
