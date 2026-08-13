@@ -338,66 +338,103 @@ local function UpdateCloneAppearance()
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
 
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
+    -- 1. Limpiamos totalmente el clon de cualquier vestimenta, cara o malla vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
-        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
+        if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
 
     local cHead = cloneChar:FindFirstChild("Head")
+    local sHead = char:FindFirstChild("Head")
+    
     if cHead then
         for _, child in ipairs(cHead:GetChildren()) do
             if child:IsA("DataModelMesh") or child:IsA("SpecialMesh") or child:IsA("Decal") then
                 child:Destroy()
             end
         end
+        
+        -- Malla base por defecto en caso de que el avatar original no tenga una
+        local defaultMesh = Instance.new("SpecialMesh")
+        defaultMesh.MeshType = Enum.MeshType.Head
+        defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+        defaultMesh.Parent = cHead
     end
-    
-    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer
+
+    local loadedFace = false
+
+    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer directamente de su Character actual
     for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            item:Clone().Parent = cloneChar
-            
-        elseif item:IsA("Accessory") then
+        if item:IsA("Accessory") then
             local cloneItem = item:Clone()
             local handle = cloneItem:FindFirstChild("Handle")
             
             if handle then
-                -- Restauramos visibilidad
+                -- Restauramos la visibilidad (estaban en Transparency 1 por la cinemática)
                 handle.LocalTransparencyModifier = 0
                 handle.Transparency = 0
                 
-                -- EL PASO CRÍTICO: Destruir el Weld viejo (AccessoryWeld) clonado.
-                -- Si no lo destruimos, AddAccessory falla porque detecta un Weld asociado a tu personaje original.
+                -- EL PASO CRÍTICO: Destruimos los welds clonados para que AddAccessory no falle
                 for _, weld in ipairs(handle:GetChildren()) do
-                    if weld:IsA("Weld") or weld:IsA("WeldConstraint") then
+                    if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld.Name == "AccessoryWeld" then
                         weld:Destroy()
                     end
                 end
             end
             
-            -- Ahora sí, intentamos añadir el accesorio de forma nativa
-            local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
+            -- Intentamos añadir nativamente
+            local added = pcall(function() 
+                cloneHum:AddAccessory(cloneItem) 
+            end)
             
-            -- Si el motor falla en crear el weld nuevo, usamos el manual de emergencia
-            if handle then
-                local newWeld = handle:FindFirstChild("AccessoryWeld")
-                if not newWeld or not newWeld.Part1 then
-                    manualAttachAccessory(cloneItem, cloneChar)
-                end
+            -- Fallback a tu manualAttachAccessory si el motor de Roblox falla en un Rig clonado
+            if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
+                manualAttachAccessory(cloneItem, cloneChar)
             end
+            
+        elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+            item:Clone().Parent = cloneChar
         end
     end
     
-    -- 3. Copiamos la cara y mallas de la cabeza de forma estricta
-    local sHead = char:FindFirstChild("Head")
+    -- 3. Copiamos exactamente la cara y las mallas de la cabeza de nuestro Character actual
     if sHead and cHead then
-        for _, v in ipairs(sHead:GetChildren()) do 
-            if v:IsA("Decal") or v:IsA("DataModelMesh") or v:IsA("SpecialMesh") then 
-                v:Clone().Parent = cHead 
-            end 
+        -- Limpiamos el defaultMesh que pusimos arriba si es que el jugador tiene su propia malla
+        local hasCustomMesh = false
+        for _, item in ipairs(sHead:GetChildren()) do
+            if item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
+                hasCustomMesh = true
+                break
+            end
         end
+        
+        if hasCustomMesh then
+            for _, oldMesh in ipairs(cHead:GetChildren()) do
+                if oldMesh:IsA("DataModelMesh") or oldMesh:IsA("SpecialMesh") then
+                    oldMesh:Destroy()
+                end
+            end
+        end
+        
+        -- Clonar los assets de la cabeza original
+        for _, item in ipairs(sHead:GetChildren()) do
+            if item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
+                loadedFace = true
+                item:Clone().Parent = cHead
+            elseif item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
+                item:Clone().Parent = cHead
+            end
+        end
+    end
+
+    -- 4. Cara por defecto de emergencia si es R6 y algo falló
+    if cloneHum.RigType == Enum.HumanoidRigType.R6 and cHead and not loadedFace then
+        local defaultFace = Instance.new("Decal")
+        defaultFace.Name = "face"
+        defaultFace.Face = Enum.NormalId.Front
+        defaultFace.Texture = "rbxasset://textures/face.png"
+        defaultFace.Parent = cHead
     end
 end
 -- ==========================================
