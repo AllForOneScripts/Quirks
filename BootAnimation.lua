@@ -196,12 +196,15 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
-    dimensionFolder.Name = "AFO_NeonSphere_Effect"
+    dimensionFolder.Name = "AFO_Cinematic_Dimension"
     dimensionFolder.Parent = workspace
 
-    local boxSize = 60 
+    local boxSize = 75 -- Ligeramente más grande para dar espacio a la cámara
     local half = boxSize / 2
     local wallThickness = 2
 
@@ -210,17 +213,34 @@ local function SpawnAFOSphere(centerCF)
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
     
-    local NEON_MAGENTA = Color3.new(12, 1, 10) 
+    -- COLORES HDR (Ajustados para no cegar la cámara)
+    -- El morado ahora es profundo y abisal, no invasivo.
+    local ABYSSAL_PURPLE = Color3.new(2.5, 0.2, 3.0) 
+    local DIVINE_WHITE = Color3.new(4, 4, 4.5) -- Un blanco ligeramente frío/celestial
     
-    local NEON_SPEED = 180 
-    local BG_SPEED = 12
+    local NEON_SPEED = 60 -- Más lento. La divinidad impone respeto, no prisa.
+    local BG_SPEED = 8
 
-    -- --- 1. CONSTRUCCIÓN DE LA ESFERA / PAREDES ---
+    -- --- 1. POST-PROCESADO LOCAL (Efectos de Cámara) ---
+    -- Esto le da el "Toque Artístico" a los colores sin tocar las piezas.
+    local cc = Instance.new("ColorCorrectionEffect")
+    cc.Brightness = -0.05
+    cc.Contrast = 0.2
+    cc.Saturation = 0.1
+    cc.TintColor = Color3.fromRGB(240, 230, 255) -- Frío y lúgubre
+    cc.Parent = Lighting
+    
+    -- Limpieza automática del efecto de cámara si la dimensión desaparece
+    dimensionFolder.Destroying:Connect(function()
+        cc:Destroy()
+    end)
+
+    -- --- 2. CONSTRUCCIÓN DE LA DIMENSIÓN ---
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
-        {name = "Front",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
-        {name = "Back",   offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
+        {name = "North",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},  -- TU POSICIÓN
+        {name = "South",  offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front}, -- EL SER DIVINO
         {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
         {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
     }
@@ -233,116 +253,97 @@ local function SpawnAFOSphere(centerCF)
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = Color3.fromRGB(0, 0, 0)
-        wall.Material = Enum.Material.SmoothPlastic
+        wall.Color = Color3.fromRGB(5, 0, 10) -- Fondo casi negro, morado muy oscuro
+        wall.Material = Enum.Material.Neon
         wall.Anchored = true
         wall.CanCollide = false
         wall.CanTouch = false
         wall.CastShadow = false 
+        wall.Transparency = data.name == "South" and 0.2 or 0 -- El Sur es un poco más etéreo
         wall.Parent = dimensionFolder
 
-        local bgUp = Instance.new("Texture")
-        bgUp.Name = "BgUp"
-        bgUp.Texture = BG_TEXTURE_ID
-        bgUp.Transparency = 0.35
-        bgUp.Color3 = Color3.new(0.65, 0.65, 0.65)
-        bgUp.Face = data.innerFace
-        bgUp.StudsPerTileU = boxSize / 1.5
-        bgUp.StudsPerTileV = boxSize / 1.5
-        bgUp.ZIndex = 1 
-        bgUp.Parent = wall
-        table.insert(allTextures, bgUp)
+        -- Capa de fondo profundo
+        local bgTex = Instance.new("Texture")
+        bgTex.Name = "BgBase"
+        bgTex.Texture = BG_TEXTURE_ID
+        bgTex.Transparency = 0.7 -- Muy sutil, mantiene el fondo visible pero oscuro
+        bgTex.Color3 = Color3.new(0.8, 0.8, 1)
+        bgTex.Face = data.innerFace
+        bgTex.StudsPerTileU = boxSize / 2
+        bgTex.StudsPerTileV = boxSize / 2
+        bgTex.Parent = wall
+        table.insert(allTextures, bgTex)
 
-        local bgDown = Instance.new("Texture")
-        bgDown.Name = "BgDown"
-        bgDown.Texture = BG_TEXTURE_ID
-        bgDown.Transparency = 0.35
-        bgDown.Color3 = Color3.new(0.65, 0.65, 0.65)
-        bgDown.Face = data.innerFace
-        bgDown.StudsPerTileU = boxSize / 1.5
-        bgDown.StudsPerTileV = boxSize / 1.5
-        bgDown.ZIndex = 1 
-        bgDown.Parent = wall
-        table.insert(allTextures, bgDown)
-
+        -- Capa de energía morada (ahora controlada)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
-        texNeonGlow.Transparency = 0.35 
-        texNeonGlow.Color3 = NEON_MAGENTA 
+        texNeonGlow.Transparency = 0.65 -- Se reduce la agresividad para no inundar
+        texNeonGlow.Color3 = ABYSSAL_PURPLE 
         texNeonGlow.Face = data.innerFace
-        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
-        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
-        texNeonGlow.ZIndex = 2 
+        texNeonGlow.StudsPerTileU = boxSize * 2.5 
+        texNeonGlow.StudsPerTileV = boxSize * 2.5 
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
-
-        local texNeon = Instance.new("Texture")
-        texNeon.Name = "NeonMain"
-        texNeon.Texture = NEON_TEXTURE_ID
-        texNeon.Transparency = 0 
-        texNeon.Color3 = NEON_MAGENTA 
-        texNeon.Face = data.innerFace
-        texNeon.StudsPerTileU = boxSize * 3 
-        texNeon.StudsPerTileV = boxSize * 3 
-        texNeon.ZIndex = 3 
-        texNeon.Parent = wall
-        table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. HUMO CENTRAL Y MÁSCARA TV ---
-    local topPole = Instance.new("Part")
-    topPole.Size = Vector3.new(boxSize, 1, boxSize)
-    topPole.CFrame = centerCF * CFrame.new(0, half, 0)
-    topPole.Transparency = 1
-    topPole.Anchored = true
-    topPole.CanCollide = false
-    topPole.Parent = dimensionFolder
+    -- --- 3. EL AURA DEL SUR (La Entidad Maligna) ---
+    -- Añadimos un punto de interés visual en el sur para guiar las cámaras
+    local entityAura = Instance.new("Part")
+    entityAura.Size = Vector3.new(10, 10, 2)
+    entityAura.CFrame = centerCF * CFrame.new(0, 0, half - 5) -- Al sur, cerca de la pared
+    entityAura.Transparency = 1
+    entityAura.Anchored = true
+    entityAura.Parent = dimensionFolder
 
-    local bottomPole = Instance.new("Part")
-    bottomPole.Size = Vector3.new(boxSize, 1, boxSize)
-    bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
-    bottomPole.Transparency = 1
-    bottomPole.Anchored = true
-    bottomPole.CanCollide = false
-    bottomPole.Parent = dimensionFolder
+    local divineHalo = Instance.new("ParticleEmitter")
+    divineHalo.Texture = "rbxassetid://13490928216"
+    divineHalo.Color = ColorSequence.new(DIVINE_WHITE)
+    divineHalo.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 45)})
+    divineHalo.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.7), NumberSequenceKeypoint.new(1, 1)})
+    divineHalo.LightEmission = 1
+    divineHalo.Lifetime = NumberRange.new(4, 6)
+    divineHalo.Rate = 3
+    divineHalo.Speed = NumberRange.new(0)
+    divineHalo.Rotation = NumberRange.new(0, 360)
+    divineHalo.RotSpeed = NumberRange.new(-3, 3)
+    divineHalo.EmissionDirection = Enum.NormalId.Back
+    divineHalo.Parent = entityAura
 
-    local function createCentralSmoke(polePart, emitDirection)
-        local smokeEmitter = Instance.new("ParticleEmitter")
-        smokeEmitter.Texture = "rbxassetid://13490928216"
-        smokeEmitter.LightEmission = 0.55 
-        smokeEmitter.ZOffset = 0.5 
-        smokeEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
-        smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 15), NumberSequenceKeypoint.new(1, 35)})
-        smokeEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.95), NumberSequenceKeypoint.new(1, 1)})
-        smokeEmitter.Lifetime = NumberRange.new(3, 5)
-        smokeEmitter.Rate = 6 
-        smokeEmitter.Speed = NumberRange.new(2, 6) 
-        smokeEmitter.EmissionDirection = emitDirection
-        smokeEmitter.Rotation = NumberRange.new(0, 360)
-        smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
-        smokeEmitter.Parent = polePart
+    -- --- 4. NIEBLA ABISAL (Techo y Suelo controlados) ---
+    -- En vez de llenar la pantalla, esta niebla se pega a las superficies (suelo y techo)
+    local function createCreepingSmoke(yOffset, emitDir)
+        local pole = Instance.new("Part")
+        pole.Size = Vector3.new(boxSize, 1, boxSize)
+        pole.CFrame = centerCF * CFrame.new(0, yOffset, 0)
+        pole.Transparency = 1
+        pole.Anchored = true
+        pole.Parent = dimensionFolder
 
-        local noiseEmitter = Instance.new("ParticleEmitter")
-        noiseEmitter.Texture = NOISE_TEXTURE_ID
-        noiseEmitter.LightEmission = 0.44 
-        noiseEmitter.ZOffset = 0.6 
-        noiseEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
-        noiseEmitter.Size = NumberSequence.new(15, 40)
-        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 1)})
-        noiseEmitter.Lifetime = NumberRange.new(2, 4)
-        noiseEmitter.Rate = 12 
-        noiseEmitter.Speed = NumberRange.new(25, 60)
-        noiseEmitter.Drag = 8 
-        noiseEmitter.EmissionDirection = emitDirection
-        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = polePart
+        local smoke = Instance.new("ParticleEmitter")
+        smoke.Texture = NOISE_TEXTURE_ID
+        smoke.Color = ColorSequence.new(ABYSSAL_PURPLE)
+        smoke.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 20), NumberSequenceKeypoint.new(1, 30)})
+        -- Empieza invisible, aparece suavemente y desaparece antes de tocar el centro
+        smoke.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1), 
+            NumberSequenceKeypoint.new(0.3, 0.85), 
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        smoke.LightEmission = 0.3
+        smoke.Lifetime = NumberRange.new(5, 7)
+        smoke.Rate = 15 
+        smoke.Speed = NumberRange.new(2, 5) 
+        smoke.Drag = 2 -- Fricción para que no flote hacia la cámara central
+        smoke.EmissionDirection = emitDir
+        smoke.Parent = pole
     end
 
-    createCentralSmoke(topPole, Enum.NormalId.Bottom)
-    createCentralSmoke(bottomPole, Enum.NormalId.Top)
+    createCreepingSmoke(half - 2, Enum.NormalId.Bottom) -- Techo bajando ligeramente
+    createCreepingSmoke(-half + 2, Enum.NormalId.Top)   -- Suelo subiendo ligeramente
 
-    -- --- 3. VIENTO BRILLANTE (MOTAS BLANCAS ANGELICALES) ---
+    -- --- 5. VIENTO CORRUPTO (Flujo hacia el Sur) ---
+    -- En lugar de volar aleatoriamente, el viento es atraído magnéticamente hacia el ente divino (Sur).
     local windVolume = Instance.new("Part")
     windVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     windVolume.CFrame = centerCF
@@ -353,71 +354,31 @@ local function SpawnAFOSphere(centerCF)
 
     local angelicWind = Instance.new("ParticleEmitter")
     angelicWind.Name = "AngelicWind"
-    angelicWind.Texture = "rbxassetid://5860714768" -- Mota suave
-    -- Blanco HDR para que brille intensamente
+    angelicWind.Texture = "rbxassetid://5860714768" 
     angelicWind.Color = ColorSequence.new(Color3.new(3, 3, 3)) 
-    angelicWind.LightEmission = 1 
-    angelicWind.ZOffset = 0
+    angelicWind.LightEmission = 0.8 
     angelicWind.Size = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(0.2, 0.4), -- Pequeñas y sutiles
-        NumberSequenceKeypoint.new(0.8, 0.4),
+        NumberSequenceKeypoint.new(0.5, 0.6), -- Ligeramente más grandes pero más dispersas
         NumberSequenceKeypoint.new(1, 0)
     })
     angelicWind.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.2, 0.2), -- Muy visibles
-        NumberSequenceKeypoint.new(0.8, 0.2),
+        NumberSequenceKeypoint.new(0.5, 0.4), 
         NumberSequenceKeypoint.new(1, 1)
     })
-    angelicWind.Lifetime = NumberRange.new(4, 7)
-    angelicWind.Rate = 150 -- Suficientes para llenar el espacio
-    angelicWind.Speed = NumberRange.new(1, 3) -- Movimiento elegante y lento
-    angelicWind.SpreadAngle = Vector2.new(360, 360) 
-    angelicWind.Acceleration = Vector3.new(0, 0.5, 0) 
+    angelicWind.Lifetime = NumberRange.new(5, 8)
+    angelicWind.Rate = 80 
+    angelicWind.Speed = NumberRange.new(0, 1) 
+    -- EL ARTE DEL MOVIMIENTO: Aceleración constante hacia el Sur (+Z)
+    angelicWind.Acceleration = Vector3.new(0, 0, 3) 
     angelicWind.Shape = Enum.ParticleEmitterShape.Box 
+    angelicWind.EmissionDirection = Enum.NormalId.Front
     angelicWind.Parent = windVolume
 
-    -- --- 4. HORIZONTE ANGELICAL (ILUMINACIÓN BLANCA EN LOS POLOS HORIZONTALES) ---
-    local leftPole = Instance.new("Part")
-    leftPole.Size = Vector3.new(2, boxSize, boxSize)
-    leftPole.CFrame = centerCF * CFrame.new(-half + 1, 0, 0)
-    leftPole.Anchored = true
-    leftPole.CanCollide = false
-    leftPole.Transparency = 1
-    leftPole.Parent = dimensionFolder
 
-    local rightPole = Instance.new("Part")
-    rightPole.Size = Vector3.new(2, boxSize, boxSize)
-    rightPole.CFrame = centerCF * CFrame.new(half - 1, 0, 0)
-    rightPole.Anchored = true
-    rightPole.CanCollide = false
-    rightPole.Transparency = 1
-    rightPole.Parent = dimensionFolder
-
-    local function createHolyGlow(parentPart, face)
-        local emitter = Instance.new("ParticleEmitter")
-        emitter.Texture = "rbxassetid://13490928216" -- Textura muy suave
-        emitter.Color = ColorSequence.new(Color3.new(5, 5, 5)) -- Blanco cegador
-        emitter.LightEmission = 1
-        emitter.ZOffset = 0.5
-        emitter.Size = NumberSequence.new(40, 50) -- Enormes para simular iluminación
-        emitter.Lifetime = NumberRange.new(3, 5)
-        emitter.Rate = 0 -- Inicia apagado
-        emitter.Speed = NumberRange.new(0.5, 1) -- Casi estático
-        emitter.EmissionDirection = face
-        emitter.Rotation = NumberRange.new(0, 360)
-        emitter.RotSpeed = NumberRange.new(-2, 2)
-        emitter.Parent = parentPart
-        return emitter
-    end
-
-    local leftGlow = createHolyGlow(leftPole, Enum.NormalId.Right)
-    local rightGlow = createHolyGlow(rightPole, Enum.NormalId.Left)
-
-    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO DE LA LUZ ---
+    -- --- 6. ANIMACIÓN CINEMÁTICA Y "RESPIRACIÓN" ---
     local startTime = os.clock()
-    local CLIMAX_TIME = 20 -- Segundos para que los polos alcancen su máximo brillo angelical
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
@@ -428,40 +389,34 @@ local function SpawnAFOSphere(centerCF)
 
         local elapsed = os.clock() - startTime
         
-        -- Evolución suave del brillo en los horizontes
-        local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
-        
-        -- La cantidad de luz en los polos horizontales va aumentando sutilmente
-        local targetRate = math.floor(alpha * 12) 
-        leftGlow.Rate = targetRate
-        rightGlow.Rate = targetRate
-        
-        -- La luz se va haciendo menos transparente hasta formar una pared blanca suave
-        local currentTrans = 1 - (alpha * 0.85) -- Llega hasta 0.15 de opacidad
-        local transSequence = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.3, currentTrans),
-            NumberSequenceKeypoint.new(0.7, currentTrans),
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        leftGlow.Transparency = transSequence
-        rightGlow.Transparency = transSequence
-
-        -- Movimiento de las texturas de las paredes
+        -- Movimiento de las texturas
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
+        -- Respiración del entorno (Senoidal)
+        -- Da una sensación de que el lugar palpita o respira suavemente (ciclo de 4 segundos)
+        local pulse = (math.sin(elapsed * 1.5) + 1) / 2 -- Valor entre 0 y 1
+        
+        -- El aura divina del ente palpita
+        divineHalo.LightEmission = 0.8 + (pulse * 0.4) -- Entre 0.8 y 1.2
+        divineHalo.Rate = 2 + math.floor(pulse * 3)
+
         for _, tex in ipairs(allTextures) do
-            if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
+            if tex.Name == "NeonGlow" then
+                -- Respiración del morado, nunca llega a tapar la cámara
+                tex.Transparency = 0.65 + (pulse * 0.15) 
+                
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
                 else
                     tex.OffsetStudsU = offsetNeon
                 end
-            elseif tex.Name == "BgUp" then
-                tex.OffsetStudsV = -offsetBg
-            elseif tex.Name == "BgDown" then
-                tex.OffsetStudsV = offsetBg
+            elseif tex.Name == "BgBase" then
+                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                    tex.OffsetStudsV = -offsetBg
+                else
+                    tex.OffsetStudsU = offsetBg
+                end
             end
         end
     end)
