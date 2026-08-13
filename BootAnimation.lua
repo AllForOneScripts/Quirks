@@ -196,8 +196,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -210,7 +208,6 @@ local function SpawnAFOSphere(centerCF)
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     
-    -- Magenta Rosadito Energético
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
     
     local NEON_SPEED = 180 
@@ -242,7 +239,6 @@ local function SpawnAFOSphere(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo oscuro 35%
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -267,7 +263,6 @@ local function SpawnAFOSphere(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Borde del Neón (Aura Externa)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
@@ -280,7 +275,6 @@ local function SpawnAFOSphere(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neón Principal
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
@@ -294,42 +288,52 @@ local function SpawnAFOSphere(centerCF)
         table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. SISTEMA DE HUMO DESDE LOS POLOS ---
+    -- --- 2. SISTEMA DE HUMO BRILLANTE TIPO "PICSART" ---
     local smokeTextures = {
         "rbxassetid://13490928216", 
         "rbxassetid://4231233461", 
         "rbxassetid://6672985426"
     }
 
-    -- Función auxiliar para inyectar múltiples emisores en una pieza
     local function createSmokeForPole(polePart, emitDirection)
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
-            smokeEmitter.Name = "DarkPurpleSmoke"
+            smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            smokeEmitter.Color = ColorSequence.new(Color3.fromRGB(35, 5, 55)) -- Morado bien oscuro pero con tono visible
+            
+            -- EL SECRETO MÁGICO: Mezcla aditiva para que sume luz en vez de opacar
+            smokeEmitter.LightEmission = 1 
+            smokeEmitter.ZOffset = 0.5 -- Pequeño offset para resaltar las superficies
+            
+            -- Color morado con valores HDR para que genere destellos
+            smokeEmitter.Color = ColorSequence.new(Color3.new(4, 0.5, 6))
+            
+            -- Tamaño envolvente (enorme)
             smokeEmitter.Size = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 5),
-                NumberSequenceKeypoint.new(1, 25) -- Crece a medida que se acerca al centro
+                NumberSequenceKeypoint.new(0, 20),
+                NumberSequenceKeypoint.new(1, 60) 
             })
+            
+            -- Muy transparente. Al tener LightEmission, las partes menos transparentes se vuelven líneas brillantes puras
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.2, 0.5), -- Se hace visible sin oscurecer toda la pantalla
-                NumberSequenceKeypoint.new(0.8, 0.5),
+                NumberSequenceKeypoint.new(0.3, 0.9), -- 90% transparente
+                NumberSequenceKeypoint.new(0.7, 0.9),
                 NumberSequenceKeypoint.new(1, 1)
             })
-            smokeEmitter.Lifetime = NumberRange.new(4, 7)
-            smokeEmitter.Rate = 15 -- x3 texturas = 45 partículas por polo
-            smokeEmitter.Speed = NumberRange.new(4, 8) -- Viaja suavemente
+            
+            smokeEmitter.Lifetime = NumberRange.new(5, 8)
+            smokeEmitter.Rate = 12 
+            smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
+            
+            -- Rotación lenta para que el humo fluya majestuosamente
             smokeEmitter.Rotation = NumberRange.new(0, 360)
-            smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
-            smokeEmitter.ZOffset = 1 
+            smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
         end
     end
 
-    -- POLO SUPERIOR (Dispara hacia abajo)
     local topPole = Instance.new("Part")
     topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
@@ -340,7 +344,6 @@ local function SpawnAFOSphere(centerCF)
     topPole.Parent = dimensionFolder
     createSmokeForPole(topPole, Enum.NormalId.Bottom)
 
-    -- POLO INFERIOR (Dispara hacia arriba)
     local bottomPole = Instance.new("Part")
     bottomPole.Name = "BottomPoleSmoke"
     bottomPole.Size = Vector3.new(boxSize, 1, boxSize)
