@@ -193,128 +193,187 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
-----------------------INICIO-------------------------
-------------------EFECTO ESPECIAL--------------------
------------------------------------------------------
--- Retorna el folder de la esfera y la conexión del bucle para que puedas detenerlo desde tu script principal
+---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
+-----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- Retorna el folder de la dimensión y la conexión del bucle
 local function SpawnAFOSphere(centerCF)
     local sphereFolder = Instance.new("Folder")
     sphereFolder.Name = "AFO_Dimension"
     sphereFolder.Parent = workspace
 
-    -- Radio de la dimensión (suficientemente grande para atrapar a los jugadores)
-    local sphereRadius = 70 
+    -- 3. Aumentamos el radio a 120
+    local sphereRadius = 120 
 
     -- ## 1. ESFERA NEGRA (El Vacío)
     local mainSphere = Instance.new("Part")
     mainSphere.Name = "VoidSphere"
-    -- Usamos Block en lugar de Ball porque el SpecialMesh definirá la forma real
     mainSphere.Shape = Enum.PartType.Block 
     mainSphere.Size = Vector3.new(1, 1, 1) 
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.Neon -- Neon negro no emite luz, pero ignora sombras (vacío perfecto)
+    mainSphere.Material = Enum.Material.Neon
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- TRUCO PARA DIMENSIONES: Malla invertida para que la esfera sea visible desde ADENTRO
+    -- Malla invertida para que se vea el color negro desde adentro
     local invertedMesh = Instance.new("SpecialMesh")
     invertedMesh.MeshType = Enum.MeshType.FileMesh
-    invertedMesh.MeshId = "rbxassetid://437220420" -- ID público de una esfera con caras invertidas
+    invertedMesh.MeshId = "rbxassetid://437220420"
     invertedMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     invertedMesh.Parent = mainSphere
 
-    -- ## 2. GENERACIÓN DE LA LLUVIA EN LOS BORDES
+    -- ## 2. EFECTOS DE PARTÍCULAS (Humo y Energía Dimensional)
+    local centerAttachment = Instance.new("Attachment")
+    centerAttachment.Parent = mainSphere
+
+    -- Humo ambiental oscuro
+    local fog = Instance.new("ParticleEmitter")
+    fog.Name = "DimensionFog"
+    fog.Texture = "rbxassetid://281986423" -- Textura de humo estándar de Roblox
+    fog.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(139, 0, 139)), -- Magenta Oscuro
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(75, 0, 45))    -- Carmesí Oscuro
+    })
+    fog.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 20),
+        NumberSequenceKeypoint.new(0.5, 45),
+        NumberSequenceKeypoint.new(1, 20)
+    })
+    fog.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.2, 0.85), -- Muy translúcido para no cegar al jugador
+        NumberSequenceKeypoint.new(0.8, 0.85),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    fog.Lifetime = NumberRange.new(4, 7)
+    fog.Rate = 150
+    fog.Speed = NumberRange.new(1, 3)
+    fog.Shape = Enum.ParticleEmitterShape.Sphere
+    fog.ShapeRadius = sphereRadius - 5
+    fog.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut -- Se genera por toda la dimensión
+    fog.Rotation = NumberRange.new(0, 360)
+    fog.RotSpeed = NumberRange.new(-10, 10)
+    fog.Parent = centerAttachment
+
+    -- Partículas de "energía/estrellas" subiendo
+    local energySparks = Instance.new("ParticleEmitter")
+    energySparks.Name = "EnergySparks"
+    energySparks.Color = ColorSequence.new(Color3.fromRGB(255, 20, 147)) -- Fucsia brillante
+    energySparks.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(0.2, 1.5),
+        NumberSequenceKeypoint.new(0.8, 1.5),
+        NumberSequenceKeypoint.new(1, 0)
+    })
+    energySparks.Transparency = NumberSequence.new(0.2)
+    energySparks.Lifetime = NumberRange.new(2, 4)
+    energySparks.Rate = 100
+    energySparks.Speed = NumberRange.new(10, 25)
+    energySparks.Shape = Enum.ParticleEmitterShape.Sphere
+    energySparks.ShapeRadius = sphereRadius - 10
+    energySparks.ShapeInOut = Enum.ParticleEmitterShapeInOut.InAndOut
+    energySparks.EmissionDirection = Enum.NormalId.Top -- Flotan hacia arriba
+    energySparks.Parent = centerAttachment
+
+
+    -- ## 3. GENERACIÓN DE LAS LÍNEAS DESLIZANTES
     local rainStreaks = {}
-    local numStreaks = 120 -- Aumentado para que la dimensión se sienta envolvente
-    local innerOffset = sphereRadius - 1 -- Posicionado justo por dentro de las paredes
+    local numStreaks = 180 -- Más líneas por el aumento de radio
+    local innerOffset = sphereRadius - 8 -- Empujadas 8 studs hacia adentro para garantizar visibilidad total
     
-    -- Paleta de colores magenta vibrante y oscuro
     local streakColors = {
-        Color3.fromRGB(199, 21, 133), -- Fucsia/Magenta Medio
-        Color3.fromRGB(139, 0, 139),  -- Magenta Oscuro
-        Color3.fromRGB(255, 20, 147), -- Rosa Profundo Vibrante
-        Color3.fromRGB(75, 0, 45)     -- Carmesí muy oscuro
+        Color3.fromRGB(199, 21, 133),
+        Color3.fromRGB(139, 0, 139),
+        Color3.fromRGB(255, 20, 147),
+        Color3.fromRGB(150, 0, 80)
     }
 
     for i = 1, numStreaks do
         local streak = Instance.new("Part")
         streak.Name = "RainStreak"
-        -- Líneas verticales largas simulando fluido cayendo
-        local length = math.random(15, 35)
-        streak.Size = Vector3.new(math.random(3, 8) * 0.1, length, 0.1)
+        
+        -- Hacemos las líneas más anchas y gruesas para que destaquen
+        local length = math.random(30, 60)
+        streak.Size = Vector3.new(math.random(8, 20) * 0.1, length, 0.5)
         streak.Color = streakColors[math.random(1, #streakColors)]
         streak.Material = Enum.Material.Neon
         streak.Anchored = true
         streak.CanCollide = false
         streak.CanTouch = false
         streak.CastShadow = false
+        
+        -- Eliminamos el BlockMesh, no es necesario y puede alterar el renderizado
         streak.Parent = sphereFolder
 
         table.insert(rainStreaks, {
             part = streak,
-            theta = math.random() * math.pi * 2, -- Longitud (posición alrededor de la esfera)
-            phi = math.random() * math.pi,       -- Latitud (altura en la que empieza)
-            speed = math.random(8, 20) * 0.1,    -- Velocidad a la que se desliza
-            baseTransparency = math.random(1, 4) * 0.1
+            theta = math.random() * math.pi * 2,
+            phi = math.random() * math.pi,
+            speed = math.random(6, 18) * 0.1,
+            -- Transparencia muy baja para que el neón brille con fuerza
+            baseTransparency = math.random(0, 2) * 0.1
         })
     end
 
-    -- ## 3. BUCLE DE ANIMACIÓN
+    -- ## 4. BUCLE DE ANIMACIÓN
     local connection = RunService.RenderStepped:Connect(function(deltaTime)
         if not sphereFolder.Parent then return end
 
         for _, data in ipairs(rainStreaks) do
-            -- Incrementamos phi para que la línea se deslice hacia el polo sur
             data.phi = data.phi + (data.speed * deltaTime)
             
-            -- Al llegar abajo, reaparece arriba en un punto horizontal aleatorio
             if data.phi > math.pi then
                 data.phi = 0
                 data.theta = math.random() * math.pi * 2
             end
 
-            -- Cálculos esféricos
             local sinPhi = math.sin(data.phi)
             local cosPhi = math.cos(data.phi)
             local sinTheta = math.sin(data.theta)
             local cosTheta = math.cos(data.theta)
 
-            -- Posición pegada a la pared interna
+            -- Posición local relativa al centro
             local localPos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * innerOffset
+            local absolutePos = centerCF * localPos
             
-            -- Cálculo de vectores para acostar la línea plana contra la pared y apuntar hacia abajo
+            -- Normal (Apunta del centro hacia afuera)
             local surfaceNormal = localPos.Unit
+            -- Tangente (Apunta a lo largo de la pared, hacia abajo)
             local tangentDown = Vector3.new(cosPhi * cosTheta, -sinPhi, cosPhi * sinTheta).Unit
             
             if tangentDown.Magnitude < 0.001 then
                 tangentDown = Vector3.new(1, 0, 0)
             end
 
-            -- Orientación estricta: Mirando al centro, pero su eje "Y" sigue la curvatura cayendo
-            data.part.CFrame = centerCF * CFrame.lookAt(localPos, localPos + surfaceNormal, -tangentDown)
+            -- Convertimos vectores locales a orientación de mundo para el CFrame
+            local absoluteUp = centerCF:VectorToWorldSpace(-tangentDown) -- Y apuntando a la curva
+            local absoluteLook = centerCF:VectorToWorldSpace(-surfaceNormal) -- Z mirando directo al centro (garantiza visibilidad)
+            local absoluteRight = absoluteUp:Cross(absoluteLook).Unit -- X completando la matriz
 
-            -- Difuminado suave para que no se amontonen feo en el techo/suelo de la esfera
-            if data.phi < 0.2 then
-                data.part.Transparency = 1 - (data.phi / 0.2) * (1 - data.baseTransparency)
-            elseif data.phi > (math.pi - 0.2) then
-                data.part.Transparency = 1 - ((math.pi - data.phi) / 0.2) * (1 - data.baseTransparency)
+            -- Asignamos la matriz para que la parte se deslice perfectamente plana
+            data.part.CFrame = CFrame.fromMatrix(absolutePos, absoluteRight, absoluteUp, absoluteLook)
+
+            -- Desvanecimiento suave en los polos
+            if data.phi < 0.15 then
+                data.part.Transparency = 1 - (data.phi / 0.15) * (1 - data.baseTransparency)
+            elseif data.phi > (math.pi - 0.15) then
+                data.part.Transparency = 1 - ((math.pi - data.phi) / 0.15) * (1 - data.baseTransparency)
             else
                 data.part.Transparency = data.baseTransparency
             end
         end
     end)
 
-    -- Retornamos los objetos para que el script principal los gestione
     return sphereFolder, connection
 end
 
------------------------------------------------------
-------------------EFECTO ESPECIAL--------------------
-------------------------FIN--------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
+-----------------------------------------------------------------------------FIN-------------------------------------------------------------------------------
 
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
