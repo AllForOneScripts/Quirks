@@ -324,7 +324,6 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Rate = 12 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
-            
             smokeEmitter.Rotation = NumberRange.new(0, 360)
             smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
@@ -353,7 +352,6 @@ local function SpawnAFOSphere(centerCF)
         noiseEmitter.Rate = 30 
         noiseEmitter.Speed = NumberRange.new(10, 20) 
         noiseEmitter.EmissionDirection = emitDirection
-        
         noiseEmitter.Rotation = NumberRange.new(0, 360)
         noiseEmitter.RotSpeed = NumberRange.new(-15, 15)
         noiseEmitter.Parent = polePart
@@ -394,11 +392,10 @@ local function SpawnAFOSphere(centerCF)
         "rbxassetid://4809471713"
     }
 
-    local HDR_YELLOW = Color3.new(8, 7, 0) -- Amarillo neón súper brillante
-    local DARK_PURPLE = Color3.fromRGB(30, 0, 50) -- Morado muy oscuro
+    local HDR_YELLOW = Color3.new(8, 7, 0) 
+    local DARK_PURPLE = Color3.fromRGB(30, 0, 50)
     local PURE_BLACK = Color3.fromRGB(0, 0, 0)
 
-    -- Función auxiliar para crear emisores de rayos
     local function createLightningEmitter(name, texture, color, lightEmission, zOffset, sizeRange, rate)
         local emitter = Instance.new("ParticleEmitter")
         emitter.Name = name
@@ -407,7 +404,6 @@ local function SpawnAFOSphere(centerCF)
         emitter.ZOffset = zOffset
         emitter.Color = ColorSequence.new(color)
         
-        -- Flash rápido: Pequeño -> Gigante -> Pequeño
         emitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 10),
             NumberSequenceKeypoint.new(0.1, sizeRange),
@@ -417,47 +413,32 @@ local function SpawnAFOSphere(centerCF)
         
         emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.05, 0), -- Aparece de golpe
+            NumberSequenceKeypoint.new(0.05, 0), 
             NumberSequenceKeypoint.new(0.8, 0.2),
             NumberSequenceKeypoint.new(1, 1)
         })
         
-        emitter.Lifetime = NumberRange.new(0.15, 0.3) -- Corta duración, parpadeo rápido
+        emitter.Lifetime = NumberRange.new(0.15, 0.3) 
         emitter.Rate = 0 -- Inicia apagado
-        emitter.Speed = NumberRange.new(0) -- Estáticos en su lugar
-        emitter.Rotation = NumberRange.new(0, 360) -- Ángulos locos
+        emitter.Speed = NumberRange.new(0) 
+        emitter.Rotation = NumberRange.new(0, 360) 
         emitter.FlipbookFramerate = 0
         emitter.Parent = lightningCenter
         
-        -- Guardar el Rate objetivo como un atributo para activarlo después
+        -- Guardamos el objetivo en un atributo para activarlo después
         emitter:SetAttribute("TargetRate", rate)
     end
 
     for _, texID in ipairs(lightningTextures) do
-        -- 1. Rayo Amarillo Brillante
         createLightningEmitter("YellowLightning", texID, HDR_YELLOW, 1, 0.8, boxSize * 1.2, 5)
-        
-        -- 2. Rayo Aura Morada Oscura (Más grande que el negro para actuar como borde)
         createLightningEmitter("PurpleEdgeLightning", texID, DARK_PURPLE, 0, 0.9, boxSize * 1.1, 8)
-        
-        -- 3. Rayo Núcleo Negro
         createLightningEmitter("BlackCoreLightning", texID, PURE_BLACK, 0, 0.95, boxSize, 8)
     end
 
-    -- Activar los rayos cuando el humo esté avanzado (3.5 segundos después)
-    task.delay(3.5, function()
-        if lightningCenter.Parent then
-            for _, emitter in ipairs(lightningCenter:GetChildren()) do
-                if emitter:IsA("ParticleEmitter") then
-                    emitter.Rate = emitter:GetAttribute("TargetRate")
-                end
-            end
-        end
-    end)
-
-
-    -- --- 4. BUCLE DE ANIMACIÓN DE PAREDES ---
+    -- --- 4. BUCLE DE ANIMACIÓN DE PAREDES Y TIMING (Sin Yields) ---
     local startTime = os.clock()
+    local lightningActivated = false
+    local LIGHTNING_DELAY = 3.5 -- Segundos a esperar
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
@@ -467,6 +448,20 @@ local function SpawnAFOSphere(centerCF)
         end
 
         local elapsed = os.clock() - startTime
+        
+        -- Control de Activación de Rayos basado en tiempo transcurrido
+        if not lightningActivated and elapsed >= LIGHTNING_DELAY then
+            lightningActivated = true
+            if lightningCenter and lightningCenter.Parent then
+                for _, emitter in ipairs(lightningCenter:GetChildren()) do
+                    if emitter:IsA("ParticleEmitter") then
+                        emitter.Rate = emitter:GetAttribute("TargetRate")
+                    end
+                end
+            end
+        end
+
+        -- Animación de las paredes UV
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
