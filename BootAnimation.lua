@@ -203,10 +203,10 @@ local function SpawnAFOSphere(centerCF, duration)
     sphereFolder.Name = "AFO_Sphere_Effect"
     sphereFolder.Parent = workspace
 
-    -- 1. Esfera base totalmente negra
-    local sphereRadius = 15
+    local sphereRadius = 15 -- (Diámetro total de 30)
+
+    -- 1. Esfera Negra (La Dimensión)
     local mainSphere = Instance.new("Part")
-    mainSphere.Shape = Enum.PartType.Ball
     mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
@@ -217,23 +217,32 @@ local function SpawnAFOSphere(centerCF, duration)
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- 2. Creación de las "rayas" (efecto lluvia)
-    local rainStreaks = {}
-    local numStreaks = 60 -- Cantidad de rayas simultáneas
-    local surfaceOffset = sphereRadius + 0.1 -- Ligeramente superior al radio para evitar Z-fighting
+    -- TRUCO: Invertimos las caras de la esfera para que sea visible desde ADENTRO
+    local invertedMesh = Instance.new("SpecialMesh")
+    invertedMesh.MeshType = Enum.MeshType.FileMesh
+    invertedMesh.MeshId = "rbxassetid://1185246" -- ID de una esfera perfecta de Roblox
+    -- Una escala negativa voltea las texturas hacia adentro del jugador
+    invertedMesh.Scale = Vector3.new(-sphereRadius * 2, -sphereRadius * 2, -sphereRadius * 2)
+    invertedMesh.Parent = mainSphere
 
-    -- Paleta de colores extraída de tu imagen (tonos magenta/carmesí)
+    -- 2. Creación de la lluvia en los bordes internos
+    local rainStreaks = {}
+    local numStreaks = 80 
+    -- Colocamos las líneas ligeramente ADENTRO de la esfera para que no se oculten
+    local innerSurfaceOffset = sphereRadius - 0.2 
+
+    -- Paleta de colores basada en tu imagen (Magentas, Fucsias y Rosas oscuros)
     local streakColors = {
-        Color3.fromRGB(200, 20, 100), -- Magenta brillante
-        Color3.fromRGB(150, 10, 80),  -- Magenta oscuro
-        Color3.fromRGB(100, 0, 50)    -- Carmesí profundo
+        Color3.fromRGB(205, 0, 116),  -- Magenta vibrante
+        Color3.fromRGB(158, 0, 89),   -- Fucsia oscuro
+        Color3.fromRGB(255, 20, 147), -- Deep Pink
+        Color3.fromRGB(114, 0, 64)    -- Vino/Magenta muy oscuro
     }
 
     for i = 1, numStreaks do
         local streak = Instance.new("Part")
-        -- Hacemos las rayas delgadas, planas y con longitudes variadas
-        local length = math.random(4, 9)
-        streak.Size = Vector3.new(math.random(2, 4) * 0.1, length, 0.05) 
+        -- Líneas delgadas y alargadas simulando lluvia de energía
+        streak.Size = Vector3.new(0.15, math.random(6, 12), 0.15) 
         streak.Color = streakColors[math.random(1, #streakColors)]
         streak.Material = Enum.Material.Neon
         streak.Anchored = true
@@ -241,84 +250,73 @@ local function SpawnAFOSphere(centerCF, duration)
         streak.CanTouch = false
         streak.CastShadow = false
         
-        -- Añadir un BlockMesh para suavizar la geometría si es necesario
         local mesh = Instance.new("BlockMesh")
         mesh.Parent = streak
-
         streak.Parent = sphereFolder
 
-        -- Variables para la animación basada en coordenadas esféricas
         table.insert(rainStreaks, {
             part = streak,
-            theta = math.random() * math.pi * 2, -- Longitud (ángulo alrededor de la esfera)
-            phi = math.random() * math.pi,       -- Latitud (0 = arriba, pi = abajo)
-            speed = math.random(15, 30) * 0.05,  -- Velocidad a la que cae la raya
-            baseTransparency = math.random(2, 6) * 0.1
+            theta = math.random() * math.pi * 2,
+            phi = math.random() * math.pi,       
+            speed = math.random(15, 35) * 0.05,  
+            baseTransparency = math.random(1, 5) * 0.1
         })
     end
 
-    -- 3. Bucle de Animación
+    -- 3. Animación de las líneas deslízandose por la pared interna
     local startTime = os.clock()
     local conn
     
-    -- Usamos deltaTime para un movimiento fluido independiente de los FPS
     conn = RunService.RenderStepped:Connect(function(deltaTime)
         local elapsed = os.clock() - startTime
         
         if elapsed >= duration or not sphereFolder.Parent then
             if conn then conn:Disconnect() end
-            if sphereFolder and sphereFolder.Parent then
-                sphereFolder:Destroy()
-            end
+            sphereFolder:Destroy()
             return
         end
 
         for _, data in ipairs(rainStreaks) do
-            -- Actualizamos el ángulo vertical (cayendo hacia abajo)
+            -- La línea "cae" aumentando su ángulo Phi
             data.phi = data.phi + (data.speed * deltaTime)
             
-            -- Si la raya llega al polo sur, la reiniciamos en el polo norte con una nueva posición
-            if data.phi > math.pi then
-                data.phi = 0
+            -- Reiniciar la línea en la parte superior si llega al fondo
+            if data.phi > math.pi - 0.05 then
+                data.phi = 0.05 -- Empieza un poco por debajo del polo norte
                 data.theta = math.random() * math.pi * 2 
+                data.speed = math.random(15, 35) * 0.05
             end
 
-            -- Conversión de Coordenadas Esféricas a Cartesianas (X, Y, Z)
+            -- Cálculos de la posición en la pared de la esfera
             local sinPhi = math.sin(data.phi)
             local cosPhi = math.cos(data.phi)
             local sinTheta = math.sin(data.theta)
             local cosTheta = math.cos(data.theta)
 
-            -- Posición de la raya relativa al centro de la esfera
-            local relativePos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * surfaceOffset
-            
-            -- Cálculo de vectores para alinear la raya perfectamente con la curvatura de la esfera
-            local surfaceNormal = relativePos.Unit
+            local relativePos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * innerSurfaceOffset
             local tangentDown = Vector3.new(cosPhi * cosTheta, -sinPhi, cosPhi * sinTheta).Unit
-            
-            -- Prevención de errores matemáticos exactos en los polos
-            if tangentDown.Magnitude < 0.001 then
-                tangentDown = Vector3.new(1, 0, 0)
-            end
-            
-            local right = tangentDown:Cross(surfaceNormal).Unit
+            local surfaceNormal = relativePos.Unit
 
-            -- Construimos el CFrame: 
-            -- Right = Eje X (ancho), Up = -tangentDown (apuntando la raya hacia abajo), Look = surfaceNormal (cara plana hacia afuera)
-            local rotationMatrix = CFrame.fromMatrix(relativePos, right, -tangentDown, surfaceNormal)
-            data.part.CFrame = centerCF * rotationMatrix
-            
-            -- Efecto visual: difuminar las rayas cuando se acercan a los polos para que no se agrupen feo
-            if data.phi < 0.3 or data.phi > (math.pi - 0.3) then
-                -- Transición suave de transparencia
-                data.part.Transparency = 1 
+            -- Alinear la pieza perfectamente con la pared interior y el sentido de la caída
+            local targetPosition = centerCF.Position + relativePos
+            data.part.CFrame = CFrame.lookAt(
+                targetPosition, 
+                targetPosition + tangentDown, -- Apunta la cara frontal hacia donde está cayendo
+                -surfaceNormal                -- Mantiene la línea plana contra la pared curva
+            ) * CFrame.Angles(math.pi/2, 0, 0) -- Rotamos 90° para que el largo de la parte coincida con la caída
+
+            -- Desvanecer suavemente los extremos (polos) para que la ilusión no se rompa
+            local distToPole = math.min(data.phi, math.pi - data.phi)
+            if distToPole < 0.25 then
+                -- Interpola la transparencia hacia 1 (invisible) en los polos
+                data.part.Transparency = 1 - (distToPole / 0.25) * (1 - data.baseTransparency)
             else
                 data.part.Transparency = data.baseTransparency
             end
         end
     end)
 
-    -- 4. Limpieza de seguridad
+    -- 4. Destrucción segura tras acabar la duración
     task.delay(duration, function()
         if conn then conn:Disconnect() end
         if sphereFolder and sphereFolder.Parent then
