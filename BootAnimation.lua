@@ -198,131 +198,120 @@ end
 -----------------------------------------------------
 local RunService = game:GetService("RunService")
 
-local function SpawnAFOSphere(centerCF, duration)
+-- Retorna el folder de la esfera y la conexión del bucle para que puedas detenerlo desde tu script principal
+local function SpawnAFOSphere(centerCF)
     local sphereFolder = Instance.new("Folder")
-    sphereFolder.Name = "AFO_Sphere_Effect"
+    sphereFolder.Name = "AFO_Dimension"
     sphereFolder.Parent = workspace
 
-    local sphereRadius = 15 -- (Diámetro total de 30)
+    -- Radio de la dimensión (suficientemente grande para atrapar a los jugadores)
+    local sphereRadius = 70 
 
-    -- 1. Esfera Negra (La Dimensión)
+    -- ## 1. ESFERA NEGRA (El Vacío)
     local mainSphere = Instance.new("Part")
-    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    mainSphere.Name = "VoidSphere"
+    -- Usamos Block en lugar de Ball porque el SpecialMesh definirá la forma real
+    mainSphere.Shape = Enum.PartType.Block 
+    mainSphere.Size = Vector3.new(1, 1, 1) 
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.SmoothPlastic
+    mainSphere.Material = Enum.Material.Neon -- Neon negro no emite luz, pero ignora sombras (vacío perfecto)
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- TRUCO: Invertimos las caras de la esfera para que sea visible desde ADENTRO
+    -- TRUCO PARA DIMENSIONES: Malla invertida para que la esfera sea visible desde ADENTRO
     local invertedMesh = Instance.new("SpecialMesh")
     invertedMesh.MeshType = Enum.MeshType.FileMesh
-    invertedMesh.MeshId = "rbxassetid://1185246" -- ID de una esfera perfecta de Roblox
-    -- Una escala negativa voltea las texturas hacia adentro del jugador
-    invertedMesh.Scale = Vector3.new(-sphereRadius * 2, -sphereRadius * 2, -sphereRadius * 2)
+    invertedMesh.MeshId = "rbxassetid://437220420" -- ID público de una esfera con caras invertidas
+    invertedMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     invertedMesh.Parent = mainSphere
 
-    -- 2. Creación de la lluvia en los bordes internos
+    -- ## 2. GENERACIÓN DE LA LLUVIA EN LOS BORDES
     local rainStreaks = {}
-    local numStreaks = 80 
-    -- Colocamos las líneas ligeramente ADENTRO de la esfera para que no se oculten
-    local innerSurfaceOffset = sphereRadius - 0.2 
-
-    -- Paleta de colores basada en tu imagen (Magentas, Fucsias y Rosas oscuros)
+    local numStreaks = 120 -- Aumentado para que la dimensión se sienta envolvente
+    local innerOffset = sphereRadius - 1 -- Posicionado justo por dentro de las paredes
+    
+    -- Paleta de colores magenta vibrante y oscuro
     local streakColors = {
-        Color3.fromRGB(205, 0, 116),  -- Magenta vibrante
-        Color3.fromRGB(158, 0, 89),   -- Fucsia oscuro
-        Color3.fromRGB(255, 20, 147), -- Deep Pink
-        Color3.fromRGB(114, 0, 64)    -- Vino/Magenta muy oscuro
+        Color3.fromRGB(199, 21, 133), -- Fucsia/Magenta Medio
+        Color3.fromRGB(139, 0, 139),  -- Magenta Oscuro
+        Color3.fromRGB(255, 20, 147), -- Rosa Profundo Vibrante
+        Color3.fromRGB(75, 0, 45)     -- Carmesí muy oscuro
     }
 
     for i = 1, numStreaks do
         local streak = Instance.new("Part")
-        -- Líneas delgadas y alargadas simulando lluvia de energía
-        streak.Size = Vector3.new(0.15, math.random(6, 12), 0.15) 
+        streak.Name = "RainStreak"
+        -- Líneas verticales largas simulando fluido cayendo
+        local length = math.random(15, 35)
+        streak.Size = Vector3.new(math.random(3, 8) * 0.1, length, 0.1)
         streak.Color = streakColors[math.random(1, #streakColors)]
         streak.Material = Enum.Material.Neon
         streak.Anchored = true
         streak.CanCollide = false
         streak.CanTouch = false
         streak.CastShadow = false
-        
-        local mesh = Instance.new("BlockMesh")
-        mesh.Parent = streak
         streak.Parent = sphereFolder
 
         table.insert(rainStreaks, {
             part = streak,
-            theta = math.random() * math.pi * 2,
-            phi = math.random() * math.pi,       
-            speed = math.random(15, 35) * 0.05,  
-            baseTransparency = math.random(1, 5) * 0.1
+            theta = math.random() * math.pi * 2, -- Longitud (posición alrededor de la esfera)
+            phi = math.random() * math.pi,       -- Latitud (altura en la que empieza)
+            speed = math.random(8, 20) * 0.1,    -- Velocidad a la que se desliza
+            baseTransparency = math.random(1, 4) * 0.1
         })
     end
 
-    -- 3. Animación de las líneas deslízandose por la pared interna
-    local startTime = os.clock()
-    local conn
-    
-    conn = RunService.RenderStepped:Connect(function(deltaTime)
-        local elapsed = os.clock() - startTime
-        
-        if elapsed >= duration or not sphereFolder.Parent then
-            if conn then conn:Disconnect() end
-            sphereFolder:Destroy()
-            return
-        end
+    -- ## 3. BUCLE DE ANIMACIÓN
+    local connection = RunService.RenderStepped:Connect(function(deltaTime)
+        if not sphereFolder.Parent then return end
 
         for _, data in ipairs(rainStreaks) do
-            -- La línea "cae" aumentando su ángulo Phi
+            -- Incrementamos phi para que la línea se deslice hacia el polo sur
             data.phi = data.phi + (data.speed * deltaTime)
             
-            -- Reiniciar la línea en la parte superior si llega al fondo
-            if data.phi > math.pi - 0.05 then
-                data.phi = 0.05 -- Empieza un poco por debajo del polo norte
-                data.theta = math.random() * math.pi * 2 
-                data.speed = math.random(15, 35) * 0.05
+            -- Al llegar abajo, reaparece arriba en un punto horizontal aleatorio
+            if data.phi > math.pi then
+                data.phi = 0
+                data.theta = math.random() * math.pi * 2
             end
 
-            -- Cálculos de la posición en la pared de la esfera
+            -- Cálculos esféricos
             local sinPhi = math.sin(data.phi)
             local cosPhi = math.cos(data.phi)
             local sinTheta = math.sin(data.theta)
             local cosTheta = math.cos(data.theta)
 
-            local relativePos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * innerSurfaceOffset
+            -- Posición pegada a la pared interna
+            local localPos = Vector3.new(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta) * innerOffset
+            
+            -- Cálculo de vectores para acostar la línea plana contra la pared y apuntar hacia abajo
+            local surfaceNormal = localPos.Unit
             local tangentDown = Vector3.new(cosPhi * cosTheta, -sinPhi, cosPhi * sinTheta).Unit
-            local surfaceNormal = relativePos.Unit
+            
+            if tangentDown.Magnitude < 0.001 then
+                tangentDown = Vector3.new(1, 0, 0)
+            end
 
-            -- Alinear la pieza perfectamente con la pared interior y el sentido de la caída
-            local targetPosition = centerCF.Position + relativePos
-            data.part.CFrame = CFrame.lookAt(
-                targetPosition, 
-                targetPosition + tangentDown, -- Apunta la cara frontal hacia donde está cayendo
-                -surfaceNormal                -- Mantiene la línea plana contra la pared curva
-            ) * CFrame.Angles(math.pi/2, 0, 0) -- Rotamos 90° para que el largo de la parte coincida con la caída
+            -- Orientación estricta: Mirando al centro, pero su eje "Y" sigue la curvatura cayendo
+            data.part.CFrame = centerCF * CFrame.lookAt(localPos, localPos + surfaceNormal, -tangentDown)
 
-            -- Desvanecer suavemente los extremos (polos) para que la ilusión no se rompa
-            local distToPole = math.min(data.phi, math.pi - data.phi)
-            if distToPole < 0.25 then
-                -- Interpola la transparencia hacia 1 (invisible) en los polos
-                data.part.Transparency = 1 - (distToPole / 0.25) * (1 - data.baseTransparency)
+            -- Difuminado suave para que no se amontonen feo en el techo/suelo de la esfera
+            if data.phi < 0.2 then
+                data.part.Transparency = 1 - (data.phi / 0.2) * (1 - data.baseTransparency)
+            elseif data.phi > (math.pi - 0.2) then
+                data.part.Transparency = 1 - ((math.pi - data.phi) / 0.2) * (1 - data.baseTransparency)
             else
                 data.part.Transparency = data.baseTransparency
             end
         end
     end)
 
-    -- 4. Destrucción segura tras acabar la duración
-    task.delay(duration, function()
-        if conn then conn:Disconnect() end
-        if sphereFolder and sphereFolder.Parent then
-            sphereFolder:Destroy()
-        end
-    end)
+    -- Retornamos los objetos para que el script principal los gestione
+    return sphereFolder, connection
 end
 
 -----------------------------------------------------
