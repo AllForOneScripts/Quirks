@@ -193,6 +193,83 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
+-- EFECTO BURBUJA Y LÍNEAS TRANSVERSALES (ALL FOR ONE / SHIGARAKI)
+local function SpawnAFOSphere(centerCF, duration)
+    local sphereFolder = Instance.new("Folder")
+    sphereFolder.Name = "AFO_Sphere_Effect"
+    sphereFolder.Parent = workspace
+
+    -- Esfera totalmente negra
+    local mainSphere = Instance.new("Part")
+    mainSphere.Shape = Enum.PartType.Ball
+    mainSphere.Size = Vector3.new(30, 30, 30)
+    mainSphere.CFrame = centerCF
+    mainSphere.Color = Color3.fromRGB(0, 0, 0)
+    mainSphere.Material = Enum.Material.SmoothPlastic
+    mainSphere.Anchored = true
+    mainSphere.CanCollide = false
+    mainSphere.CanTouch = false
+    mainSphere.CastShadow = false
+    mainSphere.Parent = sphereFolder
+
+    -- Líneas gruesas transversales
+    local lineRings = {}
+    local numRings = 7
+
+    for i = 1, numRings do
+        local ring = Instance.new("Part")
+        ring.Size = Vector3.new(0.8, 31, 31)
+        ring.Color = (i % 2 == 0) and Color3.fromRGB(180, 0, 35) or Color3.fromRGB(240, 240, 240)
+        ring.Material = Enum.Material.Neon
+        ring.Anchored = true
+        ring.CanCollide = false
+        ring.CanTouch = false
+        ring.CastShadow = false
+        ring.Transparency = 0.1
+
+        local mesh = Instance.new("SpecialMesh")
+        mesh.MeshType = Enum.MeshType.FileMesh
+        mesh.MeshId = "rbxassetid://3270017" -- Torus / Anillo Mesh
+        mesh.Scale = Vector3.new(31, 31, 1.5)
+        mesh.Parent = ring
+        ring.Parent = sphereFolder
+
+        table.insert(lineRings, {
+            part = ring,
+            speed = (i % 2 == 0 and 12 or -12) + math.random(-2, 2),
+            angleOffset = math.rad((360 / numRings) * i),
+            tilt = math.rad(35 + (i * 10)),
+            yOffsetSpeed = 4 + (i * 0.5)
+        })
+    end
+
+    local startTime = os.clock()
+    local conn
+    conn = RunService.RenderStepped:Connect(function()
+        local elapsed = os.clock() - startTime
+        if elapsed >= duration or not sphereFolder.Parent then
+            if conn then conn:Disconnect() end
+            sphereFolder:Destroy()
+            return
+        end
+
+        for idx, data in ipairs(lineRings) do
+            local yRot = elapsed * data.speed + data.angleOffset
+            local yPos = math.sin(elapsed * data.yOffsetSpeed) * 6
+            data.part.CFrame = centerCF 
+                * CFrame.new(0, yPos, 0)
+                * CFrame.Angles(data.tilt, yRot, math.sin(elapsed * 4 + idx) * 0.5)
+        end
+    end)
+
+    task.delay(duration, function()
+        if conn then conn:Disconnect() end
+        if sphereFolder and sphereFolder.Parent then
+            sphereFolder:Destroy()
+        end
+    end)
+end
+
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
 
@@ -533,6 +610,10 @@ local startPreloadTime = os.clock()
 repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - startPreloadTime > 3.5)
 cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
+
+-- SE INICIA LA BURBUJA NEGRA AFO DURANTE LOS PRIMEROS 8.5 SEGUNDOS
+SpawnAFOSphere(CINEMATIC_CF, 8.5)
+
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
 local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
