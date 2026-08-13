@@ -298,8 +298,8 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        -- Color HDR original reducido en un 25%
-        local hdrColor = Color3.new(3, 0.375, 4.5)
+        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
 
         -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
@@ -334,7 +334,7 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante)
+        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
@@ -351,16 +351,17 @@ local function SpawnAFOSphere(centerCF)
         
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.85),
-            NumberSequenceKeypoint.new(0.8, 0.85),
+            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
             NumberSequenceKeypoint.new(1, 1)
         })
         
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 10 
+        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
         
-        -- Velocidad mayor para simular el deslizamiento a través del humo
-        noiseEmitter.Speed = NumberRange.new(4, 9) 
+        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
+        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
+        
         noiseEmitter.EmissionDirection = emitDirection
         
         noiseEmitter.Rotation = NumberRange.new(0, 360)
