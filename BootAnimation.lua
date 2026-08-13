@@ -196,29 +196,15 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Asume que RunService ya está definido en el scope superior del script principal
--- (local RunService = game:GetService("RunService"))
-local CFrameAngles = CFrame.Angles -- localizado por rendimiento (evita el lookup cada frame)
+local RunService = game:GetService("RunService")
 
-local INVERTED_SPHERE_MESH_ID = "rbxassetid://437220420" -- confirmado que funciona
-
--- Retorna el folder de la dimensión y la conexión del bucle para que el script
--- principal decida cuándo detenerlo (sin duración fija, como una arena de combate).
 local function SpawnAFOSphere(centerCF)
     local sphereFolder = Instance.new("Folder")
     sphereFolder.Name = "AFO_Dimension"
     sphereFolder.Parent = workspace
 
-    local sphereRadius = 70
-    local diameter = sphereRadius * 2
+    local sphereRadius = 80
 
-    -- ## 1. ESFERA PRINCIPAL: vacío negro + textura 72194288856630
-    -- Volví al FileMesh 437220420 (el que confirmaste que SÍ se ve) con Scale
-    -- POSITIVA: ese mesh ya viene con las caras invertidas de fábrica, así que
-    -- no hace falta escala negativa. Enum.MeshType.Sphere quedó descartado:
-    -- hay un bug activo del motor en experiencias nuevas donde ese tipo de
-    -- SpecialMesh ignora el Scale y se queda con el tamaño del Part (1 stud
-    -- en nuestro caso) -> por eso no se veía nada.
     local mainSphere = Instance.new("Part")
     mainSphere.Name = "VoidSphere"
     mainSphere.Shape = Enum.PartType.Block
@@ -229,82 +215,16 @@ local function SpawnAFOSphere(centerCF)
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
-    mainSphere.CanQuery = false
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    local mainMesh = Instance.new("SpecialMesh")
-    mainMesh.MeshType = Enum.MeshType.FileMesh
-    mainMesh.MeshId = INVERTED_SPHERE_MESH_ID
-    mainMesh.Scale = Vector3.new(diameter, diameter, diameter)
-    mainMesh.Parent = mainSphere
+    local invertedMesh = Instance.new("SpecialMesh")
+    invertedMesh.MeshType = Enum.MeshType.FileMesh
+    invertedMesh.MeshId = "rbxassetid://437220420"
+    invertedMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    invertedMesh.Parent = mainSphere
 
-    local mainTexture = Instance.new("Texture")
-    mainTexture.Texture = "rbxassetid://72194288856630"
-    mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
-    mainTexture.StudsPerTileU = sphereRadius * 1.2
-    mainTexture.StudsPerTileV = sphereRadius * 1.2
-    mainTexture.Parent = mainSphere
-
-    -- ## 2. CAPA OVERLAY: textura 5748262504, 75% transparente
-    -- Esfera concéntrica levemente más chica (evita z-fighting). Su Part
-    -- queda con Transparency = 1: solo se ve la Texture hija.
-    local overlayDiameter = diameter - 1
-    local overlaySphere = Instance.new("Part")
-    overlaySphere.Name = "OverlaySphere"
-    overlaySphere.Shape = Enum.PartType.Block
-    overlaySphere.Size = Vector3.new(1, 1, 1)
-    overlaySphere.CFrame = centerCF
-    overlaySphere.Transparency = 1
-    overlaySphere.Anchored = true
-    overlaySphere.CanCollide = false
-    overlaySphere.CanTouch = false
-    overlaySphere.CanQuery = false
-    overlaySphere.CastShadow = false
-    overlaySphere.Parent = sphereFolder
-
-    local overlayMesh = Instance.new("SpecialMesh")
-    overlayMesh.MeshType = Enum.MeshType.FileMesh
-    overlayMesh.MeshId = INVERTED_SPHERE_MESH_ID
-    overlayMesh.Scale = Vector3.new(overlayDiameter, overlayDiameter, overlayDiameter)
-    overlayMesh.Parent = overlaySphere
-
-    local overlayTexture = Instance.new("Texture")
-    overlayTexture.Texture = "rbxassetid://5748262504"
-    overlayTexture.Transparency = 0.75
-    overlayTexture.StudsPerTileU = sphereRadius * 1.2
-    overlayTexture.StudsPerTileV = sphereRadius * 1.2
-    overlayTexture.Parent = overlaySphere
-
-    -- ## 3. Luz ambiental (opcional; elimínala si necesitas exprimir más rendimiento)
-    local ambientLight = Instance.new("PointLight")
-    ambientLight.Color = Color3.fromRGB(160, 20, 90)
-    ambientLight.Range = sphereRadius * 1.5
-    ambientLight.Brightness = 1.5
-    ambientLight.Parent = mainSphere
-
-    -- ## 4. Animación por rotación física (Texture.OffsetStudsV no funciona
-    -- sobre partes con SpecialMesh, es una limitación conocida del motor)
-    local mainSpeed = math.rad(90)      -- rad/seg: capa principal, giro rápido
-    local overlaySpeed = -math.rad(25)  -- rad/seg: overlay, sentido contrario y más lento
-    local mainAngle, overlayAngle = 0, 0
-    local TAU = 2 * math.pi
-
-    local connection = RunService.RenderStepped:Connect(function(deltaTime)
-        mainAngle = (mainAngle + mainSpeed * deltaTime) % TAU
-        overlayAngle = (overlayAngle + overlaySpeed * deltaTime) % TAU
-
-        mainSphere.CFrame = centerCF * CFrameAngles(mainAngle, 0, 0)
-        overlaySphere.CFrame = centerCF * CFrameAngles(overlayAngle, 0, 0)
-    end)
-
-    -- Limpieza dirigida por evento en vez de comprobar sphereFolder.Parent
-    -- cada frame: cero costo mientras la dimensión sigue activa.
-    sphereFolder.Destroying:Connect(function()
-        connection:Disconnect()
-    end)
-
-    return sphereFolder, connection
+    return sphereFolder
 end
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
