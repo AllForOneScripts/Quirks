@@ -197,137 +197,107 @@ end
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
-local function SpawnAFODimension(centerCF, duration)
-    local dimensionFolder = Instance.new("Folder")
-    dimensionFolder.Name = "AFO_Dimension_Effect"
-    dimensionFolder.Parent = workspace
+local function SpawnAFOSphere(centerCF, duration)
+    local sphereFolder = Instance.new("Folder")
+    sphereFolder.Name = "AFO_Sphere_Effect"
+    sphereFolder.Parent = workspace
 
-    local boxSize = 50 -- Tamaño de la dimensión (lo suficientemente grande para atraparte)
-    local half = boxSize / 2
-    local wallThickness = 2 -- Grosor de las paredes
+    -- 1. Esfera base TOTALMENTE INTACTA a tu código original
+    local sphereRadius = 15
+    local mainSphere = Instance.new("Part")
+    mainSphere.Shape = Enum.PartType.Ball
+    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    mainSphere.CFrame = centerCF
+    mainSphere.Color = Color3.fromRGB(0, 0, 0)
+    mainSphere.Material = Enum.Material.SmoothPlastic
+    mainSphere.Anchored = true
+    mainSphere.CanCollide = false
+    mainSphere.CanTouch = false
+    mainSphere.CastShadow = false
+    mainSphere.Parent = sphereFolder
 
-    -- Datos de las 6 paredes para formar una "habitación" cerrada.
-    -- innerFace es la cara de la pieza que apunta hacia ti (hacia adentro).
+    -- 2. Sistema de Texturas Visuales (Sustituye las líneas de lluvia)
+    local allTextures = {}
+    local r = sphereRadius - 0.1 -- Ligeramente más pequeño que la esfera para evitar Z-fighting
+
+    -- Datos para crear paredes INVISIBLES que proyectan texturas hacia el centro
     local facesData = {
-        {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
-        {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
-        {name = "Front",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
-        {name = "Back",   offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
-        {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
-        {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
+        {offset = Vector3.new(0, r, 0), size = Vector3.new(r*2, 0.1, r*2), face = Enum.NormalId.Bottom}, -- Arriba mirando abajo
+        {offset = Vector3.new(0, -r, 0), size = Vector3.new(r*2, 0.1, r*2), face = Enum.NormalId.Top},    -- Abajo mirando arriba
+        {offset = Vector3.new(r, 0, 0), size = Vector3.new(0.1, r*2, r*2), face = Enum.NormalId.Left},    -- Derecha mirando izq
+        {offset = Vector3.new(-r, 0, 0), size = Vector3.new(0.1, r*2, r*2), face = Enum.NormalId.Right},  -- Izquierda mirando der
+        {offset = Vector3.new(0, 0, r), size = Vector3.new(r*2, r*2, 0.1), face = Enum.NormalId.Front},   -- Atrás mirando al frente
+        {offset = Vector3.new(0, 0, -r), size = Vector3.new(r*2, r*2, 0.1), face = Enum.NormalId.Back},   -- Frente mirando atrás
     }
 
-    local walls = {}
-    local allTextures = {} -- Guardaremos todas las texturas para animarlas simultáneamente
-
-    -- Animaciones de apertura y cierre
-    local spawnInfo = TweenInfo.new(0.6, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
-    local despawnInfo = TweenInfo.new(0.5, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
-
     for _, data in ipairs(facesData) do
-        local wall = Instance.new("Part")
-        wall.Name = data.name
-        wall.Shape = Enum.PartType.Block
-        -- Empieza diminuto en el centro para el efecto de expansión
-        wall.Size = Vector3.new(0.1, 0.1, 0.1) 
-        wall.CFrame = centerCF
-        wall.Color = Color3.fromRGB(0, 0, 0)
-        wall.Material = Enum.Material.SmoothPlastic
-        wall.Anchored = true
-        wall.CanCollide = false
-        wall.CanTouch = false
-        wall.CastShadow = false -- Evita sombras extrañas por la iluminación exterior
-        wall.Parent = dimensionFolder
+        local panel = Instance.new("Part")
+        panel.Size = data.size
+        panel.CFrame = centerCF * CFrame.new(data.offset)
+        panel.Transparency = 1 -- El panel es invisible, solo sirve como lienzo para la textura
+        panel.Anchored = true
+        panel.CanCollide = false
+        panel.CanTouch = false
+        panel.CastShadow = false
+        panel.Parent = sphereFolder
 
-        table.insert(walls, wall)
-
-        -- Función para aplicar las texturas SOLO en la cara interna
-        local function addTexture(textureId, transparency, color, name)
+        -- Función auxiliar para añadir las texturas requeridas
+        local function addTexture(id, trans, color, name)
             local tex = Instance.new("Texture")
             tex.Name = name
-            tex.Texture = "rbxassetid://" .. tostring(textureId)
-            tex.Transparency = transparency
+            tex.Texture = "rbxassetid://" .. id
+            tex.Transparency = trans
             tex.Color3 = color
-            tex.Face = data.innerFace
-            -- Ajustamos la escala de la textura para que se vea densa y de buena calidad
-            tex.StudsPerTileU = boxSize / 1.5
-            tex.StudsPerTileV = boxSize / 1.5
-            tex.Parent = wall
+            tex.Face = data.face
+            tex.StudsPerTileU = sphereRadius * 2
+            tex.StudsPerTileV = sphereRadius * 2
+            tex.Parent = panel
             table.insert(allTextures, tex)
-            return tex
         end
 
-        -- 1. Textura base oscura al 50%
-        addTexture("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "BaseTexture")
-        
-        -- 2. Texturas secundarias con 75% de transparencia
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureUp")
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureDown")
-
-        -- Animamos cada pared desde el centro hacia su posición final
-        local targetCFrame = centerCF * data.offset
-        local spawnTween = TweenService:Create(wall, spawnInfo, {
-            Size = data.size,
-            CFrame = targetCFrame
-        })
-        spawnTween:Play()
+        -- Base oscurecida al 50%
+        addTexture("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "Base")
+        -- Secundarias con 75% de transparencia (comportamiento opuesto)
+        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "Up")
+        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "Down")
     end
 
-    -- Bucle de Animación de las Texturas
+    -- 3. Bucle de Animación (Idéntico a tu estructura original)
     local startTime = os.clock()
     local conn
     
-    local speedBase = 25    -- Velocidad hacia abajo
-    local speedOverlay = 12 -- Velocidad del cruce
+    local speedBase = 25
+    local speedOverlay = 12
 
-    conn = RunService.RenderStepped:Connect(function(deltaTime)
+    conn = RunService.RenderStepped:Connect(function()
         local elapsed = os.clock() - startTime
         
-        if elapsed >= duration or not dimensionFolder.Parent then
+        -- Misma lógica de terminación que tenías
+        if elapsed >= duration or not sphereFolder.Parent then
             if conn then conn:Disconnect() end
+            if sphereFolder and sphereFolder.Parent then
+                sphereFolder:Destroy()
+            end
             return
         end
 
-        local offsetBase = elapsed * speedBase
-        local offsetOverlay = elapsed * speedOverlay
-
-        -- Mueve las texturas de todas las paredes al mismo tiempo
         for _, tex in ipairs(allTextures) do
-            if tex.Name == "BaseTexture" then
-                tex.OffsetStudsV = offsetBase
-            elseif tex.Name == "TopTextureUp" then
-                tex.OffsetStudsV = -offsetOverlay
-            elseif tex.Name == "TopTextureDown" then
-                tex.OffsetStudsV = offsetOverlay
+            if tex.Name == "Base" then
+                tex.OffsetStudsV = elapsed * speedBase
+            elseif tex.Name == "Up" then
+                tex.OffsetStudsV = -(elapsed * speedOverlay)
+            elseif tex.Name == "Down" then
+                tex.OffsetStudsV = elapsed * speedOverlay
             end
         end
     end)
 
-    -- Limpieza de seguridad y animación de salida
-    task.delay(duration - 0.5, function()
-        local activeTweens = 0
-        for _, wall in ipairs(walls) do
-            if wall and wall.Parent then
-                activeTweens = activeTweens + 1
-                -- Las paredes se encogen de vuelta al centro
-                local despawnTween = TweenService:Create(wall, despawnInfo, {
-                    Size = Vector3.new(0.1, 0.1, 0.1),
-                    CFrame = centerCF
-                })
-                despawnTween:Play()
-                
-                despawnTween.Completed:Connect(function()
-                    activeTweens = activeTweens - 1
-                    if activeTweens <= 0 then
-                        if conn then conn:Disconnect() end
-                        if dimensionFolder and dimensionFolder.Parent then 
-                            dimensionFolder:Destroy() 
-                        end
-                    end
-                end)
-            end
+    -- 4. Limpieza de seguridad (Idéntico a tu estructura original, sin esperas extrañas)
+    task.delay(duration, function()
+        if conn then conn:Disconnect() end
+        if sphereFolder and sphereFolder.Parent then
+            sphereFolder:Destroy()
         end
     end)
 end
