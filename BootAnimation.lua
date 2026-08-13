@@ -200,169 +200,129 @@ local RunService = game:GetService("RunService")
 
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
-    dimensionFolder.Name = "AFO_NeonSphere_Cinematic"
+    dimensionFolder.Name = "AFO_NeonSphere_Fixed"
     dimensionFolder.Parent = workspace
 
     local boxSize = 60 
     local half = boxSize / 2
 
-    -- TEXTURAS / MESHES
+    -- TEXTURAS NATIVAS (IDs funcionales de neón y patrones)
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
     
-    -- ID de una malla de esfera invertida (para que se vea desde adentro)
-    local INVERTED_SPHERE_MESH = "rbxassetid://1527559" 
-    
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
     local GLITCH_MAGENTA = Color3.new(18, 2, 15)
     
-    -- Velocidades de rotación en radianes
-    local NEON_SPEED = 2.5 
-    local BG_SPEED = 0.5
+    local ROTATION_SPEED = 1.5 
 
-    -- --- 1. CONSTRUCCIÓN DE LA ESFERA (CAPAS ROTATORIAS) ---
-    -- Creamos 3 capas esféricas para mantener el fondo negro y el brillo morado superpuesto.
-    local function createSphereLayer(name, scale, textureId, color, transparency, material, zIndex)
-        local sphere = Instance.new("Part")
-        sphere.Name = name
-        sphere.Size = Vector3.new(1, 1, 1) -- El tamaño se controla con el Mesh
-        sphere.CFrame = centerCF
-        sphere.Color = color
-        sphere.Material = material
-        sphere.Transparency = transparency
-        sphere.Anchored = true
-        sphere.CanCollide = false
-        sphere.CanTouch = false
-        sphere.CastShadow = false
-        sphere.Parent = dimensionFolder
+    -- --- 1. CONTENEDOR ESFÉRICO NATIVO (SIN DEPENDENCIAS EXTERNAS) ---
+    -- Usamos un cilindro gigante tumbado o una esfera base con múltiples caras para envolver al jugador de forma infalible.
+    local function createEnvironmentShell(name, size, textureId, color, transparency, material)
+        local shell = Instance.new("Part")
+        shell.Name = name
+        shell.Shape = Enum.PartType.Cylinder -- Geometría nativa infalible que carga al 100%
+        shell.Size = Vector3.new(boxSize * 2, size, size) -- Largo y diámetro
+        shell.CFrame = centerCF * CFrame.Angles(0, 0, math.rad(90)) -- Orientado para envolver el eje vertical
+        shell.Color = color
+        shell.Material = material
+        shell.Transparency = transparency
+        shell.Anchored = true
+        shell.CanCollide = false
+        shell.CanTouch = false
+        shell.CastShadow = false
+        shell.Parent = dimensionFolder
 
-        local mesh = Instance.new("SpecialMesh")
-        mesh.MeshType = Enum.MeshType.FileMesh
-        mesh.MeshId = INVERTED_SPHERE_MESH
-        mesh.TextureId = textureId
-        mesh.Scale = Vector3.new(scale, scale, scale)
-        -- Para que el color afecte la textura
-        mesh.VertexColor = Vector3.new(color.R, color.G, color.B)
-        mesh.Parent = sphere
+        -- Si requiere textura, se la inyectamos de forma segura en las caras internas
+        if textureId ~= "" then
+            for _, face in ipairs({Enum.NormalId.Top, Enum.NormalId.Bottom, Enum.NormalId.Front, Enum.NormalId.Back, Enum.NormalId.Left, Enum.NormalId.Right}) do
+                local tex = Instance.new("Texture")
+                tex.Texture = textureId
+                tex.Color3 = color
+                tex.Transparency = transparency
+                tex.Face = face
+                tex.StudsPerTileU = boxSize
+                tex.StudsPerTileV = boxSize
+                tex.Parent = shell
+            end
+        end
 
-        return sphere
+        return shell
     end
 
-    -- Capa 1: Fondo (Ligeramente más grande para quedar detrás)
-    local bgSphere = createSphereLayer("BgSphere", boxSize + 2, BG_TEXTURE_ID, Color3.new(0.3, 0.3, 0.3), 0.2, Enum.Material.SmoothPlastic)
-    
-    -- Capa 2: Glow de la red (Difuminado)
-    local glowSphere = createSphereLayer("GlowSphere", boxSize + 1, NEON_TEXTURE_ID, NEON_MAGENTA, 0.45, Enum.Material.Neon)
-    
-    -- Capa 3: La red principal (Más pequeña y nítida)
-    local mainSphere = createSphereLayer("MainSphere", boxSize, NEON_TEXTURE_ID, NEON_MAGENTA, 0.1, Enum.Material.Neon)
+    -- Fondo negro absoluto para bloquear el exterior
+    local voidShell = createEnvironmentShell("VoidBlack", boxSize, "", Color3.fromRGB(0, 0, 0), 0, Enum.Material.SmoothPlastic)
 
-    -- Capa 4: El Vacío Negro (Para que no se vea el mundo de afuera)
-    local voidBase = Instance.new("Part")
-    voidBase.Size = Vector3.new(1, 1, 1)
-    voidBase.CFrame = centerCF
-    voidBase.Color = Color3.fromRGB(0, 0, 0)
-    voidBase.Material = Enum.Material.SmoothPlastic
-    voidBase.Anchored = true
-    voidBase.CanCollide = false
-    voidBase.CastShadow = false
-    voidBase.Parent = dimensionFolder
-    
-    local voidMesh = Instance.new("SpecialMesh")
-    voidMesh.MeshType = Enum.MeshType.FileMesh
-    voidMesh.MeshId = INVERTED_SPHERE_MESH
-    voidMesh.Scale = Vector3.new(boxSize + 4, boxSize + 4, boxSize + 4)
-    voidMesh.Parent = voidBase
+    -- Capa de Red Neón con rotación fluida
+    local netShell = createEnvironmentShell("NeonNet", boxSize - 2, NEON_TEXTURE_ID, NEON_MAGENTA, 0.15, Enum.Material.Neon)
 
 
-    -- --- 2. HUMO CENTRAL DESDE LOS POLOS (ARRIBA Y ABAJO) ---
+    -- --- 2. HUMO EN LOS POLOS (ARRIBA Y ABAJO) ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(10, 1, 10)
-    topPole.CFrame = centerCF * CFrame.new(0, half - 5, 0)
+    topPole.CFrame = centerCF * CFrame.new(0, half - 2, 0)
     topPole.Transparency = 1
     topPole.Anchored = true
     topPole.Parent = dimensionFolder
 
     local bottomPole = Instance.new("Part")
     bottomPole.Size = Vector3.new(10, 1, 10)
-    bottomPole.CFrame = centerCF * CFrame.new(0, -half + 5, 0)
+    bottomPole.CFrame = centerCF * CFrame.new(0, -half + 2, 0)
     bottomPole.Transparency = 1
     bottomPole.Anchored = true
     bottomPole.Parent = dimensionFolder
 
-    local function createCentralSmoke(polePart, emitDirection)
-        local smokeEmitter = Instance.new("ParticleEmitter")
-        smokeEmitter.Texture = "rbxassetid://13490928216"
-        smokeEmitter.LightEmission = 0.55 
-        smokeEmitter.ZOffset = 0.5 
-        smokeEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
-        smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 15), NumberSequenceKeypoint.new(1, 35)})
-        smokeEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.95), NumberSequenceKeypoint.new(1, 1)})
-        smokeEmitter.Lifetime = NumberRange.new(3, 5)
-        smokeEmitter.Rate = 8 
-        smokeEmitter.Speed = NumberRange.new(5, 10) 
-        smokeEmitter.EmissionDirection = emitDirection
-        smokeEmitter.Rotation = NumberRange.new(0, 360)
-        smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
-        smokeEmitter.Parent = polePart
-
-        local noiseEmitter = Instance.new("ParticleEmitter")
-        noiseEmitter.Texture = NOISE_TEXTURE_ID
-        noiseEmitter.LightEmission = 0.44 
-        noiseEmitter.ZOffset = 0.6 
-        noiseEmitter.Color = ColorSequence.new(Color3.new(1.5, 0.1875, 2.25))
-        noiseEmitter.Size = NumberSequence.new(15, 40)
-        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 1)})
-        noiseEmitter.Lifetime = NumberRange.new(2, 4)
-        noiseEmitter.Rate = 12 
-        noiseEmitter.Speed = NumberRange.new(25, 60)
-        noiseEmitter.Drag = 8 
-        noiseEmitter.EmissionDirection = emitDirection
-        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = polePart
+    local function createPolarSmoke(polePart, emitDirection)
+        local smoke = Instance.new("ParticleEmitter")
+        smoke.Texture = "rbxassetid://13490928216"
+        smoke.LightEmission = 0.6
+        smoke.Color = ColorSequence.new(Color3.new(1.5, 0.2, 2.2))
+        smoke.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 30)})
+        smoke.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.9), NumberSequenceKeypoint.new(1, 1)})
+        smoke.Lifetime = NumberRange.new(3, 5)
+        smoke.Rate = 10
+        smoke.Speed = NumberRange.new(10, 20)
+        smoke.EmissionDirection = emitDirection
+        smoke.SpreadAngle = Vector2.new(45, 45)
+        smoke.Parent = polePart
     end
 
-    createCentralSmoke(topPole, Enum.NormalId.Bottom)
-    createCentralSmoke(bottomPole, Enum.NormalId.Top)
+    createPolarSmoke(topPole, Enum.NormalId.Bottom)
+    createPolarSmoke(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. EL FOCO SUR (LUZ DEL ENTE DIVINO) ---
+
+    -- --- 3. EL FOCO DEL SUR (LUZ CRECIENTE PARA EL ENTE) ---
     local southAuraPart = Instance.new("Part")
     southAuraPart.Size = Vector3.new(2, 2, 2)
-    southAuraPart.CFrame = centerCF * CFrame.new(0, 0, half - 2) -- Sur magnético
+    southAuraPart.CFrame = centerCF * CFrame.new(0, 0, half - 4)
     southAuraPart.Transparency = 1
     southAuraPart.Anchored = true
     southAuraPart.Parent = dimensionFolder
 
     local divineLight = Instance.new("PointLight")
-    divineLight.Color = Color3.new(1, 0.85, 1)
+    divineLight.Color = Color3.new(1, 0.8, 1)
     divineLight.Brightness = 0 
-    divineLight.Range = 10
-    divineLight.CastShadows = false
+    divineLight.Range = 5
     divineLight.Parent = southAuraPart
 
     local auraEmitter = Instance.new("ParticleEmitter")
     auraEmitter.Texture = "rbxassetid://13490928216"
-    auraEmitter.Color = ColorSequence.new(Color3.new(5, 4, 5))
+    auraEmitter.Color = ColorSequence.new(Color3.new(5, 3, 5))
     auraEmitter.LightEmission = 1
-    auraEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 20)})
+    auraEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 25)})
     auraEmitter.Transparency = NumberSequence.new(1)
     auraEmitter.Lifetime = NumberRange.new(2, 3)
-    auraEmitter.Rate = 0 
+    auraEmitter.Rate = 0
     auraEmitter.Speed = NumberRange.new(0)
-    auraEmitter.Rotation = NumberRange.new(0, 360)
-    auraEmitter.RotSpeed = NumberRange.new(-2, 2)
     auraEmitter.Parent = southAuraPart
 
-    -- --- 4. BUCLE DE ROTACIÓN, GLITCH Y LUZ CRECIENTE ---
+
+    -- --- 4. BUCLE DE CONTROL Y ANIMACIÓN ---
     local startTime = os.clock()
     local CLIMAX_TIME = 15
+    local currentAngle = 0
     local conn
-    
-    -- Variables para controlar la rotación continua en radianes
-    local currentNeonAngle = 0
-    local currentBgAngle = 0
-    
+
     conn = RunService.RenderStepped:Connect(function(dt)
         if not dimensionFolder.Parent then
             if conn then conn:Disconnect() end
@@ -370,38 +330,30 @@ local function SpawnAFOSphere(centerCF)
         end
 
         local elapsed = os.clock() - startTime
-        local isGlitching = math.random() > 0.95 
+        local isGlitching = math.random() > 0.96 
         
-        -- Crecimiento progresivo de la luz en el sur
+        -- Crecimiento de la luz en el Sur
         local lightAlpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
-        divineLight.Brightness = lightAlpha * 10
-        divineLight.Range = 10 + (lightAlpha * 40)
+        divineLight.Brightness = lightAlpha * 12
+        divineLight.Range = 10 + (lightAlpha * 45)
         
-        auraEmitter.Rate = math.floor(lightAlpha * 15)
-        local auraTrans = 1 - (lightAlpha * 0.8)
+        auraEmitter.Rate = math.floor(lightAlpha * 20)
+        local auraTrans = 1 - (lightAlpha * 0.85)
         auraEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
             NumberSequenceKeypoint.new(0.5, auraTrans),
             NumberSequenceKeypoint.new(1, 1)
         })
 
-        -- Cinemática del vórtice (Rotación física de las esferas)
-        currentNeonAngle = currentNeonAngle + (NEON_SPEED * dt)
-        currentBgAngle = currentBgAngle - (BG_SPEED * dt) -- El fondo gira al revés para dar más profundidad
-
+        -- Rotación fluida de la red estructural
+        currentAngle = currentAngle + (ROTATION_SPEED * dt)
+        
         if isGlitching then
-            -- Temblor posicional de la malla y latigazo de color
-            mainSphere.CFrame = centerCF * CFrame.Angles(0, currentNeonAngle + math.random(-2, 2) * 0.1, 0)
-            glowSphere.CFrame = centerCF * CFrame.Angles(0, currentNeonAngle + math.random(-2, 2) * 0.1, 0)
-            
-            mainSphere.SpecialMesh.VertexColor = Vector3.new(GLITCH_MAGENTA.R, GLITCH_MAGENTA.G, GLITCH_MAGENTA.B)
+            netShell.CFrame = (centerCF * CFrame.Angles(0, 0, math.rad(90))) * CFrame.Angles(0, currentAngle + math.rad(math.random(-3, 3)), 0)
+            netShell.Color = GLITCH_MAGENTA
         else
-            -- Rotación estable a 45º combinando ejes Y y Z para simular el embuyimiento
-            mainSphere.CFrame = centerCF * CFrame.Angles(0, currentNeonAngle, currentNeonAngle * 0.5)
-            glowSphere.CFrame = centerCF * CFrame.Angles(0, currentNeonAngle, currentNeonAngle * 0.5)
-            bgSphere.CFrame = centerCF * CFrame.Angles(0, currentBgAngle, 0)
-
-            mainSphere.SpecialMesh.VertexColor = Vector3.new(NEON_MAGENTA.R, NEON_MAGENTA.G, NEON_MAGENTA.B)
+            netShell.CFrame = (centerCF * CFrame.Angles(0, 0, math.rad(90))) * CFrame.Angles(0, currentAngle, currentAngle * 0.5)
+            netShell.Color = NEON_MAGENTA
         end
     end)
 end
