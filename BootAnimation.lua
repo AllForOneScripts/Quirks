@@ -200,6 +200,317 @@ local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
+    -- AISLAMIENTO TOTAL: Evita que cualquier fallo o carga retrase tu cinemática.
+    task.spawn(function()
+        pcall(function()
+            -- Validación por si se envía un CFrame nulo
+            centerCF = typeof(centerCF) == "CFrame" and centerCF or CFrame.new()
+
+            local dimensionFolder = Instance.new("Folder")
+            dimensionFolder.Name = "AFO_Dimension_Effect"
+            -- Lo guardamos en Terrain para que no interfiera con tus escaneos de workspace:GetDescendants()
+            dimensionFolder.Parent = workspace.Terrain
+
+            local boxSize = 60 
+            local half = boxSize / 2
+            local wallThickness = 2
+
+            -- --- ASSETS Y CONFIGURACIÓN ---
+            local NEON_TEXTURE_ID = "rbxassetid://17146735339" 
+            local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
+            local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
+            local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
+
+            local AFO_CRIMSON = Color3.fromHex("960A1E")         
+            local AFO_ELECTRIC_VIOLET = Color3.fromHex("550F6E") 
+            local AFO_ABYSSAL = Color3.fromHex("230537")         
+            local AFO_BLACK = Color3.fromRGB(5, 5, 8)            
+
+            local NEON_SPEED = 180 
+            local BG_SPEED = 12    
+            local CLIMAX_TIME = 20 
+
+            -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA ---
+            local facesData = {
+                {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
+                {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
+                {name = "Front",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
+                {name = "Back",   offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
+                {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
+                {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
+            }
+
+            local allTextures = {}
+
+            for _, data in ipairs(facesData) do
+                local wall = Instance.new("Part")
+                wall.Name = data.name
+                wall.Shape = Enum.PartType.Block
+                wall.Size = data.size
+                wall.CFrame = centerCF * data.offset
+                wall.Color = AFO_BLACK 
+                wall.Material = Enum.Material.SmoothPlastic
+                wall.Anchored = true
+                
+                -- PREVENCIÓN ESTRICTA DE COLISIONES
+                wall.CanCollide = false
+                wall.CanTouch = false
+                wall.CanQuery = false 
+                wall.CastShadow = false 
+                wall.Massless = true
+                
+                wall.Parent = dimensionFolder
+
+                local bgUp = Instance.new("Texture")
+                bgUp.Name = "BgUp"
+                bgUp.Texture = BG_TEXTURE_ID
+                bgUp.Transparency = 0.45 
+                bgUp.Color3 = AFO_ABYSSAL 
+                bgUp.Face = data.innerFace
+                bgUp.StudsPerTileU = boxSize / 1.5
+                bgUp.StudsPerTileV = boxSize / 1.5
+                bgUp.ZIndex = 1 
+                bgUp.Parent = wall
+                table.insert(allTextures, bgUp)
+
+                local bgDown = bgUp:Clone()
+                bgDown.Name = "BgDown"
+                bgDown.Parent = wall
+                table.insert(allTextures, bgDown)
+
+                local texNeonGlow = Instance.new("Texture")
+                texNeonGlow.Name = "NeonGlow"
+                texNeonGlow.Texture = NEON_TEXTURE_ID
+                texNeonGlow.Transparency = 0.6 
+                texNeonGlow.Color3 = AFO_ELECTRIC_VIOLET
+                texNeonGlow.Face = data.innerFace
+                texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
+                texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
+                texNeonGlow.ZIndex = 2 
+                texNeonGlow.Parent = wall
+                table.insert(allTextures, texNeonGlow)
+
+                local texNeon = Instance.new("Texture")
+                texNeon.Name = "NeonMain"
+                texNeon.Texture = NEON_TEXTURE_ID
+                texNeon.Transparency = 0.2 
+                texNeon.Color3 = AFO_CRIMSON
+                texNeon.Face = data.innerFace
+                texNeon.StudsPerTileU = boxSize * 3 
+                texNeon.StudsPerTileV = boxSize * 3 
+                texNeon.ZIndex = 3 
+                texNeon.Parent = wall
+                table.insert(allTextures, texNeon)
+            end
+
+            -- --- 2. HUMO MULTICAPA ---
+            local topPole = Instance.new("Part")
+            topPole.Size = Vector3.new(boxSize, 1, boxSize)
+            topPole.CFrame = centerCF * CFrame.new(0, half, 0)
+            topPole.Transparency = 1
+            topPole.Anchored = true
+            topPole.CanCollide = false
+            topPole.CanTouch = false
+            topPole.CanQuery = false
+            topPole.Massless = true
+            topPole.Parent = dimensionFolder
+
+            local bottomPole = topPole:Clone()
+            bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
+            bottomPole.Parent = dimensionFolder
+
+            local function createSinisterSmoke(polePart, emitDirection)
+                local smokeEmitter = Instance.new("ParticleEmitter")
+                smokeEmitter.Texture = SMOKE_TEXTURE_ID
+                smokeEmitter.LightEmission = 0.05 
+                smokeEmitter.ZOffset = 0.5 
+                smokeEmitter.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, AFO_ELECTRIC_VIOLET),
+                    ColorSequenceKeypoint.new(0.4, AFO_CRIMSON),
+                    ColorSequenceKeypoint.new(1, AFO_BLACK)
+                })
+                smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 15), NumberSequenceKeypoint.new(1, 45)})
+                smokeEmitter.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 1), 
+                    NumberSequenceKeypoint.new(0.2, 0.75), 
+                    NumberSequenceKeypoint.new(0.8, 0.85),
+                    NumberSequenceKeypoint.new(1, 1)
+                })
+                smokeEmitter.Lifetime = NumberRange.new(5, 7)
+                smokeEmitter.Rate = 25 
+                smokeEmitter.Speed = NumberRange.new(4, 9) 
+                smokeEmitter.EmissionDirection = emitDirection
+                smokeEmitter.Rotation = NumberRange.new(0, 360)
+                smokeEmitter.RotSpeed = NumberRange.new(-15, 15)
+                smokeEmitter.Parent = polePart
+            end
+
+            createSinisterSmoke(topPole, Enum.NormalId.Bottom)
+            createSinisterSmoke(bottomPole, Enum.NormalId.Top)
+
+            -- --- 3. EFECTO "SOFT" AMBIENTAL ---
+            local softVolume = Instance.new("Part")
+            softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
+            softVolume.CFrame = centerCF
+            softVolume.Anchored = true
+            softVolume.Transparency = 1
+            softVolume.CanCollide = false
+            softVolume.CanTouch = false
+            softVolume.CanQuery = false
+            softVolume.Massless = true
+            softVolume.Parent = dimensionFolder
+
+            local centerLight = Instance.new("PointLight")
+            centerLight.Color = AFO_ELECTRIC_VIOLET
+            centerLight.Range = boxSize * 0.9
+            centerLight.Brightness = 0 
+            centerLight.Shadows = false
+            centerLight.Parent = softVolume
+
+            local hazeEmitter = Instance.new("ParticleEmitter")
+            hazeEmitter.Name = "InternalHaze"
+            hazeEmitter.Texture = SMOKE_TEXTURE_ID
+            hazeEmitter.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, AFO_ABYSSAL),
+                ColorSequenceKeypoint.new(1, AFO_ELECTRIC_VIOLET)
+            })
+            hazeEmitter.LightEmission = 0.02
+            hazeEmitter.ZOffset = -1 
+            hazeEmitter.Size = NumberSequence.new(boxSize * 0.9) 
+            hazeEmitter.Transparency = NumberSequence.new(1) 
+            hazeEmitter.Lifetime = NumberRange.new(10)
+            hazeEmitter.Rate = 0 
+            hazeEmitter.Speed = NumberRange.new(0)
+            hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
+            hazeEmitter.Parent = softVolume
+
+            -- --- 4. VIENTO CAÓTICO ---
+            local windVolume = softVolume:Clone()
+            windVolume.Name = "WindVolume"
+            windVolume:ClearAllChildren()
+            windVolume.Parent = dimensionFolder
+
+            local chaoticWind = Instance.new("ParticleEmitter")
+            chaoticWind.Name = "ChaoticWind"
+            chaoticWind.Texture = NOISE_TEXTURE_ID 
+            chaoticWind.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, AFO_ELECTRIC_VIOLET),
+                ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
+                ColorSequenceKeypoint.new(1, AFO_BLACK)
+            })
+            chaoticWind.LightEmission = 0.3
+            chaoticWind.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 3), NumberSequenceKeypoint.new(1, 0)})
+            chaoticWind.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.6), NumberSequenceKeypoint.new(1, 1)})
+            chaoticWind.Lifetime = NumberRange.new(2, 4)
+            chaoticWind.Rate = 80 
+            chaoticWind.Speed = NumberRange.new(15, 25) 
+            chaoticWind.SpreadAngle = Vector2.new(360, 360) 
+            chaoticWind.Acceleration = Vector3.new(0, -5, 0)
+            chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
+            chaoticWind.Parent = windVolume
+
+            -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES ---
+            local southPole = Instance.new("Part")
+            southPole.Size = Vector3.new(boxSize, boxSize, 2)
+            southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
+            southPole.Anchored = true
+            southPole.Transparency = 1
+            southPole.CanCollide = false
+            southPole.CanTouch = false
+            southPole.CanQuery = false
+            southPole.Massless = true
+            southPole.Parent = dimensionFolder
+
+            local southLight = Instance.new("PointLight")
+            southLight.Color = AFO_CRIMSON 
+            southLight.Range = boxSize * 1.62 
+            southLight.Brightness = 0 
+            southLight.Shadows = false 
+            southLight.Parent = southPole
+
+            local southParticles = Instance.new("ParticleEmitter")
+            southParticles.Name = "SouthEnvelopingVoid"
+            southParticles.Texture = SMOKE_TEXTURE_ID
+            southParticles.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, AFO_BLACK),
+                ColorSequenceKeypoint.new(0.4, AFO_ELECTRIC_VIOLET),
+                ColorSequenceKeypoint.new(0.8, AFO_CRIMSON),
+                ColorSequenceKeypoint.new(1, AFO_ABYSSAL)
+            })
+            southParticles.LightEmission = 0.1
+            southParticles.ZOffset = 0.2
+            southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 12), NumberSequenceKeypoint.new(1, 0)})
+            southParticles.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1), 
+                NumberSequenceKeypoint.new(0.3, 0.4), 
+                NumberSequenceKeypoint.new(0.7, 0.4), 
+                NumberSequenceKeypoint.new(1, 1)
+            })
+            southParticles.Lifetime = NumberRange.new(5, 7)
+            southParticles.Rate = 0 
+            southParticles.Speed = NumberRange.new(20, 35) 
+            southParticles.EmissionDirection = Enum.NormalId.Front
+            southParticles.SpreadAngle = Vector2.new(80, 80) 
+            southParticles.Drag = 3 
+            southParticles.Shape = Enum.ParticleEmitterShape.Box
+            southParticles.Parent = southPole
+
+            -- --- 6. BUCLE DE ANIMACIÓN (Protegido contra crashes) ---
+            local startTime = os.clock()
+            local conn
+            
+            conn = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if not dimensionFolder or not dimensionFolder.Parent then
+                        if conn then conn:Disconnect() end
+                        return
+                    end
+
+                    local elapsed = os.clock() - startTime
+                    local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
+                    
+                    southLight.Brightness = alpha * 12 
+                    centerLight.Brightness = alpha * 4 
+                    
+                    southParticles.Rate = alpha * 150 -- Reducido levemente para evitar lag en carga de entorno
+
+                    hazeEmitter.Rate = alpha * 15 
+                    local softTrans = 1 - (alpha * 0.85) 
+                    
+                    hazeEmitter.Transparency = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0, 1),
+                        NumberSequenceKeypoint.new(0.5, softTrans),
+                        NumberSequenceKeypoint.new(1, 1)
+                    })
+                    
+                    local currentSize = (boxSize * 0.85) + (alpha * boxSize * 0.25)
+                    hazeEmitter.Size = NumberSequence.new(currentSize)
+
+                    local offsetNeon = elapsed * NEON_SPEED
+                    local offsetBg = elapsed * BG_SPEED
+
+                    for _, tex in ipairs(allTextures) do
+                        if tex and tex.Parent then
+                            if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
+                                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                                    tex.OffsetStudsV = offsetNeon
+                                else
+                                    tex.OffsetStudsU = offsetNeon
+                                end
+                            elseif tex.Name == "BgUp" then
+                                tex.OffsetStudsV = -offsetBg
+                            elseif tex.Name == "BgDown" then
+                                tex.OffsetStudsV = offsetBg
+                            end
+                        end
+                    end
+                end)
+            end)
+        end)
+    end)
+end
+
+local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
     dimensionFolder.Parent = workspace
