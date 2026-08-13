@@ -197,54 +197,108 @@ end
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
-local function SpawnAFOSphere(centerCF)
+local function SpawnAFOSphere(centerCF, duration)
     local sphereFolder = Instance.new("Folder")
-    sphereFolder.Name = "AFO_Dimension"
+    sphereFolder.Name = "AFO_Sphere_Effect"
     sphereFolder.Parent = workspace
 
-    -- Radio de la dimensión (suficientemente grande para atrapar a los jugadores)
-    local sphereRadius = 70 
-
-    -- ## 1. ESFERA NEGRA (El Vacío)
+    local sphereRadius = 15
     local mainSphere = Instance.new("Part")
-    mainSphere.Name = "VoidSphere"
-    -- Usamos Block en lugar de Ball porque el SpecialMesh definirá la forma real
-    mainSphere.Shape = Enum.PartType.Block 
-    mainSphere.Size = Vector3.new(1, 1, 1) 
+    mainSphere.Shape = Enum.PartType.Ball
+    -- Iniciamos con tamaño 0 para animar su entrada
+    mainSphere.Size = Vector3.new(0, 0, 0) 
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.Neon -- Neon negro no emite luz, pero ignora sombras (vacío perfecto)
+    mainSphere.Material = Enum.Material.SmoothPlastic
     mainSphere.Anchored = true
     mainSphere.CanCollide = false
     mainSphere.CanTouch = false
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- TRUCO PARA DIMENSIONES: Malla invertida para que la esfera sea visible desde ADENTRO
-    local invertedMesh = Instance.new("SpecialMesh")
-    invertedMesh.MeshType = Enum.MeshType.FileMesh
-    invertedMesh.MeshId = "rbxassetid://437220420" -- ID público de una esfera con caras invertidas
-    invertedMesh.Scale = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
-    invertedMesh.Parent = mainSphere
+    -- Función auxiliar para aplicar texturas en todas las caras de la esfera
+    local function addTextures(textureId, transparency, color, name)
+        local textures = {}
+        for _, face in ipairs(Enum.NormalId:GetEnumItems()) do
+            local tex = Instance.new("Texture")
+            tex.Name = name
+            tex.Texture = "rbxassetid://" .. tostring(textureId)
+            tex.Transparency = transparency
+            tex.Color3 = color
+            tex.Face = face
+            -- Ajustamos la escala para que cubra bien la curvatura
+            tex.StudsPerTileU = sphereRadius * 2
+            tex.StudsPerTileV = sphereRadius * 2
+            tex.Parent = mainSphere
+            table.insert(textures, tex)
+        end
+        return textures
+    end
 
-    -- ## 2. TEXTURA PRINCIPAL: 72194288856630, oscurecida 50%
-    local mainTexture = Instance.new("Texture")
-    mainTexture.Texture = "rbxassetid://72194288856630"
-    mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
-    mainTexture.StudsPerTileU = sphereRadius * 1.2
-    mainTexture.StudsPerTileV = sphereRadius * 1.2
-    mainTexture.Parent = mainSphere
+    -- 1. Textura base (Oscurecida al 50% multiplicando su color por 0.5)
+    local baseTextures = addTextures("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "BaseTexture")
 
-    -- ## 3. TEXTURA OVERLAY: 5748262504, 75% transparente
-    local overlayTexture = Instance.new("Texture")
-    overlayTexture.Texture = "rbxassetid://5748262504"
-    overlayTexture.Transparency = 0.75
-    overlayTexture.StudsPerTileU = sphereRadius * 1.2
-    overlayTexture.StudsPerTileV = sphereRadius * 1.2
-    overlayTexture.Parent = mainSphere
+    -- 2. Textura secundaria (Transparencia 75%, moviéndose en direcciones opuestas)
+    -- Al poner una capa subiendo y otra bajando, generamos el efecto de expansión desde el centro
+    local topTexturesUp = addTextures("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureUp")
+    local topTexturesDown = addTextures("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureDown")
 
-    return sphereFolder
+    -- Animación de entrada (Spawn suave)
+    local spawnInfo = TweenInfo.new(0.5, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+    local spawnTween = TweenService:Create(mainSphere, spawnInfo, {
+        Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
+    })
+    spawnTween:Play()
+
+    -- Bucle de Animación de Texturas
+    local startTime = os.clock()
+    local conn
+    
+    local speedBase = 25    -- Velocidad muy rápida hacia abajo
+    local speedOverlay = 12 -- Velocidad para el efecto cruzado secundario
+
+    conn = RunService.RenderStepped:Connect(function(deltaTime)
+        local elapsed = os.clock() - startTime
+        
+        if elapsed >= duration or not sphereFolder.Parent then
+            if conn then conn:Disconnect() end
+            return
+        end
+
+        -- Calculamos el desplazamiento continuo
+        local offsetBase = elapsed * speedBase
+        local offsetOverlay = elapsed * speedOverlay
+
+        -- Aplicamos el desplazamiento a las texturas en las 6 caras
+        for i = 1, 6 do
+            -- La textura base se desplaza continuamente en V (hacia abajo)
+            baseTextures[i].OffsetStudsV = offsetBase
+            
+            -- Las texturas secundarias se desplazan en direcciones opuestas
+            topTexturesUp[i].OffsetStudsV = -offsetOverlay
+            topTexturesDown[i].OffsetStudsV = offsetOverlay
+        end
+    end)
+
+    -- Limpieza de seguridad y animación de salida
+    task.delay(duration - 0.5, function()
+        if mainSphere and mainSphere.Parent then
+            local despawnInfo = TweenInfo.new(0.5, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
+            local despawnTween = TweenService:Create(mainSphere, despawnInfo, {
+                Size = Vector3.new(0, 0, 0)
+            })
+            despawnTween:Play()
+            
+            -- Esperamos que termine la animación antes de destruir
+            despawnTween.Completed:Wait()
+            if conn then conn:Disconnect() end
+            if sphereFolder and sphereFolder.Parent then 
+                sphereFolder:Destroy() 
+            end
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
