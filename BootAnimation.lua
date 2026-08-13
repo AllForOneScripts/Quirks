@@ -201,10 +201,10 @@ local Lighting = game:GetService("Lighting")
 
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
-    dimensionFolder.Name = "AFO_Cinematic_Dimension"
+    dimensionFolder.Name = "AFO_Glitch_Dimension"
     dimensionFolder.Parent = workspace
 
-    local boxSize = 75 -- Ligeramente más grande para dar espacio a la cámara
+    local boxSize = 75 
     local half = boxSize / 2
     local wallThickness = 2
 
@@ -213,39 +213,43 @@ local function SpawnAFOSphere(centerCF)
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
     
-    -- COLORES HDR (Ajustados para no cegar la cámara)
-    -- El morado ahora es profundo y abisal, no invasivo.
-    local ABYSSAL_PURPLE = Color3.new(2.5, 0.2, 3.0) 
-    local DIVINE_WHITE = Color3.new(4, 4, 4.5) -- Un blanco ligeramente frío/celestial
+    local ABYSSAL_PURPLE = Color3.new(3.5, 0.1, 4.0) -- Más brillante y agresivo
+    local GLITCH_RED = Color3.new(5, 0, 0) -- Para saltos de inestabilidad
     
-    local NEON_SPEED = 60 -- Más lento. La divinidad impone respeto, no prisa.
-    local BG_SPEED = 8
+    local NEON_SPEED = 250 -- Velocidad absurda para las líneas
+    local BG_SPEED = 15
 
-    -- --- 1. POST-PROCESADO LOCAL (Efectos de Cámara) ---
-    -- Esto le da el "Toque Artístico" a los colores sin tocar las piezas.
+    -- --- 1. EFECTOS DE POST-PROCESADO (GLITCH Y CAOS) ---
     local cc = Instance.new("ColorCorrectionEffect")
-    cc.Brightness = -0.05
-    cc.Contrast = 0.2
-    cc.Saturation = 0.1
-    cc.TintColor = Color3.fromRGB(240, 230, 255) -- Frío y lúgubre
+    cc.Brightness = -0.1
+    cc.Contrast = 0.3
+    cc.Saturation = 0.2
+    cc.TintColor = Color3.fromRGB(230, 210, 255)
     cc.Parent = Lighting
+
+    local bloom = Instance.new("BloomEffect")
+    bloom.Intensity = 0.5
+    bloom.Size = 24
+    bloom.Threshold = 1.5
+    bloom.Parent = Lighting
     
-    -- Limpieza automática del efecto de cámara si la dimensión desaparece
     dimensionFolder.Destroying:Connect(function()
         cc:Destroy()
+        bloom:Destroy()
     end)
 
-    -- --- 2. CONSTRUCCIÓN DE LA DIMENSIÓN ---
+    -- --- 2. CONSTRUCCIÓN DE LA PRISIÓN DIMENSIONAL ---
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
         {name = "North",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},  -- TU POSICIÓN
-        {name = "South",  offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front}, -- EL SER DIVINO
+        {name = "South",  offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front}, -- EL SER
         {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
         {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
     }
 
     local allTextures = {}
+    local glitchTextures = {}
 
     for _, data in ipairs(facesData) do
         local wall = Instance.new("Part")
@@ -253,131 +257,99 @@ local function SpawnAFOSphere(centerCF)
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = Color3.fromRGB(5, 0, 10) -- Fondo casi negro, morado muy oscuro
+        wall.Color = Color3.fromRGB(0, 0, 0)
         wall.Material = Enum.Material.Neon
         wall.Anchored = true
         wall.CanCollide = false
-        wall.CanTouch = false
         wall.CastShadow = false 
-        wall.Transparency = data.name == "South" and 0.2 or 0 -- El Sur es un poco más etéreo
         wall.Parent = dimensionFolder
 
-        -- Capa de fondo profundo
+        -- Fondo inestable
         local bgTex = Instance.new("Texture")
         bgTex.Name = "BgBase"
         bgTex.Texture = BG_TEXTURE_ID
-        bgTex.Transparency = 0.7 -- Muy sutil, mantiene el fondo visible pero oscuro
-        bgTex.Color3 = Color3.new(0.8, 0.8, 1)
+        bgTex.Transparency = 0.6 
+        bgTex.Color3 = Color3.new(0.6, 0.4, 1)
         bgTex.Face = data.innerFace
-        bgTex.StudsPerTileU = boxSize / 2
-        bgTex.StudsPerTileV = boxSize / 2
+        bgTex.StudsPerTileU = boxSize / 1.5
+        bgTex.StudsPerTileV = boxSize / 1.5
         bgTex.Parent = wall
         table.insert(allTextures, bgTex)
+        table.insert(glitchTextures, bgTex)
 
-        -- Capa de energía morada (ahora controlada)
-        local texNeonGlow = Instance.new("Texture")
-        texNeonGlow.Name = "NeonGlow"
-        texNeonGlow.Texture = NEON_TEXTURE_ID
-        texNeonGlow.Transparency = 0.65 -- Se reduce la agresividad para no inundar
-        texNeonGlow.Color3 = ABYSSAL_PURPLE 
-        texNeonGlow.Face = data.innerFace
-        texNeonGlow.StudsPerTileU = boxSize * 2.5 
-        texNeonGlow.StudsPerTileV = boxSize * 2.5 
-        texNeonGlow.Parent = wall
-        table.insert(allTextures, texNeonGlow)
+        -- NIEBLA DE RUIDO EN LAS PAREDES (Efecto de estática/Glitch)
+        local noiseTex = Instance.new("Texture")
+        noiseTex.Name = "NoiseStatic"
+        noiseTex.Texture = NOISE_TEXTURE_ID
+        noiseTex.Transparency = 0.5
+        noiseTex.Color3 = ABYSSAL_PURPLE
+        noiseTex.Face = data.innerFace
+        noiseTex.StudsPerTileU = boxSize * 1.5
+        noiseTex.StudsPerTileV = boxSize * 1.5
+        noiseTex.Parent = wall
+        table.insert(allTextures, noiseTex)
+
+        -- LÍNEAS AGRESIVAS (Grid de contención distorsionado)
+        local texLines = Instance.new("Texture")
+        texLines.Name = "NeonLines"
+        texLines.Texture = NEON_TEXTURE_ID
+        texLines.Transparency = 0.2
+        texLines.Color3 = ABYSSAL_PURPLE
+        texLines.Face = data.innerFace
+        -- Aquí está el truco: estiramos la textura extremo en un eje y la comprimimos en otro
+        texLines.StudsPerTileU = boxSize * 4
+        texLines.StudsPerTileV = 2 -- Crea el efecto de líneas veloces
+        texLines.Parent = wall
+        table.insert(allTextures, texLines)
+        table.insert(glitchTextures, texLines)
     end
 
-    -- --- 3. EL AURA DEL SUR (La Entidad Maligna) ---
-    -- Añadimos un punto de interés visual en el sur para guiar las cámaras
-    local entityAura = Instance.new("Part")
-    entityAura.Size = Vector3.new(10, 10, 2)
-    entityAura.CFrame = centerCF * CFrame.new(0, 0, half - 5) -- Al sur, cerca de la pared
-    entityAura.Transparency = 1
-    entityAura.Anchored = true
-    entityAura.Parent = dimensionFolder
+    -- --- 3. HUMO VIOLENTO (MIASMA DESDE EL SUR) ---
+    -- En vez de nubes aburridas, son disparos de energía oscura que intentan alcanzarte pero se rompen
+    local entityOrigin = Instance.new("Part")
+    entityOrigin.Size = Vector3.new(boxSize, boxSize/2, 2)
+    entityOrigin.CFrame = centerCF * CFrame.new(0, 0, half - 2)
+    entityOrigin.Transparency = 1
+    entityOrigin.Anchored = true
+    entityOrigin.Parent = dimensionFolder
 
-    local divineHalo = Instance.new("ParticleEmitter")
-    divineHalo.Texture = "rbxassetid://13490928216"
-    divineHalo.Color = ColorSequence.new(DIVINE_WHITE)
-    divineHalo.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 45)})
-    divineHalo.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.7), NumberSequenceKeypoint.new(1, 1)})
-    divineHalo.LightEmission = 1
-    divineHalo.Lifetime = NumberRange.new(4, 6)
-    divineHalo.Rate = 3
-    divineHalo.Speed = NumberRange.new(0)
-    divineHalo.Rotation = NumberRange.new(0, 360)
-    divineHalo.RotSpeed = NumberRange.new(-3, 3)
-    divineHalo.EmissionDirection = Enum.NormalId.Back
-    divineHalo.Parent = entityAura
-
-    -- --- 4. NIEBLA ABISAL (Techo y Suelo controlados) ---
-    -- En vez de llenar la pantalla, esta niebla se pega a las superficies (suelo y techo)
-    local function createCreepingSmoke(yOffset, emitDir)
-        local pole = Instance.new("Part")
-        pole.Size = Vector3.new(boxSize, 1, boxSize)
-        pole.CFrame = centerCF * CFrame.new(0, yOffset, 0)
-        pole.Transparency = 1
-        pole.Anchored = true
-        pole.Parent = dimensionFolder
-
-        local smoke = Instance.new("ParticleEmitter")
-        smoke.Texture = NOISE_TEXTURE_ID
-        smoke.Color = ColorSequence.new(ABYSSAL_PURPLE)
-        smoke.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 20), NumberSequenceKeypoint.new(1, 30)})
-        -- Empieza invisible, aparece suavemente y desaparece antes de tocar el centro
-        smoke.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1), 
-            NumberSequenceKeypoint.new(0.3, 0.85), 
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        smoke.LightEmission = 0.3
-        smoke.Lifetime = NumberRange.new(5, 7)
-        smoke.Rate = 15 
-        smoke.Speed = NumberRange.new(2, 5) 
-        smoke.Drag = 2 -- Fricción para que no flote hacia la cámara central
-        smoke.EmissionDirection = emitDir
-        smoke.Parent = pole
-    end
-
-    createCreepingSmoke(half - 2, Enum.NormalId.Bottom) -- Techo bajando ligeramente
-    createCreepingSmoke(-half + 2, Enum.NormalId.Top)   -- Suelo subiendo ligeramente
-
-    -- --- 5. VIENTO CORRUPTO (Flujo hacia el Sur) ---
-    -- En lugar de volar aleatoriamente, el viento es atraído magnéticamente hacia el ente divino (Sur).
-    local windVolume = Instance.new("Part")
-    windVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
-    windVolume.CFrame = centerCF
-    windVolume.Anchored = true
-    windVolume.CanCollide = false
-    windVolume.Transparency = 1
-    windVolume.Parent = dimensionFolder
-
-    local angelicWind = Instance.new("ParticleEmitter")
-    angelicWind.Name = "AngelicWind"
-    angelicWind.Texture = "rbxassetid://5860714768" 
-    angelicWind.Color = ColorSequence.new(Color3.new(3, 3, 3)) 
-    angelicWind.LightEmission = 0.8 
-    angelicWind.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(0.5, 0.6), -- Ligeramente más grandes pero más dispersas
-        NumberSequenceKeypoint.new(1, 0)
-    })
-    angelicWind.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.4), 
+    local miasmaEmitter = Instance.new("ParticleEmitter")
+    miasmaEmitter.Texture = NOISE_TEXTURE_ID
+    miasmaEmitter.Color = ColorSequence.new(ABYSSAL_PURPLE)
+    miasmaEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
+    miasmaEmitter.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2), -- Nace visible y agresivo
+        NumberSequenceKeypoint.new(0.6, 0.8), 
         NumberSequenceKeypoint.new(1, 1)
     })
-    angelicWind.Lifetime = NumberRange.new(5, 8)
-    angelicWind.Rate = 80 
-    angelicWind.Speed = NumberRange.new(0, 1) 
-    -- EL ARTE DEL MOVIMIENTO: Aceleración constante hacia el Sur (+Z)
-    angelicWind.Acceleration = Vector3.new(0, 0, 3) 
-    angelicWind.Shape = Enum.ParticleEmitterShape.Box 
-    angelicWind.EmissionDirection = Enum.NormalId.Front
-    angelicWind.Parent = windVolume
+    miasmaEmitter.LightEmission = 0.6
+    miasmaEmitter.Lifetime = NumberRange.new(1.5, 2.5) -- Vida corta para que no tape todo
+    miasmaEmitter.Rate = 45 
+    miasmaEmitter.Speed = NumberRange.new(80, 120) -- Disparado con una fuerza brutal
+    miasmaEmitter.Drag = 12 -- Frena drásticamente en el centro de la escena
+    miasmaEmitter.SpreadAngle = Vector2.new(15, 15) -- Muy concentrado hacia ti
+    miasmaEmitter.EmissionDirection = Enum.NormalId.Back
+    miasmaEmitter.Rotation = NumberRange.new(0, 360)
+    miasmaEmitter.RotSpeed = NumberRange.new(-45, 45) -- Giro caótico
+    miasmaEmitter.Parent = entityOrigin
+
+    -- Mota de inestabilidad tipo chispa/glitch
+    local glitchSparks = Instance.new("ParticleEmitter")
+    glitchSparks.Texture = "rbxassetid://5860714768"
+    glitchSparks.Color = ColorSequence.new(Color3.new(5, 5, 5))
+    glitchSparks.Size = NumberSequence.new(0.2, 0.8)
+    glitchSparks.Transparency = NumberSequence.new(0, 1)
+    glitchSparks.LightEmission = 1
+    glitchSparks.Lifetime = NumberRange.new(0.5, 1.5)
+    glitchSparks.Rate = 100
+    glitchSparks.Speed = NumberRange.new(20, 50)
+    glitchSparks.Drag = 5
+    glitchSparks.SpreadAngle = Vector2.new(90, 90)
+    glitchSparks.EmissionDirection = Enum.NormalId.Back
+    glitchSparks.Parent = entityOrigin
 
 
-    -- --- 6. ANIMACIÓN CINEMÁTICA Y "RESPIRACIÓN" ---
+    -- --- 4. BUCLE DE INESTABILIDAD (GLITCH Y LÍNEAS) ---
     local startTime = os.clock()
     local conn
     
@@ -389,33 +361,59 @@ local function SpawnAFOSphere(centerCF)
 
         local elapsed = os.clock() - startTime
         
-        -- Movimiento de las texturas
-        local offsetNeon = elapsed * NEON_SPEED
+        -- Movimiento constante altísimo para las líneas de energía
+        local offsetLines = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
-
-        -- Respiración del entorno (Senoidal)
-        -- Da una sensación de que el lugar palpita o respira suavemente (ciclo de 4 segundos)
-        local pulse = (math.sin(elapsed * 1.5) + 1) / 2 -- Valor entre 0 y 1
         
-        -- El aura divina del ente palpita
-        divineHalo.LightEmission = 0.8 + (pulse * 0.4) -- Entre 0.8 y 1.2
-        divineHalo.Rate = 2 + math.floor(pulse * 3)
-
-        for _, tex in ipairs(allTextures) do
-            if tex.Name == "NeonGlow" then
-                -- Respiración del morado, nunca llega a tapar la cámara
-                tex.Transparency = 0.65 + (pulse * 0.15) 
-                
-                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                    tex.OffsetStudsV = offsetNeon
-                else
-                    tex.OffsetStudsU = offsetNeon
+        -- SISTEMA DE GLITCH (Aleatoriedad para simular colapso)
+        local isGlitching = math.random() > 0.92 -- 8% de probabilidad por frame de romperse
+        
+        if isGlitching then
+            -- Efecto de cámara Glitch
+            cc.Contrast = 0.8
+            cc.Brightness = 0.1
+            cc.TintColor = Color3.fromRGB(255, 180, 255) -- Destello magenta agresivo
+            bloom.Intensity = 1.5
+            
+            -- Las partículas se vuelven locas
+            miasmaEmitter.RotSpeed = NumberRange.new(-180, 180)
+            
+            -- Salto de texturas (Tearing dimensional)
+            for _, tex in ipairs(glitchTextures) do
+                tex.OffsetStudsU = math.random(-100, 100)
+                tex.OffsetStudsV = math.random(-100, 100)
+                if tex.Name == "NeonLines" then
+                    tex.Color3 = GLITCH_RED
                 end
-            elseif tex.Name == "BgBase" then
-                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                    tex.OffsetStudsV = -offsetBg
-                else
-                    tex.OffsetStudsU = offsetBg
+            end
+        else
+            -- Retorno a la normalidad opresiva
+            cc.Contrast = 0.3
+            cc.Brightness = -0.1
+            cc.TintColor = Color3.fromRGB(230, 210, 255)
+            bloom.Intensity = 0.5
+            
+            miasmaEmitter.RotSpeed = NumberRange.new(-45, 45)
+            
+            -- Movimiento continuo
+            for _, tex in ipairs(allTextures) do
+                if tex.Name == "NeonLines" then
+                    tex.Color3 = ABYSSAL_PURPLE
+                    if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                        tex.OffsetStudsU = offsetLines
+                    else
+                        tex.OffsetStudsV = offsetLines
+                    end
+                elseif tex.Name == "BgBase" then
+                    if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                        tex.OffsetStudsV = -offsetBg
+                    else
+                        tex.OffsetStudsU = offsetBg
+                    end
+                elseif tex.Name == "NoiseStatic" then
+                    -- El ruido hierve de manera caótica sin moverse en una sola dirección
+                    tex.OffsetStudsU = math.sin(elapsed * 10) * 5
+                    tex.OffsetStudsV = math.cos(elapsed * 12) * 5
                 end
             end
         end
