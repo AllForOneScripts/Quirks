@@ -1,4 +1,4 @@
-print("version 1")
+print("this is a test of the BootAnimation")
 
 if getgenv()._BootAnimRunning then
     return
