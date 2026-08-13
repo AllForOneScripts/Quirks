@@ -196,108 +196,103 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-
 local function SpawnAFOSphere(centerCF, duration)
-    local sphereFolder = Instance.new("Folder")
-    sphereFolder.Name = "AFO_Sphere_Effect"
-    sphereFolder.Parent = workspace
+    local dimensionFolder = Instance.new("Folder")
+    dimensionFolder.Name = "AFO_Sphere_Effect"
+    dimensionFolder.Parent = workspace
 
-    -- 1. Esfera base TOTALMENTE INTACTA a tu código original
-    local sphereRadius = 15
-    local mainSphere = Instance.new("Part")
-    mainSphere.Shape = Enum.PartType.Ball
-    mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
-    mainSphere.CFrame = centerCF
-    mainSphere.Color = Color3.fromRGB(0, 0, 0)
-    mainSphere.Material = Enum.Material.SmoothPlastic
-    mainSphere.Anchored = true
-    mainSphere.CanCollide = false
-    mainSphere.CanTouch = false
-    mainSphere.CastShadow = false
-    mainSphere.Parent = sphereFolder
+    local boxSize = 60 -- Suficientemente grande para cubrir toda la vista de la cámara
+    local half = boxSize / 2
+    local wallThickness = 2
 
-    -- 2. Sistema de Texturas Visuales (Sustituye las líneas de lluvia)
-    local allTextures = {}
-    local r = sphereRadius - 0.1 -- Ligeramente más pequeño que la esfera para evitar Z-fighting
-
-    -- Datos para crear paredes INVISIBLES que proyectan texturas hacia el centro
+    -- Datos de las 6 paredes para formar una habitación negra cerrada.
+    -- innerFace es la cara interna (la que vas a ver tú estando dentro).
     local facesData = {
-        {offset = Vector3.new(0, r, 0), size = Vector3.new(r*2, 0.1, r*2), face = Enum.NormalId.Bottom}, -- Arriba mirando abajo
-        {offset = Vector3.new(0, -r, 0), size = Vector3.new(r*2, 0.1, r*2), face = Enum.NormalId.Top},    -- Abajo mirando arriba
-        {offset = Vector3.new(r, 0, 0), size = Vector3.new(0.1, r*2, r*2), face = Enum.NormalId.Left},    -- Derecha mirando izq
-        {offset = Vector3.new(-r, 0, 0), size = Vector3.new(0.1, r*2, r*2), face = Enum.NormalId.Right},  -- Izquierda mirando der
-        {offset = Vector3.new(0, 0, r), size = Vector3.new(r*2, r*2, 0.1), face = Enum.NormalId.Front},   -- Atrás mirando al frente
-        {offset = Vector3.new(0, 0, -r), size = Vector3.new(r*2, r*2, 0.1), face = Enum.NormalId.Back},   -- Frente mirando atrás
+        {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
+        {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
+        {name = "Front",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
+        {name = "Back",   offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
+        {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
+        {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
     }
 
-    for _, data in ipairs(facesData) do
-        local panel = Instance.new("Part")
-        panel.Size = data.size
-        panel.CFrame = centerCF * CFrame.new(data.offset)
-        panel.Transparency = 1 -- El panel es invisible, solo sirve como lienzo para la textura
-        panel.Anchored = true
-        panel.CanCollide = false
-        panel.CanTouch = false
-        panel.CastShadow = false
-        panel.Parent = sphereFolder
+    local allTextures = {}
 
-        -- Función auxiliar para añadir las texturas requeridas
-        local function addTexture(id, trans, color, name)
+    for _, data in ipairs(facesData) do
+        local wall = Instance.new("Part")
+        wall.Name = data.name
+        wall.Shape = Enum.PartType.Block
+        wall.Size = data.size
+        wall.CFrame = centerCF * data.offset
+        wall.Color = Color3.fromRGB(0, 0, 0)
+        wall.Material = Enum.Material.SmoothPlastic
+        wall.Anchored = true
+        wall.CanCollide = false
+        wall.CanTouch = false
+        wall.CastShadow = false 
+        wall.Parent = dimensionFolder
+
+        -- Aplicar texturas solo a la cara que mira hacia el centro
+        local function addTexture(textureId, transparency, color, name)
             local tex = Instance.new("Texture")
             tex.Name = name
-            tex.Texture = "rbxassetid://" .. id
-            tex.Transparency = trans
+            tex.Texture = "rbxassetid://" .. tostring(textureId)
+            tex.Transparency = transparency
             tex.Color3 = color
-            tex.Face = data.face
-            tex.StudsPerTileU = sphereRadius * 2
-            tex.StudsPerTileV = sphereRadius * 2
-            tex.Parent = panel
+            tex.Face = data.innerFace
+            tex.StudsPerTileU = boxSize / 1.5
+            tex.StudsPerTileV = boxSize / 1.5
+            tex.Parent = wall
             table.insert(allTextures, tex)
         end
 
-        -- Base oscurecida al 50%
-        addTexture("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "Base")
-        -- Secundarias con 75% de transparencia (comportamiento opuesto)
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "Up")
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "Down")
+        -- 1. Textura base oscura al 50%
+        addTexture("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "BaseTexture")
+        
+        -- 2. Texturas secundarias con 75% de transparencia (efecto de aura)
+        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureUp")
+        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureDown")
     end
 
-    -- 3. Bucle de Animación (Idéntico a tu estructura original)
+    -- Bucle de Animación sin Tweens que bloqueen el hilo
     local startTime = os.clock()
     local conn
     
-    local speedBase = 25
-    local speedOverlay = 12
+    local speedBase = 25    -- Velocidad hacia abajo
+    local speedOverlay = 12 -- Velocidad del cruce
 
     conn = RunService.RenderStepped:Connect(function()
         local elapsed = os.clock() - startTime
         
-        -- Misma lógica de terminación que tenías
-        if elapsed >= duration or not sphereFolder.Parent then
+        -- Terminación exacta según tu variable 'duration'
+        if elapsed >= duration or not dimensionFolder.Parent then
             if conn then conn:Disconnect() end
-            if sphereFolder and sphereFolder.Parent then
-                sphereFolder:Destroy()
+            if dimensionFolder and dimensionFolder.Parent then
+                dimensionFolder:Destroy()
             end
             return
         end
 
+        local offsetBase = elapsed * speedBase
+        local offsetOverlay = elapsed * speedOverlay
+
+        -- Mueve las texturas creando un efecto hipnótico/vestigios
         for _, tex in ipairs(allTextures) do
-            if tex.Name == "Base" then
-                tex.OffsetStudsV = elapsed * speedBase
-            elseif tex.Name == "Up" then
-                tex.OffsetStudsV = -(elapsed * speedOverlay)
-            elseif tex.Name == "Down" then
-                tex.OffsetStudsV = elapsed * speedOverlay
+            if tex.Name == "BaseTexture" then
+                tex.OffsetStudsV = offsetBase
+            elseif tex.Name == "TopTextureUp" then
+                tex.OffsetStudsV = -offsetOverlay
+            elseif tex.Name == "TopTextureDown" then
+                tex.OffsetStudsV = offsetOverlay
             end
         end
     end)
 
-    -- 4. Limpieza de seguridad (Idéntico a tu estructura original, sin esperas extrañas)
+    -- Limpieza de seguridad al finalizar el tiempo, sin esperas extrañas
     task.delay(duration, function()
         if conn then conn:Disconnect() end
-        if sphereFolder and sphereFolder.Parent then
-            sphereFolder:Destroy()
+        if dimensionFolder and dimensionFolder.Parent then
+            dimensionFolder:Destroy()
         end
     end)
 end
