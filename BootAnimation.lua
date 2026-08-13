@@ -93,14 +93,18 @@ end
 _G.cloneRoot = cloneRoot
 _G.cloneChar = cloneChar
 
+-- BUG FIX: Ocultar cuerpo real completamente (incluyendo texturas y forzando transparencia)
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
-    if part:IsA("BasePart") then
+    if part:IsA("BasePart") or part:IsA("Decal") then
         originalParts[part] = {
-            LocalTransparencyModifier = part.LocalTransparencyModifier,
+            LocalTransparencyModifier = part:IsA("BasePart") and part.LocalTransparencyModifier or 0,
             Transparency = part.Transparency
         }
-        part.LocalTransparencyModifier = 1  
+        if part:IsA("BasePart") then
+            part.LocalTransparencyModifier = 1  
+        end
+        part.Transparency = 1
     end
 end
 
@@ -115,6 +119,7 @@ for _, acc in ipairs(char:GetChildren()) do
                 }
             end
             handle.LocalTransparencyModifier = 1
+            handle.Transparency = 1
         end
     end
 end
@@ -122,41 +127,39 @@ end
 local summonActive = true
 local summonSkyY = originalGroundY + 1500
 
--- FIX ANTICHEAT: Caja de colisión en el cielo para atrapar al jugador sin alterar físicas
-local skyBoxFolder = Instance.new("Folder", workspace)
-skyBoxFolder.Name = "SkyBoxAFO"
-
-local floor = Instance.new("Part", skyBoxFolder)
-floor.Anchored = true
-floor.Size = Vector3.new(20, 2, 20)
-floor.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
-floor.Transparency = 1
-
-local roof = floor:Clone()
-roof.Position = floor.Position + Vector3.new(0, 15, 0)
-roof.Parent = skyBoxFolder
-
-local wall1 = floor:Clone()
-wall1.Size = Vector3.new(20, 15, 2)
-wall1.Position = floor.Position + Vector3.new(0, 7.5, 10)
-wall1.Parent = skyBoxFolder
-
-local wall2 = wall1:Clone()
-wall2.Position = floor.Position + Vector3.new(0, 7.5, -10)
-wall2.Parent = skyBoxFolder
-
-local wall3 = floor:Clone()
-wall3.Size = Vector3.new(2, 15, 20)
-wall3.Position = floor.Position + Vector3.new(10, 7.5, 0)
-wall3.Parent = skyBoxFolder
-
-local wall4 = wall3:Clone()
-wall4.Position = floor.Position + Vector3.new(-10, 7.5, 0)
-wall4.Parent = skyBoxFolder
-
--- Teletransportar al jugador adentro
-root.CFrame = CFrame.new(originalRootPos.X, summonSkyY + 3, originalRootPos.Z)
 root.Anchored = false 
+
+local bootBV = Instance.new("BodyVelocity", root)
+bootBV.Name = "BootBV"
+bootBV.Velocity = Vector3.new(0, 600, 0)
+bootBV.MaxForce = Vector3.new(0, 9e8, 0)
+local bootBP = nil
+
+task.spawn(function()
+    local t0 = tick()
+    while tick() - t0 < 10 and summonActive do
+        if root and root.Parent and root.Position.Y >= summonSkyY - 20 then break end
+        task.wait(0.05)
+    end
+    if not summonActive then return end
+    if bootBV then bootBV:Destroy(); bootBV = nil end
+    if not root or not root.Parent then return end
+    
+    bootBP = Instance.new("BodyPosition", root)
+    bootBP.Name = "BootBP"
+    bootBP.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
+    bootBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    bootBP.P = 60000
+    bootBP.D = 2500
+end)
+
+local summonMaintainer = RunService.Heartbeat:Connect(function()
+    if summonActive and root then
+        if math.abs(root.Position.Y - summonSkyY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+        end
+    end
+end)
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -198,7 +201,7 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local function SpawnAFODimension(centerCF)
+local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
     dimensionFolder.Parent = workspace
@@ -213,16 +216,15 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- Paleta de Colores Abisal (Violeta / Carmesí / Vacío)
-    local AFO_CRIMSON = Color3.fromRGB(150, 10, 30)      -- Rojo Carmesí AFO
-    local AFO_DEEP_PURPLE = Color3.fromRGB(35, 5, 55)    -- Morado Abisal
-    local AFO_ELECTRIC_PURPLE = Color3.fromRGB(85, 15, 110) -- Violeta Eléctrico
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)            -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(200, 50, 50)        -- Chispas de Ruido
+    -- Paleta de Colores AFO (Malvado - Abisal)
+    local AFO_CRIMSON = Color3.fromRGB(150, 0, 0)      -- Rojo Neon Principal
+    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 50) -- Fondo y Humo
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
+    local AFO_RUIDO = Color3.fromRGB(200, 50, 50)    -- Chispas de Ruido
 
-    local NEON_SPEED = 180
+    local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 20 
+    local CLIMAX_TIME = 20 -- Duración de la cinemática
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -250,11 +252,11 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo Scrolling
+        -- Fondo Scrolling (Oscuro)
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
-        bgUp.Transparency = 0.2
+        bgUp.Transparency = 0.2 
         bgUp.Color3 = AFO_DEEP_PURPLE 
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
@@ -268,7 +270,7 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon
+        -- Glow Neon (Rojo Carmesí)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
@@ -281,7 +283,7 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal
+        -- Neon Principal (Rojo Carmesí Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
@@ -309,13 +311,13 @@ local function SpawnAFODimension(centerCF)
     bottomPole.Parent = dimensionFolder
 
     local function createSinisterSmoke(polePart, emitDirection)
+        -- Humo Denso (Morado Profundo)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
         smokeEmitter.LightEmission = 0.1 
         smokeEmitter.ZOffset = 0.5 
         smokeEmitter.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, AFO_ELECTRIC_PURPLE),
-            ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
+            ColorSequenceKeypoint.new(0, AFO_DEEP_PURPLE),
             ColorSequenceKeypoint.new(1, AFO_BLACK)
         })
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
@@ -332,6 +334,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
 
+        -- Ruido/Chispas (Rojo Caótico)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Texture = NOISE_TEXTURE_ID
         noiseEmitter.LightEmission = 0.8 
@@ -374,14 +377,14 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO ---
+    -- --- 4. VIENTO CAÓTICO (REMPLAZA VIENTO ANGÉLICAL) ---
     local windVolume = softVolume:Clone()
     windVolume.Name = "WindVolume"
     windVolume.Parent = dimensionFolder
 
     local chaoticWind = Instance.new("ParticleEmitter")
     chaoticWind.Name = "ChaoticWind"
-    chaoticWind.Texture = NOISE_TEXTURE_ID
+    chaoticWind.Texture = NOISE_TEXTURE_ID 
     chaoticWind.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_CRIMSON),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
@@ -773,7 +776,6 @@ if not s or not Asset then
     if cameraWatchdog then cameraWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
-    if skyBoxFolder then skyBoxFolder:Destroy() end
     FreeCinematic()
     return
 end
@@ -823,8 +825,8 @@ repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - st
 cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 
--- SE INICIA LA DIMENSIÓN AFO
-SpawnAFODimension(CINEMATIC_CF)
+-- SE INICIA LA BURBUJA NEGRA AFO DURANTE LOS PRIMEROS 8.5 SEGUNDOS
+SpawnAFOSphere(CINEMATIC_CF, 8.5)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
@@ -893,24 +895,22 @@ for _, motor in ipairs(char:GetDescendants()) do
 end
 
 summonActive = false
-if skyBoxFolder then skyBoxFolder:Destroy() end
+if summonMaintainer then summonMaintainer:Disconnect() end
+if bootBV then bootBV:Destroy() end
+if bootBP then bootBP:Destroy() end
 
--- BUCLE DE RETORNO Y FIX PARA EL BUG DEL CIELO
-task.spawn(function()
-    for i = 1, 30 do -- Múltiples llamadas para asegurar que regresas al suelo[cite: 1]
-        if not root or not root.Parent then break end
-        
-        -- Si la Y actual está lo suficientemente cerca del suelo objetivo, se interrumpe el bucle
-        if math.abs(root.Position.Y - targetPos.Y) < 5 then
-            break
-        end
-        
-        root.CFrame = targetCF
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.1)
-    end
-end)
+-- BUG FIX: Forzar teletransporte hasta confirmar que estás en el suelo (No más jugador en el aire al terminar)
+root.Anchored = false
+local safeYLimit = originalGroundY + 100
+local teleportAttempts = 0
+
+repeat
+    root.CFrame = targetCF
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    task.wait(0.05)
+    teleportAttempts = teleportAttempts + 1
+until (root.Position.Y < safeYLimit) or teleportAttempts > 20
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
@@ -928,8 +928,12 @@ end)
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
-        part.LocalTransparencyModifier = data.LocalTransparencyModifier
-        part.Transparency = data.Transparency
+        if data.LocalTransparencyModifier then
+            part.LocalTransparencyModifier = data.LocalTransparencyModifier
+        end
+        if data.Transparency then
+            part.Transparency = data.Transparency
+        end
     end
 end
 hum.AutoRotate = oldAutoRotate
