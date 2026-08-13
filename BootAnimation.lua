@@ -200,6 +200,8 @@ end
 -- (local RunService = game:GetService("RunService"))
 local CFrameAngles = CFrame.Angles -- localizado por rendimiento (evita el lookup cada frame)
 
+local INVERTED_SPHERE_MESH_ID = "rbxassetid://437220420" -- confirmado que funciona
+
 -- Retorna el folder de la dimensión y la conexión del bucle para que el script
 -- principal decida cuándo detenerlo (sin duración fija, como una arena de combate).
 local function SpawnAFOSphere(centerCF)
@@ -211,17 +213,15 @@ local function SpawnAFOSphere(centerCF)
     local diameter = sphereRadius * 2
 
     -- ## 1. ESFERA PRINCIPAL: vacío negro + textura 72194288856630
-    -- IMPORTANTE: el rbxassetid://437220420 que traías en el script de referencia
-    -- no se pudo verificar como una malla esférica válida/invertida (no hay
-    -- forma de confirmar que ese asset exista o tenga las caras al revés), y
-    -- lo más probable es que sea justo la causa de que la esfera siga sin
-    -- verse: si el asset no carga, el mesh simplemente no se dibuja.
-    -- Cambié a Enum.MeshType.Sphere, que es NATIVO del motor (no depende de
-    -- descargar ningún asset) combinado con Scale negativa en un eje, la
-    -- técnica confirmada por la comunidad de Roblox para invertir las
-    -- normales y que la esfera se vea desde ADENTRO.
+    -- Volví al FileMesh 437220420 (el que confirmaste que SÍ se ve) con Scale
+    -- POSITIVA: ese mesh ya viene con las caras invertidas de fábrica, así que
+    -- no hace falta escala negativa. Enum.MeshType.Sphere quedó descartado:
+    -- hay un bug activo del motor en experiencias nuevas donde ese tipo de
+    -- SpecialMesh ignora el Scale y se queda con el tamaño del Part (1 stud
+    -- en nuestro caso) -> por eso no se veía nada.
     local mainSphere = Instance.new("Part")
     mainSphere.Name = "VoidSphere"
+    mainSphere.Shape = Enum.PartType.Block
     mainSphere.Size = Vector3.new(1, 1, 1)
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
@@ -234,8 +234,9 @@ local function SpawnAFOSphere(centerCF)
     mainSphere.Parent = sphereFolder
 
     local mainMesh = Instance.new("SpecialMesh")
-    mainMesh.MeshType = Enum.MeshType.Sphere
-    mainMesh.Scale = Vector3.new(-diameter, diameter, diameter) -- eje X negativo = normales invertidas
+    mainMesh.MeshType = Enum.MeshType.FileMesh
+    mainMesh.MeshId = INVERTED_SPHERE_MESH_ID
+    mainMesh.Scale = Vector3.new(diameter, diameter, diameter)
     mainMesh.Parent = mainSphere
 
     local mainTexture = Instance.new("Texture")
@@ -251,6 +252,7 @@ local function SpawnAFOSphere(centerCF)
     local overlayDiameter = diameter - 1
     local overlaySphere = Instance.new("Part")
     overlaySphere.Name = "OverlaySphere"
+    overlaySphere.Shape = Enum.PartType.Block
     overlaySphere.Size = Vector3.new(1, 1, 1)
     overlaySphere.CFrame = centerCF
     overlaySphere.Transparency = 1
@@ -262,8 +264,9 @@ local function SpawnAFOSphere(centerCF)
     overlaySphere.Parent = sphereFolder
 
     local overlayMesh = Instance.new("SpecialMesh")
-    overlayMesh.MeshType = Enum.MeshType.Sphere
-    overlayMesh.Scale = Vector3.new(-overlayDiameter, overlayDiameter, overlayDiameter)
+    overlayMesh.MeshType = Enum.MeshType.FileMesh
+    overlayMesh.MeshId = INVERTED_SPHERE_MESH_ID
+    overlayMesh.Scale = Vector3.new(overlayDiameter, overlayDiameter, overlayDiameter)
     overlayMesh.Parent = overlaySphere
 
     local overlayTexture = Instance.new("Texture")
