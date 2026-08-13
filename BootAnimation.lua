@@ -118,6 +118,8 @@ local summonSkyY = originalGroundY + 1500
 
 -- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
 -- ==========================================
+
+-- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
 local bootBV = Instance.new("BodyVelocity", root)
@@ -146,6 +148,7 @@ end)
 
 local summonMaintainer = RunService.Heartbeat:Connect(function()
     if summonActive and root then
+        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
         if math.abs(root.Position.Y - summonSkyY) > 5 then
             root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
@@ -324,7 +327,7 @@ local function ApplyJaidenAppearance(rig)
 end
 
 -- ==========================================
--- FIX: UpdateCloneAppearance 100% pulido basado en tu script de referencia
+-- FIX: UpdateCloneAppearance corregido
 -- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
@@ -332,53 +335,81 @@ local function UpdateCloneAppearance()
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
 
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta, accesorio o mesh viejo
+    -- 1. Limpiamos totalmente el clon de vestimentas, accesorios y meshes viejos
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    local cHead = cloneChar:FindFirstChild("Head")
-    if cHead then
-        for _, v in ipairs(cHead:GetChildren()) do
-            if v:IsA("Decal") or v:IsA("DataModelMesh") or v:IsA("SpecialMesh") then
+    local tHead = cloneChar:FindFirstChild("Head")
+    if tHead then
+        for _, v in ipairs(tHead:GetChildren()) do
+            if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") then
                 v:Destroy()
             end
         end
+        
+        -- Restauramos el mesh base para evitar cabezas deformes o invisibles
+        local defaultMesh = Instance.new("SpecialMesh")
+        defaultMesh.MeshType = Enum.MeshType.Head
+        defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+        defaultMesh.Parent = tHead
     end
 
-    -- 2. Copiamos la apariencia exacta y actualizada de nuestro LocalPlayer
+    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer
+    local loadedFace = false
+
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
             
         elseif item:IsA("Accessory") or item:IsA("Hat") then
             local cloneItem = item:Clone()
-            
-            -- Replicamos la lógica estricta de validación del script de referencia
-            local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
             local handle = cloneItem:FindFirstChild("Handle")
-            
-            if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
-                manualAttachAccessory(cloneItem, cloneChar)
-            end
             
             if handle then
                 handle.LocalTransparencyModifier = 0
                 handle.Transparency = 0
+                
+                -- CLAVE: Destruir el weld original clonado que seguía apuntando a tu jugador real
+                local oldWeld = handle:FindFirstChild("AccessoryWeld")
+                if oldWeld then oldWeld:Destroy() end
+            end
+            
+            local added = pcall(function() cloneHum:AddAccessory(cloneItem) end)
+            
+            if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
+                manualAttachAccessory(cloneItem, cloneChar)
             end
         end
     end
     
-    -- 3. Copiamos la cara (Decals) y formas de la cabeza (Meshes)
+    -- 3. Copiamos la cara (Decals) y las formas correctas de la cabeza (Meshes)
     local sHead = char:FindFirstChild("Head")
-    if sHead and cHead then
+    if sHead and tHead then
         for _, v in ipairs(sHead:GetChildren()) do 
-            if v:IsA("Decal") or v:IsA("DataModelMesh") or v:IsA("SpecialMesh") then 
-                v:Clone().Parent = cHead 
-            end 
+            if v:IsA("Decal") then
+                loadedFace = true
+                v:Clone().Parent = tHead 
+            elseif v:IsA("SpecialMesh") or v:IsA("DataModelMesh") then
+                for _, oldMesh in ipairs(tHead:GetChildren()) do
+                    if oldMesh:IsA("SpecialMesh") or oldMesh:IsA("DataModelMesh") then
+                        oldMesh:Destroy()
+                    end
+                end
+                v:Clone().Parent = tHead
+            end
         end
+    end
+    
+    -- Fallback en caso de que no haya cara
+    if cloneHum.RigType == Enum.HumanoidRigType.R6 and tHead and not loadedFace then
+        local errorFace = Instance.new("Decal")
+        errorFace.Name = "face"
+        errorFace.Face = Enum.NormalId.Front
+        errorFace.Texture = "rbxasset://textures/face.png"
+        errorFace.Parent = tHead
     end
 end
 -- ==========================================
@@ -461,20 +492,28 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
+-- ==========================================
+-- FIX: Lógica del pantallazo negro sincronizado
+-- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
+    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0 
+    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
     
-    -- EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
+    -- Aplicamos tu consejo: Dejamos pasar un frame para que el motor asiente la pantalla negra
+    RunService.RenderStepped:Wait()
+    
+    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia
     UpdateCloneAppearance()
     
+    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -574,6 +613,7 @@ root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+-- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
