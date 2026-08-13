@@ -1,10 +1,10 @@
-if getgenv()._GarouAnimRunning then
+if getgenv()._BootAnimRunning then
     return
 end
-getgenv()._GarouAnimRunning = true
+getgenv()._BootAnimRunning = true
 
-local function LiberarCinematica()
-    getgenv()._GarouAnimRunning = false
+local function FreeCinematic()
+    getgenv()._BootAnimRunning = false
 end
 
 local Players = game:GetService("Players")
@@ -53,7 +53,7 @@ pcall(function() char.Archivable = false end)
 if not cloneChar then
     flashGui:Destroy()
     if cameraWatchdog then cameraWatchdog:Disconnect() end
-    LiberarCinematica()
+    FreeCinematic()
     return
 end
 
@@ -329,16 +329,12 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
--- ==========================================
--- FIX: UpdateCloneAppearance REESCRITO y PERFECTO
--- ==========================================
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
     
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
 
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta, cara o malla vieja
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
@@ -355,7 +351,6 @@ local function UpdateCloneAppearance()
             end
         end
         
-        -- Malla base por defecto en caso de que el avatar original no tenga una
         local defaultMesh = Instance.new("SpecialMesh")
         defaultMesh.MeshType = Enum.MeshType.Head
         defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
@@ -364,18 +359,15 @@ local function UpdateCloneAppearance()
 
     local loadedFace = false
 
-    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer directamente de su Character actual
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Accessory") then
             local cloneItem = item:Clone()
             local handle = cloneItem:FindFirstChild("Handle")
             
             if handle then
-                -- Restauramos la visibilidad (estaban en Transparency 1 por la cinemática)
                 handle.LocalTransparencyModifier = 0
                 handle.Transparency = 0
                 
-                -- EL PASO CRÍTICO: Destruimos los welds clonados para que AddAccessory no falle
                 for _, weld in ipairs(handle:GetChildren()) do
                     if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld.Name == "AccessoryWeld" then
                         weld:Destroy()
@@ -383,12 +375,10 @@ local function UpdateCloneAppearance()
                 end
             end
             
-            -- Intentamos añadir nativamente
             local added = pcall(function() 
                 cloneHum:AddAccessory(cloneItem) 
             end)
             
-            -- Fallback a tu manualAttachAccessory si el motor de Roblox falla en un Rig clonado
             if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
                 manualAttachAccessory(cloneItem, cloneChar)
             end
@@ -398,9 +388,7 @@ local function UpdateCloneAppearance()
         end
     end
     
-    -- 3. Copiamos exactamente la cara y las mallas de la cabeza de nuestro Character actual
     if sHead and cHead then
-        -- Limpiamos el defaultMesh que pusimos arriba si es que el jugador tiene su propia malla
         local hasCustomMesh = false
         for _, item in ipairs(sHead:GetChildren()) do
             if item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
@@ -417,7 +405,6 @@ local function UpdateCloneAppearance()
             end
         end
         
-        -- Clonar los assets de la cabeza original
         for _, item in ipairs(sHead:GetChildren()) do
             if item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
                 loadedFace = true
@@ -428,7 +415,6 @@ local function UpdateCloneAppearance()
         end
     end
 
-    -- 4. Cara por defecto de emergencia si es R6 y algo falló
     if cloneHum.RigType == Enum.HumanoidRigType.R6 and cHead and not loadedFace then
         local defaultFace = Instance.new("Decal")
         defaultFace.Name = "face"
@@ -437,7 +423,6 @@ local function UpdateCloneAppearance()
         defaultFace.Parent = cHead
     end
 end
--- ==========================================
 
 local function PlayKeyframeSequence(Model, KFS, Speed)
     Speed = Speed or 1
@@ -500,7 +485,7 @@ if not s or not Asset then
     if cameraWatchdog then cameraWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
-    LiberarCinematica()
+    FreeCinematic()
     return
 end
 
@@ -709,5 +694,5 @@ task.spawn(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
     
-    LiberarCinematica()
+    FreeCinematic()
 end)
