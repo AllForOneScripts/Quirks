@@ -1,9 +1,9 @@
-if getgenv()._GarouAnimRunning then
+if getgenv()._SummonRunning then
     return
 end
-getgenv()._GarouAnimRunning = true
-local function LiberarCinematica()
-    getgenv()._GarouAnimRunning = false
+getgenv()._SummonRunning = true
+local function ReleaseSummon()
+    getgenv()._SummonRunning = false
 end
 
 local Players = game:GetService("Players")
@@ -15,14 +15,14 @@ local player = Players.LocalPlayer
 local cam = workspace.CurrentCamera
 local pGui = player:WaitForChild("PlayerGui")
 
-local flashGui = Instance.new("ScreenGui")
-flashGui.IgnoreGuiInset = true
-flashGui.ResetOnSpawn = false
-flashGui.DisplayOrder = 9999
-local flashFrame = Instance.new("Frame", flashGui)
-flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
-flashFrame.Size = UDim2.new(1, 0, 1, 0)
-flashGui.Parent = pGui
+local bootGui = Instance.new("ScreenGui")
+bootGui.IgnoreGuiInset = true
+bootGui.ResetOnSpawn = false
+bootGui.DisplayOrder = 9999
+local bootFrame = Instance.new("Frame", bootGui)
+bootFrame.BackgroundColor3 = Color3.new(1, 1, 1)
+bootFrame.Size = UDim2.new(1, 0, 1, 0)
+bootGui.Parent = pGui
 
 RunService.RenderStepped:Wait()
 
@@ -30,7 +30,7 @@ local char = player.Character or player.CharacterAdded:Wait()
 local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
-local cameraWatchdog = RunService.Heartbeat:Connect(function()
+local summonCamWatchdog = RunService.Heartbeat:Connect(function()
     if cam.CameraType ~= Enum.CameraType.Scriptable then
         cam.CameraType = Enum.CameraType.Scriptable
     end
@@ -40,34 +40,34 @@ local oldCF = root.CFrame
 local oldAutoRotate = hum.AutoRotate
 hum.AutoRotate = false
 local originalRootPos = root.Position
-local originalGroundY = originalRootPos.Y
+local summonSkyY = originalRootPos.Y + 1500
 
 pcall(function() char.Archivable = true end)
-local cloneChar = char:Clone()
+local bootClone = char:Clone()
 pcall(function() char.Archivable = false end)
 
-if not cloneChar then
-    flashGui:Destroy()
-    if cameraWatchdog then cameraWatchdog:Disconnect() end
-    LiberarCinematica()
+if not bootClone then
+    bootGui:Destroy()
+    if summonCamWatchdog then summonCamWatchdog:Disconnect() end
+    ReleaseSummon()
     return
 end
 
-for _, v in ipairs(cloneChar:GetDescendants()) do
+for _, v in ipairs(bootClone:GetDescendants()) do
     if v:IsA("Script") or v:IsA("LocalScript") or v:IsA("ModuleScript") then
         v:Destroy()
     end
 end
 
-local cloneAnimator = cloneChar:FindFirstChildOfClass("Animator")
+local cloneAnimator = bootClone:FindFirstChildOfClass("Animator")
 if cloneAnimator then cloneAnimator:Destroy() end
-local cloneAnimate = cloneChar:FindFirstChild("Animate")
+local cloneAnimate = bootClone:FindFirstChild("Animate")
 if cloneAnimate then cloneAnimate.Disabled = true end
 
-local cloneRoot = cloneChar:FindFirstChild("HumanoidRootPart") or cloneChar:FindFirstChild("Torso")
+local cloneRoot = bootClone:FindFirstChild("HumanoidRootPart") or bootClone:FindFirstChild("Torso")
 if cloneRoot then
-    cloneChar.PrimaryPart = cloneRoot
-    for _, part in ipairs(cloneChar:GetDescendants()) do
+    bootClone.PrimaryPart = cloneRoot
+    for _, part in ipairs(bootClone:GetDescendants()) do
         if part:IsA("BasePart") then
             part.CanCollide = false
             part.CanTouch = false
@@ -77,18 +77,16 @@ if cloneRoot then
     cloneRoot.Anchored = true
 end
 
--- ==========================================
---  FIX: Clon en el suelo original (oldCF)
--- ==========================================
-cloneChar:PivotTo(oldCF)   -- <--- antes era CINEMATIC_CF
-cloneChar.Parent = workspace
+local SUMMON_CF = CFrame.new(876.2, 1882, -397.6, -0.56, 0, 0.82, 0, 1, 0, -0.82, 0, -0.56)
+bootClone:PivotTo(SUMMON_CF)
+bootClone.Parent = workspace
 
-if cloneChar:FindFirstChild("Humanoid") then
-    cloneChar.Humanoid.NameDisplayDistance = 0
+if bootClone:FindFirstChild("Humanoid") then
+    bootClone.Humanoid.NameDisplayDistance = 0
 end
 
 _G.cloneRoot = cloneRoot
-_G.cloneChar = cloneChar
+_G.cloneChar = bootClone
 
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
@@ -115,44 +113,47 @@ for _, acc in ipairs(char:GetChildren()) do
     end
 end
 
--- Variables renombradas (Summon / Boot)
+-- ==========================================
+-- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
+-- ==========================================
 local summonActive = true
-local summonAltitude = originalGroundY + 1500
 
-hum.PlatformStand = true
+-- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
-local summonLiftBV = Instance.new("BodyVelocity", root)
-summonLiftBV.Name = "SummonLiftBV"
-summonLiftBV.Velocity = Vector3.new(0, 600, 0)
-summonLiftBV.MaxForce = Vector3.new(0, 9e8, 0)
-local summonHoldBP = nil
+local bootBV = Instance.new("BodyVelocity", root)
+bootBV.Name = "BootBV"
+bootBV.Velocity = Vector3.new(0, 600, 0)
+bootBV.MaxForce = Vector3.new(0, 9e8, 0)
+local bootBP = nil
 
 task.spawn(function()
     local t0 = tick()
     while tick() - t0 < 10 and summonActive do
-        if root and root.Parent and root.Position.Y >= summonAltitude - 20 then break end
+        if root and root.Parent and root.Position.Y >= summonSkyY - 20 then break end
         task.wait(0.05)
     end
     if not summonActive then return end
-    if summonLiftBV then summonLiftBV:Destroy(); summonLiftBV = nil end
+    if bootBV then bootBV:Destroy(); bootBV = nil end
     if not root or not root.Parent then return end
     
-    summonHoldBP = Instance.new("BodyPosition", root)
-    summonHoldBP.Name = "SummonHoldBP"
-    summonHoldBP.Position = Vector3.new(originalRootPos.X, summonAltitude, originalRootPos.Z)
-    summonHoldBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
-    summonHoldBP.P = 60000
-    summonHoldBP.D = 2500
+    bootBP = Instance.new("BodyPosition", root)
+    bootBP.Name = "BootBP"
+    bootBP.Position = Vector3.new(originalRootPos.X, summonSkyY, originalRootPos.Z)
+    bootBP.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    bootBP.P = 60000
+    bootBP.D = 2500
 end)
 
-local summonHeightKeeper = RunService.Heartbeat:Connect(function()
+local summonMaintainer = RunService.Heartbeat:Connect(function()
     if summonActive and root then
-        if math.abs(root.Position.Y - summonAltitude) > 5 then
-            root.CFrame = CFrame.new(root.Position.X, summonAltitude, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
+        if math.abs(root.Position.Y - summonSkyY) > 5 then
+            root.CFrame = CFrame.new(root.Position.X, summonSkyY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
+-- ==========================================
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -188,8 +189,8 @@ local function GetCustomResource(fileName, url)
     if not isfile(fileName) then writefile(fileName, game:HttpGet(url)) end
     return getcustomasset(fileName)
 end
-local AnimAssetURL = "https://github.com/ian49972/RBXMS/raw/refs/heads/main/CosmicG.rbxmx"
-local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
+local SummonAnimAssetURL = "https://github.com/ian49972/RBXMS/raw/refs/heads/main/CosmicG.rbxmx"
+local SummonAudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
 
 local function findHandleAttachment(handle)
     for _, child in ipairs(handle:GetChildren()) do
@@ -324,23 +325,18 @@ local function ApplyJaidenAppearance(rig)
     end
 end
 
--- ==========================================
--- FIX: UpdateCloneAppearance corregido
--- ==========================================
 local function UpdateCloneAppearance()
-    if not cloneChar or not char then return end
+    if not bootClone or not char then return end
     
-    -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
-    for _, v in ipairs(cloneChar:GetChildren()) do
+    for _, v in ipairs(bootClone:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            item:Clone().Parent = cloneChar
+            item:Clone().Parent = bootClone
             
         elseif item:IsA("Accessory") then
             local cloneItem = item:Clone()
@@ -351,20 +347,18 @@ local function UpdateCloneAppearance()
                 handle.Transparency = 0
             end
             
-            -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
-            local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
+            local added = pcall(function() bootClone.Humanoid:AddAccessory(cloneItem) end)
             if cloneItem:FindFirstChild("Handle") then
                 local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
                 if not weld or not weld.Part1 then
-                    manualAttachAccessory(cloneItem, cloneChar)
+                    manualAttachAccessory(cloneItem, bootClone)
                 end
             end
         end
     end
     
-    -- 3. Copiamos la cara (Decals)
     local sHead = char:FindFirstChild("Head")
-    local tHead = cloneChar:FindFirstChild("Head")
+    local tHead = bootClone:FindFirstChild("Head")
     if sHead and tHead then
         for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
         for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
@@ -425,14 +419,14 @@ local function PlayKeyframeSequence(Model, KFS, Speed)
     }
 end
 
-local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
+local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", SummonAnimAssetURL))[1] end)
 if not s or not Asset then
-    flashGui:Destroy()
+    bootGui:Destroy()
     RestoreHighlights()
-    if cameraWatchdog then cameraWatchdog:Disconnect() end
+    if summonCamWatchdog then summonCamWatchdog:Disconnect() end
     if animator then animator.Parent = hum end
     if animateScript then animateScript.Disabled = false end
-    LiberarCinematica()
+    ReleaseSummon()
     return
 end
 Asset.Parent = workspace
@@ -440,7 +434,7 @@ local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("A
 if CRigs.GOD then ApplyJaidenAppearance(CRigs.GOD) end
 
 local snd = Instance.new("Sound", workspace)
-snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
+snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", SummonAudioAssetURL), 2
 
 local oldSky = Lighting:FindFirstChildOfClass("Sky")
 local sky = Instance.new("Sky")
@@ -449,25 +443,19 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
--- ==========================================
--- FIX: Lógica del pantallazo negro sincronizado
--- ==========================================
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
-    -- 1. Creamos la pantalla negra
     local sGui = Instance.new("ScreenGui", pGui)
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
     local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
-    fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
+    fade.BackgroundTransparency = 0
     
-    -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
     UpdateCloneAppearance()
     
-    -- 3. Transición de fundido de negro a transparente
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -487,15 +475,15 @@ cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
-local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+local fadeOutTw = TweenService:Create(bootFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
-fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
+fadeOutTw.Completed:Connect(function() bootGui:Destroy() end)
 
 local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
 if CRigs.SceneRig and Anims.SceneRig then table.insert(bgAnims, PlayKeyframeSequence(CRigs.SceneRig, Anims.SceneRig)) end
 
-local pAnim1 = Anims.Player and PlayKeyframeSequence(cloneChar, Anims.Player)
+local pAnim1 = Anims.Player and PlayKeyframeSequence(bootClone, Anims.Player)
 
 task.delay(8, function()
     for _, a in ipairs(bgAnims) do a.AddSkip(8) end
@@ -507,13 +495,14 @@ if pAnim1 then
     pAnim1:Stop()
 end
 
+-- El clon usa oldCF como solicitaste
 cloneRoot.Anchored = true
 cloneRoot.CFrame = oldCF + Vector3.new(0, 0.25, 0)
 
 task.wait(2.9)
 
 if Anims.PlayerTwo then
-    local pAnim2 = PlayKeyframeSequence(cloneChar, Anims.PlayerTwo)
+    local pAnim2 = PlayKeyframeSequence(bootClone, Anims.PlayerTwo)
     if pAnim2 then
         pAnim2.AddSkip(27.8)
         repeat task.wait(0.05) until pAnim2.GetTime() >= pAnim2.Length
@@ -528,10 +517,10 @@ local OFFSET_Y = 0.5
 local targetPos = finalPos + Vector3.new(0, OFFSET_Y, 0)
 local targetCF = CFrame.new(targetPos) * finalRot
 
-if cameraWatchdog then cameraWatchdog:Disconnect() end
+if summonCamWatchdog then summonCamWatchdog:Disconnect() end
 
-pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
-getgenv()._StopCinematic = true 
+pcall(function() RunService:UnbindFromRenderStep("FollowSummon") end)
+getgenv()._StopSummon = true 
 
 if snd then
     task.delay(5, function()
@@ -554,16 +543,20 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
+-- ==========================================
+-- DESCENSO Y ATERRIZAJE (omniAntiBounceLand)
+-- ==========================================
 summonActive = false
-if summonHeightKeeper then summonHeightKeeper:Disconnect() end
-if summonLiftBV then summonLiftBV:Destroy() end
-if summonHoldBP then summonHoldBP:Destroy() end
+if summonMaintainer then summonMaintainer:Disconnect() end
+if bootBV then bootBV:Destroy() end
+if bootBP then bootBP:Destroy() end
 
 root.Anchored = false
 root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+-- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -577,6 +570,7 @@ task.defer(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
 end)
+-- ==========================================
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
@@ -587,7 +581,7 @@ end
 
 hum.AutoRotate = oldAutoRotate
 
-if cloneChar then cloneChar:Destroy() end
+if bootClone then bootClone:Destroy() end
 _G.cloneRoot = nil
 _G.cloneChar = nil
 
@@ -618,7 +612,7 @@ camProxy.Value = cam.CFrame
 local fovProxy = Instance.new("NumberValue")
 fovProxy.Value = cam.FieldOfView
 
-local overrideId = "Cinematic_Absolute_Cam_Override"
+local overrideId = "Summon_Absolute_Cam_Override"
 RunService:BindToRenderStep(overrideId, Enum.RenderPriority.Camera.Value + 200, function()
     cam.CameraType = Enum.CameraType.Scriptable
     cam.CFrame = camProxy.Value
@@ -653,5 +647,5 @@ task.spawn(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
     
-    LiberarCinematica()
+    ReleaseSummon()
 end)
