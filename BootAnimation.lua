@@ -196,6 +196,8 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -206,7 +208,8 @@ local function SpawnAFOSphere(centerCF)
     local wallThickness = 2
 
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
-    local BG_TEXTURE_ID = "rbxassetid://72194288856630" -- El ID correcto del fondo
+    local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
+    local SMOKE_TEXTURE_ID = "rbxassetid://13453193534"
     
     -- Magenta Rosadito Energético (HDR extremo)
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
@@ -239,12 +242,12 @@ local function SpawnAFOSphere(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- 1. TEXTURA FONDO HACIA ARRIBA (ZIndex 1) - Transparencia 0 y colores claros
+        -- 1. TEXTURA FONDO HACIA ARRIBA (ZIndex 1) - Oscurecida un 35%
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
-        bgUp.Transparency = 0
-        bgUp.Color3 = Color3.new(1.5, 1.5, 1.5)
+        bgUp.Transparency = 0.35
+        bgUp.Color3 = Color3.new(0.65, 0.65, 0.65) -- Color 35% más oscuro
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
         bgUp.StudsPerTileV = boxSize / 1.5
@@ -252,12 +255,12 @@ local function SpawnAFOSphere(centerCF)
         bgUp.Parent = wall
         table.insert(allTextures, bgUp)
 
-        -- 2. TEXTURA FONDO HACIA ABAJO (ZIndex 1)
+        -- 2. TEXTURA FONDO HACIA ABAJO (ZIndex 1) - Oscurecida un 35%
         local bgDown = Instance.new("Texture")
         bgDown.Name = "BgDown"
         bgDown.Texture = BG_TEXTURE_ID
-        bgDown.Transparency = 0
-        bgDown.Color3 = Color3.new(1.5, 1.5, 1.5)
+        bgDown.Transparency = 0.35
+        bgDown.Color3 = Color3.new(0.65, 0.65, 0.65)
         bgDown.Face = data.innerFace
         bgDown.StudsPerTileU = boxSize / 1.5
         bgDown.StudsPerTileV = boxSize / 1.5
@@ -269,12 +272,11 @@ local function SpawnAFOSphere(centerCF)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
-        texNeonGlow.Transparency = 0.35 -- 35% de transparencia
+        texNeonGlow.Transparency = 0.35 
         texNeonGlow.Color3 = NEON_MAGENTA 
         texNeonGlow.Face = data.innerFace
-        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 -- 35% más de zoom
-        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 -- 35% más de zoom
-        texNeonGlow.Rotation = 45 -- Gira las diagonales para que queden rectas
+        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
+        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
         texNeonGlow.ZIndex = 2 
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
@@ -288,11 +290,43 @@ local function SpawnAFOSphere(centerCF)
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
-        texNeon.Rotation = 45 -- Alineado con la capa Glow
         texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
     end
+
+    -- --- SISTEMA DE HUMO MORADO OSCURO ---
+    local smokePart = Instance.new("Part")
+    smokePart.Name = "SmokeVolume"
+    smokePart.Size = Vector3.new(boxSize, boxSize, boxSize) -- Ocupa toda la habitación
+    smokePart.CFrame = centerCF
+    smokePart.Transparency = 1 -- Invisible
+    smokePart.Anchored = true
+    smokePart.CanCollide = false
+    smokePart.CanTouch = false
+    smokePart.Parent = dimensionFolder
+
+    local smokeEmitter = Instance.new("ParticleEmitter")
+    smokeEmitter.Name = "DarkPurpleSmoke"
+    smokeEmitter.Texture = SMOKE_TEXTURE_ID
+    smokeEmitter.Color = ColorSequence.new(Color3.fromRGB(40, 0, 70)) -- Morado bien oscuro
+    smokeEmitter.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 15),
+        NumberSequenceKeypoint.new(1, 35) -- Crece para llenar el espacio
+    })
+    smokeEmitter.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.2, 0.7), -- Humo denso pero semitransparente
+        NumberSequenceKeypoint.new(0.8, 0.7),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    smokeEmitter.Lifetime = NumberRange.new(4, 6)
+    smokeEmitter.Rate = 50
+    smokeEmitter.Speed = NumberRange.new(1, 4)
+    smokeEmitter.Rotation = NumberRange.new(0, 360)
+    smokeEmitter.RotSpeed = NumberRange.new(-15, 15)
+    smokeEmitter.ZOffset = 2 -- Para que se renderice encima de las paredes
+    smokeEmitter.Parent = smokePart
 
     -- Bucle de Animación infinito
     local startTime = os.clock()
@@ -310,8 +344,12 @@ local function SpawnAFOSphere(centerCF)
 
         for _, tex in ipairs(allTextures) do
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
-                -- Al rotar la textura 45 grados, modificar el eje V empuja las líneas de arriba hacia abajo (polo alto a polo bajo)
-                tex.OffsetStudsV = offsetNeon
+                -- Restauramos el movimiento clásico al quitar la rotación
+                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                    tex.OffsetStudsV = offsetNeon
+                else
+                    tex.OffsetStudsU = offsetNeon
+                end
             elseif tex.Name == "BgUp" then
                 tex.OffsetStudsV = -offsetBg
             elseif tex.Name == "BgDown" then
