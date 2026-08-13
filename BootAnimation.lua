@@ -298,18 +298,14 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25)
 
-        -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            
             smokeEmitter.LightEmission = 1 
             smokeEmitter.ZOffset = 0.5 
-            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
             
             smokeEmitter.Size = NumberSequence.new({
@@ -334,14 +330,11 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
-        
         noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
-        
+        noiseEmitter.ZOffset = 0.6 
         noiseEmitter.Color = ColorSequence.new(hdrColor)
         
         noiseEmitter.Size = NumberSequence.new({
@@ -351,17 +344,14 @@ local function SpawnAFOSphere(centerCF)
         
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
-            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.2, 0.75), 
+            NumberSequenceKeypoint.new(0.8, 0.75), 
             NumberSequenceKeypoint.new(1, 1)
         })
         
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
-        
-        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
-        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
-        
+        noiseEmitter.Rate = 30 
+        noiseEmitter.Speed = NumberRange.new(10, 20) 
         noiseEmitter.EmissionDirection = emitDirection
         
         noiseEmitter.Rotation = NumberRange.new(0, 360)
@@ -369,7 +359,6 @@ local function SpawnAFOSphere(centerCF)
         noiseEmitter.Parent = polePart
     end
 
-    -- Generar los polos
     local topPole = Instance.new("Part")
     topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
@@ -390,7 +379,84 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. BUCLE DE ANIMACIÓN ---
+    -- --- 3. SISTEMA DE RAYOS CAÓTICOS ---
+    local lightningCenter = Instance.new("Part")
+    lightningCenter.Name = "LightningCenter"
+    lightningCenter.Size = Vector3.new(1, 1, 1)
+    lightningCenter.CFrame = centerCF
+    lightningCenter.Transparency = 1
+    lightningCenter.Anchored = true
+    lightningCenter.CanCollide = false
+    lightningCenter.Parent = dimensionFolder
+
+    local lightningTextures = {
+        "rbxassetid://7151778302",
+        "rbxassetid://4809471713"
+    }
+
+    local HDR_YELLOW = Color3.new(8, 7, 0) -- Amarillo neón súper brillante
+    local DARK_PURPLE = Color3.fromRGB(30, 0, 50) -- Morado muy oscuro
+    local PURE_BLACK = Color3.fromRGB(0, 0, 0)
+
+    -- Función auxiliar para crear emisores de rayos
+    local function createLightningEmitter(name, texture, color, lightEmission, zOffset, sizeRange, rate)
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = name
+        emitter.Texture = texture
+        emitter.LightEmission = lightEmission
+        emitter.ZOffset = zOffset
+        emitter.Color = ColorSequence.new(color)
+        
+        -- Flash rápido: Pequeño -> Gigante -> Pequeño
+        emitter.Size = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 10),
+            NumberSequenceKeypoint.new(0.1, sizeRange),
+            NumberSequenceKeypoint.new(0.8, sizeRange),
+            NumberSequenceKeypoint.new(1, 10)
+        })
+        
+        emitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.05, 0), -- Aparece de golpe
+            NumberSequenceKeypoint.new(0.8, 0.2),
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        
+        emitter.Lifetime = NumberRange.new(0.15, 0.3) -- Corta duración, parpadeo rápido
+        emitter.Rate = 0 -- Inicia apagado
+        emitter.Speed = NumberRange.new(0) -- Estáticos en su lugar
+        emitter.Rotation = NumberRange.new(0, 360) -- Ángulos locos
+        emitter.FlipbookFramerate = 0
+        emitter.Parent = lightningCenter
+        
+        -- Guardar el Rate objetivo como un atributo para activarlo después
+        emitter:SetAttribute("TargetRate", rate)
+    end
+
+    for _, texID in ipairs(lightningTextures) do
+        -- 1. Rayo Amarillo Brillante
+        createLightningEmitter("YellowLightning", texID, HDR_YELLOW, 1, 0.8, boxSize * 1.2, 5)
+        
+        -- 2. Rayo Aura Morada Oscura (Más grande que el negro para actuar como borde)
+        createLightningEmitter("PurpleEdgeLightning", texID, DARK_PURPLE, 0, 0.9, boxSize * 1.1, 8)
+        
+        -- 3. Rayo Núcleo Negro
+        createLightningEmitter("BlackCoreLightning", texID, PURE_BLACK, 0, 0.95, boxSize, 8)
+    end
+
+    -- Activar los rayos cuando el humo esté avanzado (3.5 segundos después)
+    task.delay(3.5, function()
+        if lightningCenter.Parent then
+            for _, emitter in ipairs(lightningCenter:GetChildren()) do
+                if emitter:IsA("ParticleEmitter") then
+                    emitter.Rate = emitter:GetAttribute("TargetRate")
+                end
+            end
+        end
+    end)
+
+
+    -- --- 4. BUCLE DE ANIMACIÓN DE PAREDES ---
     local startTime = os.clock()
     local conn
     
