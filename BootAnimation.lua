@@ -196,6 +196,9 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -209,6 +212,7 @@ local function SpawnAFOSphere(centerCF)
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local BG_TEXTURE_ID = "rbxassetid://72194288856630" 
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
+    local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713" -- Textura del rayo solicitada
     
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
     
@@ -298,78 +302,59 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25) 
 
-        -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            
             smokeEmitter.LightEmission = 1 
             smokeEmitter.ZOffset = 0.5 
-            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
-            
             smokeEmitter.Size = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 20),
                 NumberSequenceKeypoint.new(1, 60) 
             })
-            
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
                 NumberSequenceKeypoint.new(0.3, 0.9),
                 NumberSequenceKeypoint.new(0.7, 0.9),
                 NumberSequenceKeypoint.new(1, 1)
             })
-            
             smokeEmitter.Lifetime = NumberRange.new(5, 8)
             smokeEmitter.Rate = 12 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
-            
             smokeEmitter.Rotation = NumberRange.new(0, 360)
             smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
-        
         noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
-        
+        noiseEmitter.ZOffset = 0.6 
         noiseEmitter.Color = ColorSequence.new(hdrColor)
-        
         noiseEmitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 20),
             NumberSequenceKeypoint.new(1, 60) 
         })
-        
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
-            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.2, 0.75), 
+            NumberSequenceKeypoint.new(0.8, 0.75), 
             NumberSequenceKeypoint.new(1, 1)
         })
-        
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
-        
-        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
-        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
-        
+        noiseEmitter.Rate = 30 
+        noiseEmitter.Speed = NumberRange.new(10, 20) 
         noiseEmitter.EmissionDirection = emitDirection
-        
         noiseEmitter.Rotation = NumberRange.new(0, 360)
         noiseEmitter.RotSpeed = NumberRange.new(-15, 15)
         noiseEmitter.Parent = polePart
     end
 
-    -- Generar los polos
     local topPole = Instance.new("Part")
     topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
@@ -390,7 +375,86 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. BUCLE DE ANIMACIÓN ---
+    -- --- 3. SISTEMA DE RAYOS ELÉCTRICOS (RAYCAST Y SUPERPOSICIÓN) ---
+    local lightningHub = Instance.new("Part")
+    lightningHub.Name = "LightningHub"
+    lightningHub.Anchored = true
+    lightningHub.CanCollide = false
+    lightningHub.Transparency = 1
+    lightningHub.CFrame = centerCF
+    lightningHub.Parent = dimensionFolder
+
+    -- Configuración del Raycast para que no atraviese jugadores u otros objetos
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    -- Excluimos las paredes de la esfera para que el rayo no se detenga al chocar con ellas desde adentro
+    raycastParams.FilterDescendantsInstances = {dimensionFolder} 
+
+    local function CreateLightningStrike()
+        local extent = half - 2
+        local axis = math.random(1, 3)
+        local startPos, endPos
+        
+        -- Escoger dos puntos opuestos al azar en los extremos de la caja
+        if axis == 1 then
+            startPos = Vector3.new(-extent, math.random(-extent, extent), math.random(-extent, extent))
+            endPos =   Vector3.new(extent,  math.random(-extent, extent), math.random(-extent, extent))
+        elseif axis == 2 then
+            startPos = Vector3.new(math.random(-extent, extent), -extent, math.random(-extent, extent))
+            endPos =   Vector3.new(math.random(-extent, extent), extent,  math.random(-extent, extent))
+        else
+            startPos = Vector3.new(math.random(-extent, extent), math.random(-extent, extent), -extent)
+            endPos =   Vector3.new(math.random(-extent, extent), math.random(-extent, extent), extent)
+        end
+
+        local worldStart = centerCF * startPos
+        local worldEnd = centerCF * endPos
+        local direction = worldEnd - worldStart
+
+        -- Lanzamos el raycast para detectar si hay algún jugador o sólido en el camino
+        local result = workspace:Raycast(worldStart, direction, raycastParams)
+        if result then
+            worldEnd = result.Position -- Detenemos el rayo justo donde chocó
+        end
+
+        -- Creación visual del rayo
+        local a0 = Instance.new("Attachment", lightningHub)
+        a0.WorldPosition = worldStart
+        local a1 = Instance.new("Attachment", lightningHub)
+        a1.WorldPosition = worldEnd
+
+        -- Rayo Amarillo (El resplandor)
+        local yellowBeam = Instance.new("Beam")
+        yellowBeam.Attachment0 = a0
+        yellowBeam.Attachment1 = a1
+        yellowBeam.Texture = LIGHTNING_TEXTURE_ID
+        yellowBeam.Color = ColorSequence.new(Color3.fromRGB(255, 255, 0))
+        yellowBeam.LightEmission = 1
+        yellowBeam.Width0 = math.random(8, 16) -- Rayos grandes
+        yellowBeam.Width1 = math.random(8, 16)
+        yellowBeam.TextureMode = Enum.TextureMode.Wrap
+        yellowBeam.TextureLength = 15
+        yellowBeam.TextureSpeed = math.random(5, 10)
+        yellowBeam.FaceCamera = true
+        yellowBeam.Parent = lightningHub
+
+        -- Rayo Negro (El núcleo)
+        local blackBeam = yellowBeam:Clone()
+        blackBeam.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0))
+        blackBeam.LightEmission = 0
+        blackBeam.Width0 = yellowBeam.Width0 * 0.6 -- Ligeramente más delgado para dejar ver el amarillo
+        blackBeam.Width1 = yellowBeam.Width1 * 0.6
+        blackBeam.ZOffset = 1 -- Para que se renderice encima del amarillo
+        blackBeam.Parent = lightningHub
+
+        -- Los rayos desaparecen rápidamente para dar el efecto de electricidad intermitente
+        Debris:AddItem(a0, 0.15)
+        Debris:AddItem(a1, 0.15)
+        Debris:AddItem(yellowBeam, 0.15)
+        Debris:AddItem(blackBeam, 0.15)
+    end
+
+    -- --- 4. BUCLE DE ANIMACIÓN PRINCIPAL ---
     local startTime = os.clock()
     local conn
     
@@ -416,6 +480,23 @@ local function SpawnAFOSphere(centerCF)
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
             end
+        end
+    end)
+
+    -- --- 5. LÓGICA DE AUMENTO DE RAYOS ---
+    task.spawn(function()
+        -- Inicia hacia la "mitad" de la animación (Ej: tras 3 segundos)
+        task.wait(3) 
+
+        local spawnRate = 0.8 -- Frecuencia inicial lenta
+        local minRate = 0.05 -- Frecuencia máxima (muy rápida)
+        local decreaseFactor = 0.92 -- Factor por el que se acelera cada iteración
+
+        while dimensionFolder.Parent do
+            CreateLightningStrike()
+            task.wait(spawnRate)
+            -- Acelerar la aparición de los rayos limitándolo a minRate
+            spawnRate = math.max(minRate, spawnRate * decreaseFactor)
         end
     end)
 end
