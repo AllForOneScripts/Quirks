@@ -211,6 +211,7 @@ local function SpawnAFOSphere(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
     
     local NEON_MAGENTA = Color3.new(12, 1, 10) 
+    
     local NEON_SPEED = 180 
     local BG_SPEED = 12
 
@@ -297,59 +298,78 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25)
+        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
 
+        -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
+            
             smokeEmitter.LightEmission = 1 
             smokeEmitter.ZOffset = 0.5 
+            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
+            
             smokeEmitter.Size = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 20),
                 NumberSequenceKeypoint.new(1, 60) 
             })
+            
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
                 NumberSequenceKeypoint.new(0.3, 0.9),
                 NumberSequenceKeypoint.new(0.7, 0.9),
                 NumberSequenceKeypoint.new(1, 1)
             })
+            
             smokeEmitter.Lifetime = NumberRange.new(5, 8)
             smokeEmitter.Rate = 12 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
+            
             smokeEmitter.Rotation = NumberRange.new(0, 360)
             smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
         end
 
+        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
+        
         noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 
+        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
+        
         noiseEmitter.Color = ColorSequence.new(hdrColor)
+        
         noiseEmitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 20),
             NumberSequenceKeypoint.new(1, 60) 
         })
+        
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), 
-            NumberSequenceKeypoint.new(0.8, 0.75), 
+            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
             NumberSequenceKeypoint.new(1, 1)
         })
+        
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 
-        noiseEmitter.Speed = NumberRange.new(10, 20) 
+        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
+        
+        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
+        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
+        
         noiseEmitter.EmissionDirection = emitDirection
+        
         noiseEmitter.Rotation = NumberRange.new(0, 360)
         noiseEmitter.RotSpeed = NumberRange.new(-15, 15)
         noiseEmitter.Parent = polePart
     end
 
+    -- Generar los polos
     local topPole = Instance.new("Part")
     topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
@@ -370,76 +390,8 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. SISTEMA DE RAYOS CAÓTICOS (REESCRITO Y MASIVO) ---
-    local lightningCenter = Instance.new("Part")
-    lightningCenter.Name = "LightningCenter"
-    lightningCenter.Size = Vector3.new(1, 1, 1)
-    lightningCenter.CFrame = centerCF
-    lightningCenter.Transparency = 1
-    lightningCenter.Anchored = true
-    lightningCenter.CanCollide = false
-    lightningCenter.Parent = dimensionFolder
-
-    local lightningTextures = {
-        "rbxassetid://7151778302",
-        "rbxassetid://4809471713"
-    }
-
-    local HDR_YELLOW = Color3.new(10, 8, 1) 
-    local DARK_PURPLE = Color3.fromRGB(60, 0, 100) -- Borde oscuro
-    local PURE_BLACK = Color3.fromRGB(0, 0, 0) -- Núcleo
-
-    local function createLightningEmitter(name, texture, color, lightEmission, zOffset, size, rate)
-        local emitter = Instance.new("ParticleEmitter")
-        emitter.Name = name
-        emitter.Texture = texture
-        emitter.LightEmission = lightEmission
-        emitter.ZOffset = zOffset
-        emitter.Color = ColorSequence.new(color)
-        
-        -- Tamaño brutal para cubrir la esfera por completo
-        emitter.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, size * 0.8),
-            NumberSequenceKeypoint.new(0.5, size),
-            NumberSequenceKeypoint.new(1, size * 0.8)
-        })
-        
-        emitter.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.05, 0), 
-            NumberSequenceKeypoint.new(0.8, 0.1),
-            NumberSequenceKeypoint.new(1, 1)
-        })
-        
-        emitter.Lifetime = NumberRange.new(0.2, 0.4) 
-        emitter.Rate = 0 -- Inicia en 0 hasta el delay de 3.5s
-        
-        -- ESTO ES CLAVE: Los distribuye en un radio en 3D para que no se queden atorados en la cámara
-        emitter.EmissionShape = Enum.ParticleEmitterShape.Sphere
-        emitter.ShapeRadius = boxSize / 1.5 
-        
-        emitter.Speed = NumberRange.new(0) 
-        emitter.Rotation = NumberRange.new(0, 360) 
-        emitter.FlipbookFramerate = 0
-        emitter.Parent = lightningCenter
-        
-        -- Guardamos el Rate para prenderlo más adelante
-        emitter:SetAttribute("TargetRate", rate)
-    end
-
-    for _, texID in ipairs(lightningTextures) do
-        -- Tasa de emisión altísima (Rate de 20-30 x 2 texturas = lluvia de rayos)
-        createLightningEmitter("YellowLightning", texID, HDR_YELLOW, 1, 0.8, boxSize * 1.5, 20)
-        
-        -- El morado es un poco más grande (1.4) que el negro (1.3) para que funcione como borde
-        createLightningEmitter("PurpleEdgeLightning", texID, DARK_PURPLE, 0.4, 0.85, boxSize * 1.4, 30)
-        createLightningEmitter("BlackCoreLightning", texID, PURE_BLACK, 0, 0.9, boxSize * 1.3, 30)
-    end
-
-    -- --- 4. BUCLE DE ANIMACIÓN Y DELAY DE RAYOS ---
+    -- --- 3. BUCLE DE ANIMACIÓN ---
     local startTime = os.clock()
-    local lightningActivated = false
-    local LIGHTNING_DELAY = 3.5 
     local conn
     
     conn = RunService.RenderStepped:Connect(function()
@@ -449,20 +401,6 @@ local function SpawnAFOSphere(centerCF)
         end
 
         local elapsed = os.clock() - startTime
-        
-        -- Activa la tormenta de rayos exactamente a los 3.5 segundos
-        if not lightningActivated and elapsed >= LIGHTNING_DELAY then
-            lightningActivated = true
-            if lightningCenter and lightningCenter.Parent then
-                for _, emitter in ipairs(lightningCenter:GetChildren()) do
-                    if emitter:IsA("ParticleEmitter") then
-                        emitter.Rate = emitter:GetAttribute("TargetRate")
-                    end
-                end
-            end
-        end
-
-        -- Anima las paredes
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
