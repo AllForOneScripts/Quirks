@@ -300,29 +300,26 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25) 
 
         -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            
             smokeEmitter.LightEmission = 1 
             smokeEmitter.ZOffset = 0.5 
-            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
-            
             smokeEmitter.Size = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 20),
                 NumberSequenceKeypoint.new(1, 60) 
             })
             
+            -- Transparencia configurada al 75% (0.75)
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.3, 0.9),
-                NumberSequenceKeypoint.new(0.7, 0.9),
+                NumberSequenceKeypoint.new(0.3, 0.75), 
+                NumberSequenceKeypoint.new(0.7, 0.75),
                 NumberSequenceKeypoint.new(1, 1)
             })
             
@@ -330,40 +327,34 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Rate = 12 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
-            
             smokeEmitter.Rotation = NumberRange.new(0, 360)
             smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
+        -- 2. Emisor de Ruido de TV (Máscara deslizante)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
-        
         noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
-        
+        noiseEmitter.ZOffset = 0.6 
         noiseEmitter.Color = ColorSequence.new(hdrColor)
-        
         noiseEmitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 20),
             NumberSequenceKeypoint.new(1, 60) 
         })
         
+        -- Transparencia configurada al 75% (0.75)
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
-            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.2, 0.75), 
+            NumberSequenceKeypoint.new(0.8, 0.75), 
             NumberSequenceKeypoint.new(1, 1)
         })
         
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
-        
-        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
-        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
-        
+        noiseEmitter.Rate = 30 
+        noiseEmitter.Speed = NumberRange.new(10, 20) 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.Rotation = NumberRange.new(0, 360)
         noiseEmitter.RotSpeed = NumberRange.new(-15, 15)
@@ -424,7 +415,7 @@ local function SpawnAFOSphere(centerCF)
         local rayResult = workspace:Raycast(startPos, direction, raycastParams)
         local finalTargetPos = rayResult and rayResult.Position or rawEndPos
 
-        -- Creación del camino detallado en zigzag (zigzag procedural)
+        -- Creación del camino detallado en zigzag
         local dist = (finalTargetPos - startPos).Magnitude
         local numSegments = math.clamp(math.floor(dist / 5), 6, 12)
         local points = {startPos}
@@ -441,9 +432,14 @@ local function SpawnAFOSphere(centerCF)
         end
         table.insert(points, finalTargetPos)
 
-        local boltFolder = Instance.new("Folder")
-        boltFolder.Name = "LightningBolt"
-        boltFolder.Parent = dimensionFolder
+        -- SOLUCIÓN: Usar un Part en lugar de un Folder para que los Attachments funcionen.
+        local boltPart = Instance.new("Part")
+        boltPart.Name = "LightningBoltPart"
+        boltPart.Anchored = true
+        boltPart.CanCollide = false
+        boltPart.Transparency = 1 
+        boltPart.CFrame = centerCF
+        boltPart.Parent = dimensionFolder
 
         -- Animación que hace viajar el rayo de un extremo a otro rápidamente
         task.spawn(function()
@@ -457,11 +453,11 @@ local function SpawnAFOSphere(centerCF)
 
                 local att0 = Instance.new("Attachment")
                 att0.WorldPosition = pA
-                att0.Parent = boltFolder
+                att0.Parent = boltPart -- Emparentado al Part (obligatorio en Roblox)
 
                 local att1 = Instance.new("Attachment")
                 att1.WorldPosition = pB
-                att1.Parent = boltFolder
+                att1.Parent = boltPart -- Emparentado al Part
 
                 -- Rayo Amarillo (Resplandor brillante)
                 local yellowBeam = Instance.new("Beam")
@@ -476,7 +472,7 @@ local function SpawnAFOSphere(centerCF)
                 yellowBeam.TextureLength = 10
                 yellowBeam.TextureSpeed = math.random(10, 20)
                 yellowBeam.FaceCamera = true
-                yellowBeam.Parent = boltFolder
+                yellowBeam.Parent = boltPart
 
                 -- Rayo Negro (Núcleo superpuesto)
                 local blackBeam = Instance.new("Beam")
@@ -492,15 +488,15 @@ local function SpawnAFOSphere(centerCF)
                 blackBeam.TextureSpeed = math.random(10, 20)
                 blackBeam.ZOffset = 1
                 blackBeam.FaceCamera = true
-                blackBeam.Parent = boltFolder
+                blackBeam.Parent = boltPart
 
-                -- Micro-espera para visualizar el movimiento/desplazamiento del rayo a través de la esfera
+                -- Micro-espera para visualizar el movimiento del rayo
                 task.wait(0.008)
             end
 
-            -- Breve destello final antes de limpiar
+            -- Breve destello final antes de limpiar todo el rayo
             task.wait(0.06)
-            boltFolder:Destroy()
+            boltPart:Destroy()
         end)
     end
 
