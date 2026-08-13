@@ -196,9 +196,8 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
--- IDs de las texturas del efecto
-local TEXTURE_MAIN_ID    = "rbxassetid://72194288856630"
-local TEXTURE_OVERLAY_ID = "rbxassetid://5748262504"
+-- Asume que RunService ya está definido en el scope superior del script principal
+-- (local RunService = game:GetService("RunService"))
 
 local function SpawnAFOSphere(centerCF, duration)
     local sphereFolder = Instance.new("Folder")
@@ -207,10 +206,11 @@ local function SpawnAFOSphere(centerCF, duration)
 
     local sphereRadius = 15
 
-    -- 1. Esfera base (núcleo negro)
+    -- 1. Esfera base (núcleo negro).
+    -- Se usa un Part normal como contenedor de física/posición, pero su geometría
+    -- visible la reemplaza el SpecialMesh de abajo.
     local mainSphere = Instance.new("Part")
     mainSphere.Name = "CoreSphere"
-    mainSphere.Shape = Enum.PartType.Ball
     mainSphere.Size = Vector3.new(sphereRadius * 2, sphereRadius * 2, sphereRadius * 2)
     mainSphere.CFrame = centerCF
     mainSphere.Color = Color3.fromRGB(0, 0, 0)
@@ -222,14 +222,22 @@ local function SpawnAFOSphere(centerCF, duration)
     mainSphere.CastShadow = false
     mainSphere.Parent = sphereFolder
 
-    -- 2. Capa principal: textura 72194288856630, oscurecida 50%, cayendo rápido con loop continuo.
-    -- Se usa un objeto "Texture" (no Decal) porque es el único que soporta OffsetStudsU/V,
-    -- necesario para animar el scroll. En un Part con Shape = Ball, la textura envuelve
-    -- toda la esfera sin importar la "Face" que se le asigne.
+    -- Mesh esférico con normales invertidas: al escalar un eje en negativo se
+    -- voltea el winding de las caras, así que se ve desde ADENTRO (que es donde
+    -- está la cámara) en vez de solo desde afuera como pasaría con un Part
+    -- Shape = Ball normal (single-sided).
+    local sphereMesh = Instance.new("SpecialMesh")
+    sphereMesh.MeshType = Enum.MeshType.Sphere
+    sphereMesh.Scale = Vector3.new(-1, 1, 1)
+    sphereMesh.Parent = mainSphere
+
+    -- 2. Capa principal: textura 72194288856630, oscurecida 50%, cayendo rápido
+    -- con loop continuo. "Texture" es el único objeto con OffsetStudsU/V, por
+    -- eso se usa en vez de Decal para poder animar el scroll.
     local mainTexture = Instance.new("Texture")
     mainTexture.Name = "MainTexture"
     mainTexture.Face = Enum.NormalId.Front
-    mainTexture.Texture = TEXTURE_MAIN_ID
+    mainTexture.Texture = "rbxassetid://72194288856630"
     mainTexture.Color3 = Color3.fromRGB(128, 128, 128) -- tinte multiplicativo = 50% más oscuro
     mainTexture.Transparency = 0
     mainTexture.StudsPerTileU = sphereRadius * 1.2
@@ -237,13 +245,13 @@ local function SpawnAFOSphere(centerCF, duration)
     mainTexture.Parent = mainSphere
 
     -- 3. Capa overlay: textura 5748262504, 75% de transparencia.
-    -- Se usan DOS instancias de la misma textura (en caras distintas, ambas envuelven
-    -- la esfera igual) para lograr que "nazca" del centro y se deslice tanto hacia
-    -- arriba como hacia abajo de forma continua, en vez de moverse en una sola dirección.
+    -- Dos instancias de la misma textura (en caras distintas, ambas envuelven
+    -- igual la esfera) para que "nazca" del centro y se deslice tanto hacia
+    -- arriba como hacia abajo de forma continua.
     local overlayUp = Instance.new("Texture")
     overlayUp.Name = "OverlayUp"
     overlayUp.Face = Enum.NormalId.Back
-    overlayUp.Texture = TEXTURE_OVERLAY_ID
+    overlayUp.Texture = "rbxassetid://5748262504"
     overlayUp.Transparency = 0.75
     overlayUp.StudsPerTileU = sphereRadius * 1.2
     overlayUp.StudsPerTileV = sphereRadius * 1.2
@@ -253,7 +261,7 @@ local function SpawnAFOSphere(centerCF, duration)
     local overlayDown = Instance.new("Texture")
     overlayDown.Name = "OverlayDown"
     overlayDown.Face = Enum.NormalId.Top
-    overlayDown.Texture = TEXTURE_OVERLAY_ID
+    overlayDown.Texture = "rbxassetid://5748262504"
     overlayDown.Transparency = 0.75
     overlayDown.StudsPerTileU = sphereRadius * 1.2
     overlayDown.StudsPerTileV = sphereRadius * 1.2
