@@ -199,7 +199,7 @@ function M.Start(firstArgument, secondArgument)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 14
 	title.TextColor3 = C_TEXT
-	title.Text = "Movement Hub"
+	title.Text = "Speed Force"
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = mainFrame
 
