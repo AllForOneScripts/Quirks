@@ -196,8 +196,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -300,26 +298,30 @@ local function SpawnAFOSphere(centerCF)
     }
 
     local function createSmokeForPole(polePart, emitDirection)
-        local hdrColor = Color3.new(1.5, 0.1875, 2.25) 
+        -- Color HDR original reducido en un 50% (MODIFICADO: Brillo disminuido significativamente)
+        local hdrColor = Color3.new(1.5, 0.1875, 2.25) -- Antes (3, 0.375, 4.5)
 
         -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
             smokeEmitter.Texture = texID
-            smokeEmitter.LightEmission = 1 
+            
+            -- REDUCIDO UN 45% (De 1 a 0.55)
+            smokeEmitter.LightEmission = 0.55 
             smokeEmitter.ZOffset = 0.5 
+            
             smokeEmitter.Color = ColorSequence.new(hdrColor)
+            
             smokeEmitter.Size = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 20),
                 NumberSequenceKeypoint.new(1, 60) 
             })
             
-            -- Transparencia configurada al 75% (0.75)
             smokeEmitter.Transparency = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.3, 0.75), 
-                NumberSequenceKeypoint.new(0.7, 0.75),
+                NumberSequenceKeypoint.new(0.3, 0.9),
+                NumberSequenceKeypoint.new(0.7, 0.9),
                 NumberSequenceKeypoint.new(1, 1)
             })
             
@@ -327,35 +329,43 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Rate = 12 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
+            
             smokeEmitter.Rotation = NumberRange.new(0, 360)
             smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante)
+        -- 2. Emisor de Ruido de TV (Máscara deslizante) (MODIFICADO: Noiser aumentado significativamente)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
-        noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 
+        
+        -- REDUCIDO UN 45% (De 0.8 a 0.44)
+        noiseEmitter.LightEmission = 0.44 
+        noiseEmitter.ZOffset = 0.6 -- Ligeramente por encima/entremezclado con el humo
+        
         noiseEmitter.Color = ColorSequence.new(hdrColor)
+        
         noiseEmitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 20),
             NumberSequenceKeypoint.new(1, 60) 
         })
         
-        -- Transparencia configurada al 75% (0.75)
         noiseEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.2, 0.75), 
-            NumberSequenceKeypoint.new(0.8, 0.75), 
+            NumberSequenceKeypoint.new(0.2, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
+            NumberSequenceKeypoint.new(0.8, 0.75), -- Reducción de transparencia (partículas de ruido más visibles, MODIFICADO)
             NumberSequenceKeypoint.new(1, 1)
         })
         
         noiseEmitter.Lifetime = NumberRange.new(5, 8)
-        noiseEmitter.Rate = 30 
-        noiseEmitter.Speed = NumberRange.new(10, 20) 
+        noiseEmitter.Rate = 30 -- Tasa de emisión triplicada (MODIFICADO)
+        
+        -- Velocidad mayor para simular el deslizamiento a través del humo (MODIFICADO)
+        noiseEmitter.Speed = NumberRange.new(10, 20) -- Antes (4, 9)
+        
         noiseEmitter.EmissionDirection = emitDirection
+        
         noiseEmitter.Rotation = NumberRange.new(0, 360)
         noiseEmitter.RotSpeed = NumberRange.new(-15, 15)
         noiseEmitter.Parent = polePart
@@ -382,8 +392,17 @@ local function SpawnAFOSphere(centerCF)
     bottomPole.Parent = dimensionFolder
     createSmokeForPole(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. SISTEMA DE RAYOS GRANDES DESPLAZABLES (AMARILLO Y NEGRO) ---
+    -- --- 3. SISTEMA DE RAYOS ELÉCTRICOS (Visibles y Desplazables) ---
     local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713"
+    
+    -- Parte central obligatoria para que los Attachments y Beams se vean
+    local lightningHub = Instance.new("Part")
+    lightningHub.Name = "LightningHub"
+    lightningHub.Anchored = true
+    lightningHub.CanCollide = false
+    lightningHub.Transparency = 1
+    lightningHub.CFrame = centerCF
+    lightningHub.Parent = dimensionFolder
 
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -394,7 +413,7 @@ local function SpawnAFOSphere(centerCF)
         local axis = math.random(1, 3)
         local startPos, rawEndPos
 
-        -- Posiciones origen y destino opuestas dentro de la esfera
+        -- Definir de qué pared a qué pared va el rayo
         if axis == 1 then
             startPos = centerCF * Vector3.new(-extent, math.random(-extent, extent), math.random(-extent, extent))
             rawEndPos = centerCF * Vector3.new(extent, math.random(-extent, extent), math.random(-extent, extent))
@@ -410,12 +429,12 @@ local function SpawnAFOSphere(centerCF)
             startPos, rawEndPos = rawEndPos, startPos
         end
 
-        -- Raycast para frenar el rayo si impacta contra un jugador u objeto interno
+        -- Detección de colisiones: si hay un jugador, el rayo se detiene en él
         local direction = rawEndPos - startPos
         local rayResult = workspace:Raycast(startPos, direction, raycastParams)
         local finalTargetPos = rayResult and rayResult.Position or rawEndPos
 
-        -- Creación del camino detallado en zigzag
+        -- Generar puntos para el zigzag
         local dist = (finalTargetPos - startPos).Magnitude
         local numSegments = math.clamp(math.floor(dist / 5), 6, 12)
         local points = {startPos}
@@ -423,43 +442,27 @@ local function SpawnAFOSphere(centerCF)
         for i = 1, numSegments - 1 do
             local alpha = i / numSegments
             local basePoint = startPos:Lerp(finalTargetPos, alpha)
-            local offset = Vector3.new(
-                math.random(-5, 5),
-                math.random(-5, 5),
-                math.random(-5, 5)
-            )
+            local offset = Vector3.new(math.random(-5, 5), math.random(-5, 5), math.random(-5, 5))
             table.insert(points, basePoint + offset)
         end
         table.insert(points, finalTargetPos)
 
-        -- SOLUCIÓN: Usar un Part en lugar de un Folder para que los Attachments funcionen.
-        local boltPart = Instance.new("Part")
-        boltPart.Name = "LightningBoltPart"
-        boltPart.Anchored = true
-        boltPart.CanCollide = false
-        boltPart.Transparency = 1 
-        boltPart.CFrame = centerCF
-        boltPart.Parent = dimensionFolder
-
-        -- Animación que hace viajar el rayo de un extremo a otro rápidamente
+        -- Animación progresiva del rayo
         task.spawn(function()
-            local beamWidth = math.random(12, 20) -- Rayos grandes
+            local beamWidth = math.random(12, 20)
+            local debrisTable = {} -- Guardamos las partes para eliminarlas juntas al final
 
             for i = 1, #points - 1 do
-                if not dimensionFolder.Parent then break end
-
-                local pA = points[i]
-                local pB = points[i+1]
+                if not lightningHub.Parent then break end
 
                 local att0 = Instance.new("Attachment")
-                att0.WorldPosition = pA
-                att0.Parent = boltPart -- Emparentado al Part (obligatorio en Roblox)
+                att0.WorldPosition = points[i]
+                att0.Parent = lightningHub
 
                 local att1 = Instance.new("Attachment")
-                att1.WorldPosition = pB
-                att1.Parent = boltPart -- Emparentado al Part
+                att1.WorldPosition = points[i+1]
+                att1.Parent = lightningHub
 
-                -- Rayo Amarillo (Resplandor brillante)
                 local yellowBeam = Instance.new("Beam")
                 yellowBeam.Attachment0 = att0
                 yellowBeam.Attachment1 = att1
@@ -472,9 +475,8 @@ local function SpawnAFOSphere(centerCF)
                 yellowBeam.TextureLength = 10
                 yellowBeam.TextureSpeed = math.random(10, 20)
                 yellowBeam.FaceCamera = true
-                yellowBeam.Parent = boltPart
+                yellowBeam.Parent = lightningHub
 
-                -- Rayo Negro (Núcleo superpuesto)
                 local blackBeam = Instance.new("Beam")
                 blackBeam.Attachment0 = att0
                 blackBeam.Attachment1 = att1
@@ -488,22 +490,26 @@ local function SpawnAFOSphere(centerCF)
                 blackBeam.TextureSpeed = math.random(10, 20)
                 blackBeam.ZOffset = 1
                 blackBeam.FaceCamera = true
-                blackBeam.Parent = boltPart
+                blackBeam.Parent = lightningHub
 
-                -- Micro-espera para visualizar el movimiento del rayo
-                task.wait(0.008)
+                table.insert(debrisTable, att0)
+                table.insert(debrisTable, att1)
+                table.insert(debrisTable, yellowBeam)
+                table.insert(debrisTable, blackBeam)
+
+                task.wait(0.008) -- Efecto visual de viaje
             end
 
-            -- Breve destello final antes de limpiar todo el rayo
             task.wait(0.06)
-            boltPart:Destroy()
+            for _, item in ipairs(debrisTable) do
+                item:Destroy()
+            end
         end)
     end
 
-    -- Disparador que inicia a mitad de la animación y escala la frecuencia
+    -- Iniciar la tormenta eléctrica después de la mitad del tiempo
     task.spawn(function()
-        task.wait(3.5) -- Espera a la mitad del proceso inicial
-
+        task.wait(3.5)
         local currentDelay = 0.5
         local minDelay = 0.05
         local acceleration = 0.88
@@ -511,12 +517,11 @@ local function SpawnAFOSphere(centerCF)
         while dimensionFolder.Parent do
             SpawnTravelingLightning()
             task.wait(currentDelay)
-            -- Aumenta progresivamente la cantidad de rayos acelerando la frecuencia
             currentDelay = math.max(minDelay, currentDelay * acceleration)
         end
     end)
 
-    -- --- 4. BUCLE DE ANIMACIÓN ---
+    -- --- 4. BUCLE DE ANIMACIÓN ORIGINAL ---
     local startTime = os.clock()
     local conn
     
