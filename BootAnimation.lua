@@ -246,12 +246,12 @@ local function SpawnAFOSphere(centerCF, duration)
             table.insert(allTextures, tex)
         end
 
-        -- 1. Textura base oscura al 50%
-        addTexture("72194288856630", 0, Color3.new(0.5, 0.5, 0.5), "BaseTexture")
+        -- 1. Textura base: Color3.new(1, 1, 1) elimina el filtro oscuro y revela la saturación original.
+        addTexture("72194288856630", 0, Color3.new(1, 1, 1), "BaseTexture")
         
-        -- 2. Texturas secundarias con 75% de transparencia (efecto de aura)
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureUp")
-        addTexture("5748262504", 0.75, Color3.new(1, 1, 1), "TopTextureDown")
+        -- 2. Texturas secundarias: Transparencia bajada de 0.75 a 0.3 para un aura mucho más intensa.
+        addTexture("5748262504", 0.3, Color3.new(1, 1, 1), "TopTextureUp")
+        addTexture("5748262504", 0.3, Color3.new(1, 1, 1), "TopTextureDown")
     end
 
     -- Bucle de Animación sin Tweens que bloqueen el hilo
@@ -296,7 +296,6 @@ local function SpawnAFOSphere(centerCF, duration)
         end
     end)
 end
-
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 -----------------------------------------------------------------------------FIN-------------------------------------------------------------------------------
