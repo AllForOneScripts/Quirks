@@ -116,10 +116,7 @@ end
 local in4DMode = true
 local skyWorldY = originalGroundY + 1500
 
--- ==========================================
--- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
--- ==========================================
--- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
+-- Corrección aplicada: Se elimina hum.PlatformStand = true del ascenso
 root.Anchored = false 
 
 local skyBV = Instance.new("BodyVelocity", root)
@@ -148,13 +145,11 @@ end)
 
 local heightMaintainer = RunService.Heartbeat:Connect(function()
     if in4DMode and root then
-        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
         if math.abs(root.Position.Y - skyWorldY) > 5 then
             root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
--- ==========================================
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -556,9 +551,6 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
--- ==========================================
--- DESCENSO Y ATERRIZAJE (omniAntiBounceLand)
--- ==========================================
 in4DMode = false
 if heightMaintainer then heightMaintainer:Disconnect() end
 if skyBV then skyBV:Destroy() end
@@ -569,7 +561,6 @@ root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
--- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -583,7 +574,6 @@ task.defer(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
 end)
--- ==========================================
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
