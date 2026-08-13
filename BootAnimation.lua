@@ -196,6 +196,8 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
+
 local function SpawnAFOSphere(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_NeonSphere_Effect"
@@ -300,7 +302,6 @@ local function SpawnAFOSphere(centerCF)
     local function createSmokeForPole(polePart, emitDirection)
         local hdrColor = Color3.new(1.5, 0.1875, 2.25)
 
-        -- 1. Emisores del humo principal
         for _, texID in ipairs(smokeTextures) do
             local smokeEmitter = Instance.new("ParticleEmitter")
             smokeEmitter.Name = "GlowingWisps"
@@ -322,7 +323,7 @@ local function SpawnAFOSphere(centerCF)
             })
             
             smokeEmitter.Lifetime = NumberRange.new(3, 5)
-            smokeEmitter.Rate = 6 -- RATE AUMENTADO A 6
+            smokeEmitter.Rate = 6 
             smokeEmitter.Speed = NumberRange.new(2, 6) 
             smokeEmitter.EmissionDirection = emitDirection
             
@@ -331,7 +332,6 @@ local function SpawnAFOSphere(centerCF)
             smokeEmitter.Parent = polePart
         end
 
-        -- 2. Emisor de Ruido de TV (Máscara deslizante ERRÁTICA)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Name = "TVNoiseMask"
         noiseEmitter.Texture = NOISE_TEXTURE_ID
@@ -354,18 +354,16 @@ local function SpawnAFOSphere(centerCF)
         noiseEmitter.Lifetime = NumberRange.new(2, 4)
         noiseEmitter.Rate = 12 
         
-        -- CONFIGURACIÓN ERRÁTICA
-        noiseEmitter.SpreadAngle = Vector2.new(360, 360) -- Se dispersa en todas direcciones
-        noiseEmitter.Speed = NumberRange.new(25, 60) -- Alta velocidad
-        noiseEmitter.Drag = 8 -- Frena de golpe, causando movimiento errático tipo estática
+        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
+        noiseEmitter.Speed = NumberRange.new(25, 60)
+        noiseEmitter.Drag = 8 
         noiseEmitter.EmissionDirection = emitDirection
         
         noiseEmitter.Rotation = NumberRange.new(0, 360)
-        noiseEmitter.RotSpeed = NumberRange.new(-80, 80) -- Rotación inestable
+        noiseEmitter.RotSpeed = NumberRange.new(-80, 80)
         noiseEmitter.Parent = polePart
     end
 
-    -- Generar los polos
     local topPole = Instance.new("Part")
     topPole.Name = "TopPoleSmoke"
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
@@ -403,10 +401,9 @@ local function SpawnAFOSphere(centerCF)
         emitter.Name = name
         emitter.Texture = WIND_TEXTURE_ID
         emitter.Color = ColorSequence.new(color)
-        emitter.LightEmission = 1 -- Brillo máximo
-        emitter.ZOffset = 0.5
+        emitter.LightEmission = 1
+        emitter.ZOffset = 0 -- CRÍTICO: Debe ser 0 para que no se aleje de la cámara del jugador
         
-        -- Partículas más grandes para que sean visibles
         emitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
             NumberSequenceKeypoint.new(0.2, 3.5),
@@ -416,15 +413,16 @@ local function SpawnAFOSphere(centerCF)
         
         emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.5, 0.15), -- Muy nítidas
+            NumberSequenceKeypoint.new(0.5, 0.15),
             NumberSequenceKeypoint.new(1, 1)
         })
         
         emitter.Lifetime = NumberRange.new(6, 10)
-        emitter.Rate = 80 -- MUCHAS más partículas para llenar la caja
-        emitter.Speed = NumberRange.new(0.5, 2)
+        emitter.Rate = 100 -- Aumentado un poco para llenar el área
+        emitter.Speed = NumberRange.new(1, 3)
+        emitter.SpreadAngle = Vector2.new(360, 360) -- CRÍTICO: Dispara en todas las direcciones 3D
         emitter.Drag = 0.5
-        emitter.Acceleration = Vector3.new(0, 1.5, 0) -- Flotan lentamente hacia arriba
+        emitter.Acceleration = Vector3.new(0, 0, 0) -- Flotan en el aire, no solo hacia arriba
         
         emitter.Rotation = NumberRange.new(0, 360)
         emitter.RotSpeed = NumberRange.new(-15, 15)
@@ -433,13 +431,10 @@ local function SpawnAFOSphere(centerCF)
         emitter.Parent = windVolume
     end
 
-    -- Viento Magenta
     createWindEmitter("MagentaWind", Color3.fromRGB(255, 0, 255))
-    -- Viento Amarillo
     createWindEmitter("YellowWind", Color3.fromRGB(255, 230, 0))
 
-
-    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (VISIBLES Y DESVANECIENTES) ---
+    -- --- 4. SISTEMA DE RAYOS ELÉCTRICOS (VISIBLES Y DESVANECIENTES CORREGIDO) ---
     local LIGHTNING_TEXTURE_ID = "rbxassetid://4809471713"
     
     local lightningHub = Instance.new("Part")
@@ -456,22 +451,22 @@ local function SpawnAFOSphere(centerCF)
 
     local function SpawnTravelingLightning()
         local extent = half - 2
-        local axis = math.random(1, 3)
-        local startPos, rawEndPos
-
-        if axis == 1 then
-            startPos = centerCF * Vector3.new(-extent, math.random(-extent, extent), math.random(-extent, extent))
-            rawEndPos = centerCF * Vector3.new(extent, math.random(-extent, extent), math.random(-extent, extent))
-        elseif axis == 2 then
-            startPos = centerCF * Vector3.new(math.random(-extent, extent), -extent, math.random(-extent, extent))
-            rawEndPos = centerCF * Vector3.new(math.random(-extent, extent), extent, math.random(-extent, extent))
-        else
-            startPos = centerCF * Vector3.new(math.random(-extent, extent), math.random(-extent, extent), -extent)
-            rawEndPos = centerCF * Vector3.new(math.random(-extent, extent), math.random(-extent, extent), extent)
+        
+        -- Función para obtener un punto 3D aleatorio DENTRO de la habitación
+        local function getRandomPointInVolume()
+            return centerCF * Vector3.new(
+                (math.random() * 2 - 1) * extent,
+                (math.random() * 2 - 1) * extent,
+                (math.random() * 2 - 1) * extent
+            )
         end
 
-        if math.random() > 0.5 then
-            startPos, rawEndPos = rawEndPos, startPos
+        local startPos = getRandomPointInVolume()
+        local rawEndPos = getRandomPointInVolume()
+
+        -- Asegurarse de que el rayo no sea demasiado corto (que viaje cierta distancia)
+        while (rawEndPos - startPos).Magnitude < (boxSize * 0.4) do
+            rawEndPos = getRandomPointInVolume()
         end
 
         local direction = rawEndPos - startPos
@@ -495,7 +490,6 @@ local function SpawnAFOSphere(centerCF)
             local debrisTable = {} 
             local beamsList = {}
 
-            -- 1. Crear el rayo progresivamente
             for i = 1, #points - 1 do
                 if not lightningHub.Parent then break end
 
@@ -532,7 +526,7 @@ local function SpawnAFOSphere(centerCF)
                 blackBeam.TextureMode = Enum.TextureMode.Wrap
                 blackBeam.TextureLength = 10
                 blackBeam.TextureSpeed = math.random(15, 30)
-                blackBeam.ZOffset = 1
+                blackBeam.ZOffset = 0 -- CORREGIDO: ahora es 0 para que no se aleje visualmente del jugador
                 blackBeam.FaceCamera = true
                 blackBeam.Parent = lightningHub
 
@@ -544,13 +538,11 @@ local function SpawnAFOSphere(centerCF)
                 table.insert(beamsList, yellowBeam)
                 table.insert(beamsList, blackBeam)
 
-                task.wait(0.015) -- Viaja súper rápido pero lo suficientemente lento para verse
+                task.wait(0.015) 
             end
 
-            -- 2. Mantenerlo vivo para que los jugadores LO VEAN
             task.wait(0.2)
             
-            -- 3. Desvanecer suavemente antes de borrarlo (Efecto de flash apagándose)
             for step = 1, 5 do
                 if not lightningHub.Parent then break end
                 local transAlpha = step / 5
