@@ -116,7 +116,10 @@ end
 local in4DMode = true
 local skyWorldY = originalGroundY + 1500
 
--- Corrección aplicada: Se elimina hum.PlatformStand = true del ascenso
+-- ==========================================
+-- ASCENSO Y SUSTENTACIÓN PERFECTA (Método Omniblock adaptado)
+-- ==========================================
+-- IMPORTANTE: NO usamos hum.PlatformStand = true aquí. Dejamos que las físicas actúen natural.
 root.Anchored = false 
 
 local skyBV = Instance.new("BodyVelocity", root)
@@ -145,11 +148,13 @@ end)
 
 local heightMaintainer = RunService.Heartbeat:Connect(function()
     if in4DMode and root then
+        -- Failsafe exacto del Omniblock original para corregir desvíos de altitud
         if math.abs(root.Position.Y - skyWorldY) > 5 then
             root.CFrame = CFrame.new(root.Position.X, skyWorldY, root.Position.Z) * (root.CFrame - root.CFrame.Position)
         end
     end
 end)
+-- ==========================================
 
 local animateScript = char:FindFirstChild("Animate")
 if animateScript then animateScript.Disabled = true end
@@ -322,162 +327,319 @@ local function ApplyJaidenAppearance(rig)
 end
 
 -- ==========================================
+
 -- FIX: UpdateCloneAppearance corregido
+
 -- ==========================================
+
 local function UpdateCloneAppearance()
+
     if not cloneChar or not char then return end
+
     
+
     -- 1. Limpiamos totalmente el clon de cualquier vestimenta vieja
+
     for _, v in ipairs(cloneChar:GetChildren()) do
+
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
+
             v:Destroy()
+
         end
+
     end
+
     
+
     -- 2. Copiamos la apariencia exacta de nuestro LocalPlayer (que ya modificó tu script CopyAvatar)
+
     for _, item in ipairs(char:GetChildren()) do
+
         if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+
             item:Clone().Parent = cloneChar
+
             
+
         elseif item:IsA("Accessory") then
+
             local cloneItem = item:Clone()
+
             local handle = cloneItem:FindFirstChild("Handle")
+
             
+
             if handle then
+
                 handle.LocalTransparencyModifier = 0
+
                 handle.Transparency = 0
+
             end
+
             
+
             -- FIX: Usamos manualAttachAccessory para evitar que se rompa al correr animaciones (glitches)
+
             local added = pcall(function() cloneChar.Humanoid:AddAccessory(cloneItem) end)
+
             if cloneItem:FindFirstChild("Handle") then
+
                 local weld = cloneItem.Handle:FindFirstChild("AccessoryWeld")
+
                 if not weld or not weld.Part1 then
+
                     manualAttachAccessory(cloneItem, cloneChar)
+
                 end
+
             end
+
         end
+
     end
+
     
+
     -- 3. Copiamos la cara (Decals)
+
     local sHead = char:FindFirstChild("Head")
+
     local tHead = cloneChar:FindFirstChild("Head")
+
     if sHead and tHead then
+
         for _, v in ipairs(tHead:GetChildren()) do if v:IsA("Decal") then v:Destroy() end end
+
         for _, v in ipairs(sHead:GetChildren()) do if v:IsA("Decal") then v:Clone().Parent = tHead end end
+
     end
+
 end
+
+
 
 local function PlayKeyframeSequence(Model, KFS, Speed)
+
     Speed = Speed or 1
+
     local keyframes, jointData, motorMap = {}, {}, {}
+
     for _, kf in ipairs(KFS:GetKeyframes()) do table.insert(keyframes, {Time = kf.Time, KF = kf}) end
+
     table.sort(keyframes, function(a, b) return a.Time < b.Time end)
+
     if #keyframes == 0 then return nil end
+
     local function ResolveJoint(pose)
+
         local name = pose.Name
+
         if motorMap[name] then return motorMap[name] end
+
         for _, v in ipairs(Model:GetDescendants()) do
+
             if v:IsA("Motor6D") and v.Part1 and v.Part1.Name == name then motorMap[name] = v; return v end
+
         end
+
         return nil
+
     end
+
     for _, entry in ipairs(keyframes) do
+
         for _, pose in ipairs(entry.KF:GetDescendants()) do
+
             if pose:IsA("Pose") and pose.Weight > 0 then
+
                 local joint = ResolveJoint(pose)
+
                 if joint then
+
                     jointData[pose.Name] = jointData[pose.Name] or {}
+
                     table.insert(jointData[pose.Name], {time = entry.Time, cframe = pose.CFrame, joint = joint})
+
                 end
+
             end
+
         end
+
     end
+
     local tLength = keyframes[#keyframes].Time / Speed
+
     local startT, skipOff, isPlaying, conn = os.clock(), 0, true, nil
+
     conn = RunService.Heartbeat:Connect(function()
+
         if not isPlaying or not Model or not Model.Parent then
+
             if conn then conn:Disconnect(); conn = nil end
+
             return
+
         end
+
         local tPos = (((os.clock() - startT) * Speed) + skipOff) % tLength
+
         for _, poses in pairs(jointData) do
+
             if #poses < 2 then continue end
+
             local p1, p2 = poses[1], poses[#poses]
+
             for i = 1, #poses - 1 do
+
                 if tPos >= poses[i].time and tPos < poses[i + 1].time then p1, p2 = poses[i], poses[i + 1]; break end
+
             end
+
             local alpha = (p2.time > p1.time) and ((tPos - p1.time) / (p2.time - p1.time)) or 0
+
             p1.joint.Transform = p1.cframe:Lerp(p2.cframe, alpha)
+
         end
+
     end)
+
     return {
+
         Length = tLength,
+
         Stop = function()
+
             isPlaying = false
+
             if conn then conn:Disconnect(); conn = nil end
+
         end,
+
         AddSkip = function(s) skipOff = skipOff + s end,
+
         GetTime = function() return ((os.clock() - startT) * Speed) + skipOff end
+
     }
+
 end
+
+
 
 local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
+
 if not s or not Asset then
+
     flashGui:Destroy()
+
     RestoreHighlights()
+
     if cameraWatchdog then cameraWatchdog:Disconnect() end
+
     if animator then animator.Parent = hum end
+
     if animateScript then animateScript.Disabled = false end
+
     LiberarCinematica()
+
     return
+
 end
+
 Asset.Parent = workspace
+
 local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
+
 if CRigs.GOD then ApplyJaidenAppearance(CRigs.GOD) end
 
+
+
 local snd = Instance.new("Sound", workspace)
+
 snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
 
+
+
 local oldSky = Lighting:FindFirstChildOfClass("Sky")
+
 local sky = Instance.new("Sky")
+
 sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.SkyboxUp = 
+
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508",
+
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
+
 sky.Parent = Lighting
 
+
+
 -- ==========================================
+
 -- FIX: Lógica del pantallazo negro sincronizado
+
 -- ==========================================
+
 task.delay(8.5, function() 
+
     if sky and sky.Parent then sky:Destroy() end
+
     if oldSky then oldSky.Parent = Lighting end
+
     
+
     -- 1. Creamos la pantalla negra
+
     local sGui = Instance.new("ScreenGui", pGui)
+
     sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
+
     
+
     local fade = Instance.new("Frame", sGui)
+
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
+
     fade.BackgroundTransparency = 0 -- Se pone todo negro instantáneamente
+
     
+
     -- 2. EXACTAMENTE MIENTRAS ESTÁ EN NEGRO, actualizamos la apariencia (Nadie verá el cambio)
+
     UpdateCloneAppearance()
+
     
+
     -- 3. Transición de fundido de negro a transparente
+
     task.delay(2, function()
+
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
+
         tw:Play()
+
         tw.Completed:Connect(function() sGui:Destroy() end)
+
     end)
+
 end)
 
+
+
 local preloadFinished = false
+
 task.spawn(function()
+
     pcall(function() ContentProvider:PreloadAsync({Asset, sky}) end)
+
     preloadFinished = true
+
 end)
+
 local startPreloadTime = os.clock()
+
 repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - startPreloadTime > 3.5)
 
 cam.CameraType = Enum.CameraType.Scriptable
@@ -551,6 +713,9 @@ for _, motor in ipairs(char:GetDescendants()) do
     end
 end
 
+-- ==========================================
+-- DESCENSO Y ATERRIZAJE (omniAntiBounceLand)
+-- ==========================================
 in4DMode = false
 if heightMaintainer then heightMaintainer:Disconnect() end
 if skyBV then skyBV:Destroy() end
@@ -561,6 +726,7 @@ root.CFrame = targetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
+-- El BodyVelocity con ceros y PlatformStand temporal anula la inercia instantáneamente.
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
 landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -574,6 +740,7 @@ task.defer(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
 end)
+-- ==========================================
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
