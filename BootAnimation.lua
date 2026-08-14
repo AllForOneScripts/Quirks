@@ -222,7 +222,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 8 -- Ajustado a menos de 8.5s
+    local CLIMAX_TIME = 20 
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -371,21 +371,16 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. ÁREA SUR (BACK) - AHORA COMO FONDO NEÓN OMINOSO ---
+    -- --- 4. LUCES ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
-    southPole.Name = "SouthOminousBackdrop"
-    -- Hacemos la pieza un poco más pequeña que la pared total para que parezca un aura centrada, 
-    -- o la mantenemos del tamaño de la pared.
-    southPole.Size = Vector3.new(boxSize * 0.7, boxSize * 0.7, 2) 
+    southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
     southPole.Anchored = true
     southPole.CanCollide = false
-    southPole.Material = Enum.Material.Neon -- Brillará intensamente
-    southPole.Color = Color3.new(1, 1, 1) -- Color blanco puro
-    southPole.Transparency = 1 -- Inicia completamente invisible
+    southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Se mantiene la curva senoidal)
+    -- LUZ 1: Ambiental Fucsia (Disminuirá)
     local southLightFuchsia = Instance.new("PointLight")
     southLightFuchsia.Name = "FuchsiaLight"
     southLightFuchsia.Color = AFO_FUCHSIA 
@@ -393,6 +388,35 @@ local function SpawnAFODimension(centerCF)
     southLightFuchsia.Brightness = 0 
     southLightFuchsia.Shadows = true 
     southLightFuchsia.Parent = southPole
+
+    -- NUEVO: PARTÍCULAS EXPANSIVAS ILUMINADORAS
+    local flashEmitter1 = Instance.new("ParticleEmitter")
+    flashEmitter1.Name = "WhiteFlash1"
+    flashEmitter1.Texture = "rbxassetid://14684195806"
+    flashEmitter1.Color = ColorSequence.new(Color3.new(1, 1, 1)) -- Blanco iluminador
+    flashEmitter1.LightEmission = 1 -- Brillo absoluto (iluminadora)
+    flashEmitter1.LightInfluence = 0
+    flashEmitter1.ZOffset = 1 -- Al frente
+    flashEmitter1.Size = NumberSequence.new(0.1)
+    flashEmitter1.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.2, 0),
+        NumberSequenceKeypoint.new(0.8, 0),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+    flashEmitter1.Lifetime = NumberRange.new(1.5, 2)
+    flashEmitter1.Rate = 0 -- Controlado dinámicamente
+    flashEmitter1.Speed = NumberRange.new(0)
+    flashEmitter1.Rotation = NumberRange.new(0, 360)
+    flashEmitter1.RotSpeed = NumberRange.new(-15, 15)
+    flashEmitter1.Parent = southPole
+
+    local flashEmitter2 = flashEmitter1:Clone()
+    flashEmitter2.Name = "WhiteFlash2"
+    flashEmitter2.Texture = "rbxassetid://6673021984"
+    flashEmitter2.ZOffset = 0 -- Detrás de la primera
+    flashEmitter2.RotSpeed = NumberRange.new(-25, 25)
+    flashEmitter2.Parent = southPole
 
     -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
@@ -434,20 +458,33 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES Y FONDO
-        
+        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
         -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
         local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
         if elapsed > 6 then fuchsiaCurve = 0 end 
         southLightFuchsia.Brightness = fuchsiaCurve * 1500
         southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
 
-        -- Pintado de Blanco Ominoso: Empieza a aparecer después de 2 segundos 
-        -- y se revela rápidamente (en 1.5 segundos).
-        local whiteAlpha = math.clamp((elapsed - 2) / 1.5, 0, 1) 
+        -- BLANCA EXPANSIVA (PARTÍCULAS): Empieza a subir después de 2 segundos y explota.
+        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
         local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
-        -- Reducimos la transparencia de 1 a 0 (o 0.1 para que no sea excesivo)
-        southPole.Transparency = 1 - (easeOutWhite * 0.9)
+        
+        if whiteAlpha > 0 and whiteAlpha < 1 then
+            flashEmitter1.Rate = 12
+            flashEmitter2.Rate = 12
+            
+            -- Multiplicamos por 2 para asegurar que sale de la caja (60 * 2 = 120 studs de máximo)
+            local maxSize = boxSize * 2 
+            local currentSize1 = math.max(0.1, easeOutWhite * maxSize)
+            local currentSize2 = math.max(0.1, currentSize1 * 1.15) -- 15% más rápido/grande
+            
+            flashEmitter1.Size = NumberSequence.new(currentSize1)
+            flashEmitter2.Size = NumberSequence.new(currentSize2)
+        else
+            -- Si aún no empieza o ya terminó su clímax expansivo, dejamos de emitir
+            flashEmitter1.Rate = 0
+            flashEmitter2.Rate = 0
+        end
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -463,7 +500,6 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
-        -- Probabilidad aleatoria de que ocurra un glitch en este frame
         local isGlitchActive = math.random() > 0.8
 
         for _, tex in ipairs(allTextures) do
