@@ -223,7 +223,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 6 -- Cambiado a 6s
+    local CLIMAX_TIME = 20 
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -345,7 +345,7 @@ local function SpawnAFODimension(centerCF)
         noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = polePart -- ¡AQUÍ ESTABA EL ERROR! (antes era noiseEmitter.Parent = noiseEmitter)
+        noiseEmitter.Parent = noiseEmitter
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -374,10 +374,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO (ELIMINADO A PETICIÓN) ---
-    -- Se ha eliminado el emisor de partículas que creaba el viento caótico y los cuadraditos transparentes.
-
-    -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 4. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -413,7 +410,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 6. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
+    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
     local startTime = os.clock()
     local conn
     
