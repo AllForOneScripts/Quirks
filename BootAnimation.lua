@@ -197,6 +197,7 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -215,10 +216,9 @@ local function SpawnAFODimension(centerCF)
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
     -- --- PALETA: FUCSIA ---
-    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)    -- Fucsia solicitado
-    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)  -- Fondo y humo adaptados a tonos fucsia oscuro
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(180, 50, 120)     -- Chispas de Ruido en fucsia brillante
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)    
+    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)  
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -250,7 +250,7 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo Scrolling (Oscuro)
+        -- Fondo Scrolling
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -293,9 +293,22 @@ local function SpawnAFODimension(centerCF)
         texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
+
+        -- NUEVO: EFECTO MÁSCARA GLITCH (Ruido sobre el Neón)
+        local texGlitch = Instance.new("Texture")
+        texGlitch.Name = "GlitchNoise"
+        texGlitch.Texture = NOISE_TEXTURE_ID
+        texGlitch.Transparency = 1 -- Inicia invisible, se controlará en el RenderStepped
+        texGlitch.Color3 = AFO_BLACK -- Oscurece el neón para actuar como "máscara"
+        texGlitch.Face = data.innerFace
+        texGlitch.StudsPerTileU = boxSize * 4 
+        texGlitch.StudsPerTileV = boxSize * 4 
+        texGlitch.ZIndex = 4 -- Justo encima del Neón para cortarlo
+        texGlitch.Parent = wall
+        table.insert(allTextures, texGlitch)
     end
 
-    -- --- 2. HUMO CENTRAL Y RUIDO (POLOS TOP/BOTTOM) ---
+    -- --- 2. HUMO CENTRAL (POLOS TOP/BOTTOM) ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
@@ -330,21 +343,8 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
-
-        local noiseEmitter = Instance.new("ParticleEmitter")
-        noiseEmitter.Texture = NOISE_TEXTURE_ID
-        noiseEmitter.LightEmission = 0.8 
-        noiseEmitter.ZOffset = 0.6 
-        noiseEmitter.Color = ColorSequence.new(AFO_RUIDO)
-        noiseEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 15)})
-        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0), NumberSequenceKeypoint.new(1, 1)})
-        noiseEmitter.Lifetime = NumberRange.new(1, 3)
-        noiseEmitter.Rate = 15 
-        noiseEmitter.Speed = NumberRange.new(20, 50) 
-        noiseEmitter.Drag = 5 
-        noiseEmitter.EmissionDirection = emitDirection
-        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = noiseEmitter
+        
+        -- ELIMINADO: El emisor de ruido que causaba los cuadraditos. ¡Misterio resuelto!
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -373,10 +373,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO (ELIMINADO A PETICIÓN) ---
-    -- Se ha eliminado el emisor de partículas que creaba el viento caótico y los cuadraditos transparentes.
-
-    -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 4. LUCES ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -385,12 +382,23 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    local southLight = Instance.new("PointLight")
-    southLight.Color = AFO_FUCHSIA 
-    southLight.Range = 0 -- Inicia en 0 para explotar rápidamente
-    southLight.Brightness = 0 
-    southLight.Shadows = true 
-    southLight.Parent = southPole
+    -- LUZ 1: Ambiental Fucsia (Disminuirá)
+    local southLightFuchsia = Instance.new("PointLight")
+    southLightFuchsia.Name = "FuchsiaLight"
+    southLightFuchsia.Color = AFO_FUCHSIA 
+    southLightFuchsia.Range = 0 
+    southLightFuchsia.Brightness = 0 
+    southLightFuchsia.Shadows = true 
+    southLightFuchsia.Parent = southPole
+
+    -- LUZ 2: Blanca Cegadora (Aumentará masivamente)
+    local southLightWhite = Instance.new("PointLight")
+    southLightWhite.Name = "WhiteBlindLight"
+    southLightWhite.Color = Color3.new(1, 1, 1) -- Blanco puro
+    southLightWhite.Range = 0 
+    southLightWhite.Brightness = 0 
+    southLightWhite.Shadows = true 
+    southLightWhite.Parent = southPole
 
     -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
@@ -419,7 +427,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 6. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
+    -- --- 5. BUCLE DE ANIMACIÓN ---
     local startTime = os.clock()
     local conn
     
@@ -432,16 +440,20 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- NUEVA LÓGICA DE LUZ: Expansión súper rápida y envolvente
-        local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
-        local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
-        
-        -- Brillo EXTREMADAMENTE alto y rango masivo para cegar
-        southLight.Brightness = easeOutLight * 5000 -- Aumentado de 65 a 5000 para cegar
-        southLight.Range = easeOutLight * (boxSize * 8) 
+        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
+        -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
+        local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
+        if elapsed > 6 then fuchsiaCurve = 0 end -- Asegura que se apague después de 6s
+        southLightFuchsia.Brightness = fuchsiaCurve * 1500
+        southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
+
+        -- Blanca Cegadora: Empieza a subir después de 2 segundos y explota.
+        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
+        local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
+        southLightWhite.Brightness = easeOutWhite * 10000 -- Ceguera absoluta
+        southLightWhite.Range = easeOutWhite * (boxSize * 10) 
         
         southParticles.Rate = alpha * 400
-
         hazeEmitter.Rate = alpha * 10 
         
         local softTrans = 1 - (alpha * 0.25) 
@@ -450,13 +462,16 @@ local function SpawnAFODimension(centerCF)
             NumberSequenceKeypoint.new(0.5, softTrans),
             NumberSequenceKeypoint.new(1, 1)
         })
-        
         hazeEmitter.Size = NumberSequence.new((boxSize * 0.8) + (alpha * boxSize * 0.2))
 
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
+        -- Probabilidad aleatoria de que ocurra un glitch en este frame (ej. 20% de probabilidad)
+        local isGlitchActive = math.random() > 0.8
+
         for _, tex in ipairs(allTextures) do
+            -- Animación de Texturas Base
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
@@ -467,6 +482,19 @@ local function SpawnAFODimension(centerCF)
                 tex.OffsetStudsV = -offsetBg
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
+            end
+            
+            -- Animación del Glitch (Ruido)
+            if tex.Name == "GlitchNoise" then
+                if isGlitchActive then
+                    -- Aparece aleatoriamente creando "cortes" o distorsión
+                    tex.Transparency = math.random(10, 60) / 100 
+                    -- Salta a una posición aleatoria para verse muy errático
+                    tex.OffsetStudsU = math.random(-100, 100)
+                    tex.OffsetStudsV = math.random(-100, 100)
+                else
+                    tex.Transparency = 1 -- Desaparece al instante
+                end
             end
         end
     end)
