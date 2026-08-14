@@ -221,7 +221,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 8 -- Ajustado para ser rápido e impactante (menos de 8.5s)
+    local CLIMAX_TIME = 8 -- Ajustado a menos de 8.5s para sincronizar las partículas con tu código de luz
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -379,19 +379,19 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Baño inicial)
+    -- LUZ 1: Ambiental Fucsia (Disminuirá)
     local southLightFuchsia = Instance.new("PointLight")
     southLightFuchsia.Name = "FuchsiaLight"
     southLightFuchsia.Color = AFO_FUCHSIA 
-    southLightFuchsia.Range = boxSize * 3 
-    southLightFuchsia.Brightness = 30 -- Un brillo ambiental manejable
+    southLightFuchsia.Range = 0 
+    southLightFuchsia.Brightness = 0 
     southLightFuchsia.Shadows = true 
     southLightFuchsia.Parent = southPole
 
-    -- LUZ 2: Blanca / Energía de Contraluz
+    -- LUZ 2: Blanca Cegadora (Aumentará masivamente)
     local southLightWhite = Instance.new("PointLight")
-    southLightWhite.Name = "WhiteEnergyLight"
-    southLightWhite.Color = Color3.new(1, 0.95, 0.95) -- Blanco con un micro toque cálido
+    southLightWhite.Name = "WhiteBlindLight"
+    southLightWhite.Color = Color3.new(1, 1, 1) -- Blanco puro
     southLightWhite.Range = 0 
     southLightWhite.Brightness = 0 
     southLightWhite.Shadows = true 
@@ -437,17 +437,18 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES CINEMATOGRÁFICA
-        
-        -- 1. La luz fucsia ambiental inicia bañando la zona y se atenúa (pero sin apagarse al 100%)
-        local ambientAlpha = 1 - (alpha * 0.8) -- Cae hasta quedarse al 20%
-        southLightFuchsia.Brightness = ambientAlpha * 35
-        
-        -- 2. La luz blanca simula la energía del personaje. Crece de manera agresiva a lo largo de los 8s.
-        -- Usamos alpha^1.5 para que la curva empiece lenta y acelere hacia el final, dando sensación de carga.
-        local energyAlpha = alpha ^ 1.5 
-        southLightWhite.Brightness = energyAlpha * 100 -- Fuerte e imponente
-        southLightWhite.Range = energyAlpha * (boxSize * 4.5) 
+        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
+        -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
+        local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
+        if elapsed > 6 then fuchsiaCurve = 0 end -- Asegura que se apague después de 6s
+        southLightFuchsia.Brightness = fuchsiaCurve * 1500
+        southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
+
+        -- Blanca Cegadora: Empieza a subir después de 2 segundos y explota.
+        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
+        local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
+        southLightWhite.Brightness = easeOutWhite * 10000 -- Ceguera absoluta
+        southLightWhite.Range = easeOutWhite * (boxSize * 10) 
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -463,10 +464,11 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
-        -- Glitch aleatorio
+        -- Probabilidad aleatoria de que ocurra un glitch en este frame
         local isGlitchActive = math.random() > 0.8
 
         for _, tex in ipairs(allTextures) do
+            -- Animación de Texturas Base
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
@@ -479,13 +481,16 @@ local function SpawnAFODimension(centerCF)
                 tex.OffsetStudsV = offsetBg
             end
             
+            -- Animación del Glitch (Ruido)
             if tex.Name == "GlitchNoise" then
                 if isGlitchActive then
+                    -- Aparece aleatoriamente creando "cortes" o distorsión
                     tex.Transparency = math.random(10, 60) / 100 
+                    -- Salta a una posición aleatoria para verse muy errático
                     tex.OffsetStudsU = math.random(-100, 100)
                     tex.OffsetStudsV = math.random(-100, 100)
                 else
-                    tex.Transparency = 1 
+                    tex.Transparency = 1 -- Desaparece al instante
                 end
             end
         end
