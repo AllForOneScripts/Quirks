@@ -215,11 +215,11 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- Paleta de Colores AFO (Violeta/Magenta)
-    local AFO_MAGENTA = Color3.fromRGB(170, 0, 255)    -- Violeta/Magenta Neon Principal
-    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 50)  -- Fondo y Humo
+    -- --- NUEVA PALETA: VIOLETA PURO (Sin tonos rojos/rosados) ---
+    local AFO_VIOLET = Color3.fromRGB(110, 0, 255)     -- Violeta real, muy intenso
+    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 80)  -- Fondo y humo más azulados/morados
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(200, 50, 255)     -- Chispas de Ruido en tonos violetas
+    local AFO_RUIDO = Color3.fromRGB(130, 30, 255)     -- Chispas de Ruido en violeta brillante
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -269,12 +269,12 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Magenta)
+        -- Glow Neon (Violeta)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
         texNeonGlow.Transparency = 0.4 
-        texNeonGlow.Color3 = AFO_MAGENTA 
+        texNeonGlow.Color3 = AFO_VIOLET 
         texNeonGlow.Face = data.innerFace
         texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
         texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
@@ -282,12 +282,12 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal (Magenta Intenso)
+        -- Neon Principal (Violeta Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = AFO_MAGENTA
+        texNeon.Color3 = AFO_VIOLET
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
@@ -333,7 +333,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
 
-        -- Ruido/Chispas (Magenta Caótico)
+        -- Ruido/Chispas (Violeta Caótico)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Texture = NOISE_TEXTURE_ID
         noiseEmitter.LightEmission = 0.8 
@@ -385,7 +385,7 @@ local function SpawnAFODimension(centerCF)
     chaoticWind.Name = "ChaoticWind"
     chaoticWind.Texture = NOISE_TEXTURE_ID 
     chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_MAGENTA),
+        ColorSequenceKeypoint.new(0, AFO_VIOLET),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
     })
     chaoticWind.LightEmission = 0.2
@@ -409,7 +409,7 @@ local function SpawnAFODimension(centerCF)
     southPole.Parent = dimensionFolder
 
     local southLight = Instance.new("PointLight")
-    southLight.Color = AFO_MAGENTA 
+    southLight.Color = AFO_VIOLET 
     southLight.Range = boxSize * 1.62 
     southLight.Brightness = 0 
     southLight.Shadows = true 
@@ -421,7 +421,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
-        ColorSequenceKeypoint.new(0.5, AFO_MAGENTA),
+        ColorSequenceKeypoint.new(0.5, AFO_VIOLET),
         ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
     })
     southParticles.LightEmission = 0.1
@@ -455,7 +455,7 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Luz Intensidad x3 (Antes 30, ahora 90)
+        -- Luz Intensidad x3 (Llega a 90)
         southLight.Brightness = alpha * 90 
         
         southParticles.Rate = alpha * 400
