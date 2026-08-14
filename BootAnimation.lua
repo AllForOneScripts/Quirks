@@ -215,7 +215,7 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- --- NUEVA PALETA: VIOLETA PURO (Sin tonos rojos/rosados) ---
+    -- --- PALETA: VIOLETA PURO ---
     local AFO_VIOLET = Color3.fromRGB(110, 0, 255)     -- Violeta real, muy intenso
     local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 80)  -- Fondo y humo más azulados/morados
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
@@ -310,7 +310,6 @@ local function SpawnAFODimension(centerCF)
     bottomPole.Parent = dimensionFolder
 
     local function createSinisterSmoke(polePart, emitDirection)
-        -- Humo Denso (Morado Profundo)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
         smokeEmitter.LightEmission = 0.1 
@@ -333,7 +332,6 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
 
-        -- Ruido/Chispas (Violeta Caótico)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Texture = NOISE_TEXTURE_ID
         noiseEmitter.LightEmission = 0.8 
@@ -410,7 +408,8 @@ local function SpawnAFODimension(centerCF)
 
     local southLight = Instance.new("PointLight")
     southLight.Color = AFO_VIOLET 
-    southLight.Range = boxSize * 1.62 
+    -- Tamaño duplicado (antes 1.62, ahora 3.24)
+    southLight.Range = boxSize * 3.24 
     southLight.Brightness = 0 
     southLight.Shadows = true 
     southLight.Parent = southPole
@@ -455,8 +454,8 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Luz Intensidad x3 (Llega a 90)
-        southLight.Brightness = alpha * 90 
+        -- Brillo reducido a la mitad para no quemar a los personajes con violeta (Llega a 45)
+        southLight.Brightness = alpha * 45 
         
         southParticles.Rate = alpha * 400
 
