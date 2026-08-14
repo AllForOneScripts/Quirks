@@ -197,7 +197,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -294,16 +293,16 @@ local function SpawnAFODimension(centerCF)
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
 
-        -- NUEVO: EFECTO MÁSCARA GLITCH (Ruido sobre el Neón)
+        -- EFECTO MÁSCARA GLITCH (Ruido sobre el Neón)
         local texGlitch = Instance.new("Texture")
         texGlitch.Name = "GlitchNoise"
         texGlitch.Texture = NOISE_TEXTURE_ID
-        texGlitch.Transparency = 1 -- Inicia invisible, se controlará en el RenderStepped
-        texGlitch.Color3 = AFO_BLACK -- Oscurece el neón para actuar como "máscara"
+        texGlitch.Transparency = 1 
+        texGlitch.Color3 = AFO_BLACK 
         texGlitch.Face = data.innerFace
         texGlitch.StudsPerTileU = boxSize * 4 
         texGlitch.StudsPerTileV = boxSize * 4 
-        texGlitch.ZIndex = 4 -- Justo encima del Neón para cortarlo
+        texGlitch.ZIndex = 4 
         texGlitch.Parent = wall
         table.insert(allTextures, texGlitch)
     end
@@ -343,8 +342,6 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
-        
-        -- ELIMINADO: El emisor de ruido que causaba los cuadraditos. ¡Misterio resuelto!
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -382,16 +379,16 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Disminuirá)
+    -- LUZ 1: Ambiental Fucsia (Inicia alta, Disminuirá)
     local southLightFuchsia = Instance.new("PointLight")
     southLightFuchsia.Name = "FuchsiaLight"
     southLightFuchsia.Color = AFO_FUCHSIA 
-    southLightFuchsia.Range = 0 
-    southLightFuchsia.Brightness = 0 
+    southLightFuchsia.Range = boxSize * 6 -- Inicia con rango alto
+    southLightFuchsia.Brightness = 3000 -- Inicia con brillo alto
     southLightFuchsia.Shadows = true 
     southLightFuchsia.Parent = southPole
 
-    -- LUZ 2: Blanca Cegadora (Aumentará masivamente)
+    -- LUZ 2: Blanca Cegadora (Inicia en 0, Aumentará masivamente)
     local southLightWhite = Instance.new("PointLight")
     southLightWhite.Name = "WhiteBlindLight"
     southLightWhite.Color = Color3.new(1, 1, 1) -- Blanco puro
@@ -440,18 +437,20 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
-        -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
-        local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
-        if elapsed > 6 then fuchsiaCurve = 0 end -- Asegura que se apague después de 6s
-        southLightFuchsia.Brightness = fuchsiaCurve * 1500
-        southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
-
-        -- Blanca Cegadora: Empieza a subir después de 2 segundos y explota.
-        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
+        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja de forma inversamente proporcional.
+        
+        -- Blanca Cegadora: Empieza a subir después de 1 segundo y alcanza su clímax a los 5 segundos.
+        local whiteAlpha = math.clamp((elapsed - 1) / 4, 0, 1) 
         local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
+        
         southLightWhite.Brightness = easeOutWhite * 10000 -- Ceguera absoluta
         southLightWhite.Range = easeOutWhite * (boxSize * 10) 
+
+        -- Fucsia Ambiental: Inicia al máximo (1) y baja a 0 mientras la luz blanca (whiteAlpha) sube a 1.
+        local fuchsiaAlpha = 1 - whiteAlpha
+        southLightFuchsia.Brightness = fuchsiaAlpha * 3000
+        -- El rango se mantiene razonablemente alto para no crear un corte abrupto de luz antes de apagarse.
+        southLightFuchsia.Range = (fuchsiaAlpha * (boxSize * 4)) + (boxSize * 2)
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -467,11 +466,10 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
 
-        -- Probabilidad aleatoria de que ocurra un glitch en este frame (ej. 20% de probabilidad)
+        -- Glitch aleatorio
         local isGlitchActive = math.random() > 0.8
 
         for _, tex in ipairs(allTextures) do
-            -- Animación de Texturas Base
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
@@ -484,16 +482,13 @@ local function SpawnAFODimension(centerCF)
                 tex.OffsetStudsV = offsetBg
             end
             
-            -- Animación del Glitch (Ruido)
             if tex.Name == "GlitchNoise" then
                 if isGlitchActive then
-                    -- Aparece aleatoriamente creando "cortes" o distorsión
                     tex.Transparency = math.random(10, 60) / 100 
-                    -- Salta a una posición aleatoria para verse muy errático
                     tex.OffsetStudsU = math.random(-100, 100)
                     tex.OffsetStudsV = math.random(-100, 100)
                 else
-                    tex.Transparency = 1 -- Desaparece al instante
+                    tex.Transparency = 1 
                 end
             end
         end
