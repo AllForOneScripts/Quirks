@@ -23,7 +23,7 @@ flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
 local flashFrame = Instance.new("Frame", flashGui)
-flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
+flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)  -- Cambiado a negro para oscuridad con fundido
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
 flashGui.Parent = pGui
 
@@ -781,7 +781,7 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    task.delay(2, function()
+    task.delay(2.5, function()  -- +0.5s añadido
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
@@ -804,9 +804,17 @@ SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
+-- Fundido del flash inicial (ahora negro)
 local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
 fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
+
+-- Aseguramos que el flash se destruya incluso si algo falla
+task.delay(10, function()
+    if flashGui and flashGui.Parent then
+        flashGui:Destroy()
+    end
+end)
 
 local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
@@ -873,18 +881,48 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- BUG FIX: Forzar teletransporte hasta confirmar que estás en el suelo (No más jugador en el aire al terminar)
+-- SISTEMA MEJORADO DE REGRESO AL SUELO
 root.Anchored = false
-local safeYLimit = originalGroundY + 100
-local teleportAttempts = 0
 
-repeat
-    root.CFrame = targetCF
+-- Función para encontrar el suelo real con raycast
+local function findGroundY(posX, posZ)
+    local rayOrigin = Vector3.new(posX, originalGroundY + 200, posZ) -- desde arriba
+    local rayDirection = Vector3.new(0, -400, 0)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+    rayParams.FilterDescendantsInstances = {char, cloneChar}
+    local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
+    if result then
+        return result.Position.Y
+    else
+        return originalGroundY
+    end
+end
+
+local groundY = findGroundY(targetPos.X, targetPos.Z)
+local landingY = groundY + 1.5 -- offset para evitar clipping
+local landingCF = CFrame.new(targetPos.X, landingY, targetPos.Z) * finalRot
+
+-- Múltiples teleports hasta confirmar contacto con el suelo
+for attempt = 1, 30 do
+    root.CFrame = landingCF
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
     task.wait(0.05)
-    teleportAttempts = teleportAttempts + 1
-until (root.Position.Y < safeYLimit) or teleportAttempts > 20
+    if root.Position.Y <= landingY + 0.5 then
+        break
+    end
+end
+
+-- Si aún no está en el suelo, forzamos hacia abajo con velocidad
+if root.Position.Y > landingY + 0.5 then
+    local downBV = Instance.new("BodyVelocity")
+    downBV.Velocity = Vector3.new(0, -200, 0)
+    downBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    downBV.Parent = root
+    task.wait(0.5)
+    downBV:Destroy()
+end
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
