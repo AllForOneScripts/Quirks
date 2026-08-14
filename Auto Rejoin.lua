@@ -54,14 +54,12 @@ function M.Start(lang)
         end
     end)
 
-    print("[Auto-Rejoin]: Inicializado correctamente (Método GuiService).")
 end
 
 function M.Stop()
     if _connection then
         _connection:Disconnect()
         _connection = nil
-        print("[Auto-Rejoin]: Módulo detenido.")
     end
 end
 
