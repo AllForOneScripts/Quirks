@@ -215,11 +215,11 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- Paleta de Colores AFO Original (Malvado)
-    local AFO_CRIMSON = Color3.fromRGB(150, 0, 0)      -- Rojo Neon Principal
-    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 50) -- Fondo y Humo
+    -- Paleta de Colores AFO (Violeta/Magenta)
+    local AFO_MAGENTA = Color3.fromRGB(170, 0, 255)    -- Violeta/Magenta Neon Principal
+    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 50)  -- Fondo y Humo
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(200, 50, 50)    -- Chispas de Ruido
+    local AFO_RUIDO = Color3.fromRGB(200, 50, 255)     -- Chispas de Ruido en tonos violetas
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -269,12 +269,12 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Rojo Carmesí)
+        -- Glow Neon (Magenta)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
         texNeonGlow.Transparency = 0.4 
-        texNeonGlow.Color3 = AFO_CRIMSON 
+        texNeonGlow.Color3 = AFO_MAGENTA 
         texNeonGlow.Face = data.innerFace
         texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
         texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
@@ -282,12 +282,12 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal (Rojo Carmesí Intenso)
+        -- Neon Principal (Magenta Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = AFO_CRIMSON
+        texNeon.Color3 = AFO_MAGENTA
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
@@ -310,7 +310,7 @@ local function SpawnAFODimension(centerCF)
     bottomPole.Parent = dimensionFolder
 
     local function createSinisterSmoke(polePart, emitDirection)
-        -- Humo Denso (Morado Profundo) - HECHO MUCHO MÁS TRANSPARENTE
+        -- Humo Denso (Morado Profundo)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
         smokeEmitter.LightEmission = 0.1 
@@ -322,7 +322,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
         smokeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1), 
-            NumberSequenceKeypoint.new(0.3, 0.85), -- Antes 0.7. Ahora casi invisible para dejar ver el fondo
+            NumberSequenceKeypoint.new(0.3, 0.85), 
             NumberSequenceKeypoint.new(1, 1)
         })
         smokeEmitter.Lifetime = NumberRange.new(4, 6)
@@ -333,7 +333,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
 
-        -- Ruido/Chispas (Rojo Caótico)
+        -- Ruido/Chispas (Magenta Caótico)
         local noiseEmitter = Instance.new("ParticleEmitter")
         noiseEmitter.Texture = NOISE_TEXTURE_ID
         noiseEmitter.LightEmission = 0.8 
@@ -385,7 +385,7 @@ local function SpawnAFODimension(centerCF)
     chaoticWind.Name = "ChaoticWind"
     chaoticWind.Texture = NOISE_TEXTURE_ID 
     chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_CRIMSON),
+        ColorSequenceKeypoint.new(0, AFO_MAGENTA),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
     })
     chaoticWind.LightEmission = 0.2
@@ -409,19 +409,19 @@ local function SpawnAFODimension(centerCF)
     southPole.Parent = dimensionFolder
 
     local southLight = Instance.new("PointLight")
-    southLight.Color = AFO_CRIMSON 
+    southLight.Color = AFO_MAGENTA 
     southLight.Range = boxSize * 1.62 
     southLight.Brightness = 0 
     southLight.Shadows = true 
     southLight.Parent = southPole
 
-    -- Partículas Envolventes Caóticas - HECHAS MÁS TRANSPARENTES
+    -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
-        ColorSequenceKeypoint.new(0.5, AFO_CRIMSON),
+        ColorSequenceKeypoint.new(0.5, AFO_MAGENTA),
         ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
     })
     southParticles.LightEmission = 0.1
@@ -429,7 +429,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 10), NumberSequenceKeypoint.new(1, 0)})
     southParticles.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 1), 
-        NumberSequenceKeypoint.new(0.2, 0.8), -- Antes 0.2. Ahora muy transparentes
+        NumberSequenceKeypoint.new(0.2, 0.8), 
         NumberSequenceKeypoint.new(0.8, 0.8), 
         NumberSequenceKeypoint.new(1, 1)
     })
@@ -455,14 +455,13 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Luz 100% más intensa como pediste anteriormente (30 en vez de 15)
-        southLight.Brightness = alpha * 30 
+        -- Luz Intensidad x3 (Antes 30, ahora 90)
+        southLight.Brightness = alpha * 90 
         
         southParticles.Rate = alpha * 400
 
         hazeEmitter.Rate = alpha * 10 
         
-        -- Niebla Interna mucho más transparente (Llega a 0.75 de opacidad en vez de 0.1)
         local softTrans = 1 - (alpha * 0.25) 
         hazeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
