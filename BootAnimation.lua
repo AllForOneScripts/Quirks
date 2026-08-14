@@ -211,16 +211,15 @@ local function SpawnAFODimension(centerCF)
 
     -- --- ASSETS Y CONFIGURACIÓN ---
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
-    local BG_TEXTURE_ID = "rbxassetid://13490928216"  -- Usando un ID válido para evitar cuadros rotos
-    local NOISE_TEXTURE_ID = "rbxassetid://1523240212" -- ID corregido para evitar los cuadrados transparentes que giran
+    local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
+    local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
-    local GLITCH_TEXTURE_ID = "rbxassetid://2848859976" -- Textura para el TV Glitch
 
-    -- --- NUEVA PALETA: FUCSIA/BAYA (Basado en image_32cd61.png) ---
-    local AFO_MAIN_COLOR = Color3.fromRGB(163, 26, 97)    -- Tono extraído de tu imagen
-    local AFO_DEEP_COLOR = Color3.fromRGB(50, 8, 30)      -- Fondo y humo oscuro
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)             -- Paredes y Vacío
-    local AFO_GLITCH = Color3.fromRGB(200, 50, 120)       -- Chispas de Ruido
+    -- --- PALETA: FUCSIA/FRAMBUESA (Basado en image_32cd61.png) ---
+    local AFO_COLOR = Color3.fromRGB(155, 25, 95)      -- Color fucsia oscuro exacto de la imagen
+    local AFO_DEEP = Color3.fromRGB(50, 5, 30)         -- Fondo y humo oscuro en sintonía
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
+    local AFO_GLITCH = Color3.fromRGB(200, 50, 120)    -- Chispas de Ruido
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -254,11 +253,12 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
+        -- Fondo Scrolling (Oscuro)
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
         bgUp.Transparency = 0.2 
-        bgUp.Color3 = AFO_DEEP_COLOR 
+        bgUp.Color3 = AFO_DEEP 
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
         bgUp.StudsPerTileV = boxSize / 1.5
@@ -271,11 +271,12 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
+        -- Glow Neon (Fucsia)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
         texNeonGlow.Transparency = 0.4 
-        texNeonGlow.Color3 = AFO_MAIN_COLOR 
+        texNeonGlow.Color3 = AFO_COLOR 
         texNeonGlow.Face = data.innerFace
         texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
         texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
@@ -283,11 +284,12 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
+        -- Neon Principal (Fucsia Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = AFO_MAIN_COLOR
+        texNeon.Color3 = AFO_COLOR
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
@@ -317,7 +319,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.LightEmission = 0.1 
         smokeEmitter.ZOffset = 0.5 
         smokeEmitter.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, AFO_DEEP_COLOR),
+            ColorSequenceKeypoint.new(0, AFO_DEEP),
             ColorSequenceKeypoint.new(1, AFO_BLACK)
         })
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
@@ -353,7 +355,7 @@ local function SpawnAFODimension(centerCF)
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. EFECTO "SOFT" PROGRESIVO Y TV GLITCH ---
+    -- --- 3. EFECTO GLITCH DE TV Y NIEBLA (VOLUMEN CENTRAL) ---
     local softVolume = Instance.new("Part")
     softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     softVolume.CFrame = centerCF
@@ -364,10 +366,11 @@ local function SpawnAFODimension(centerCF)
     softVolume.Transparency = 1
     softVolume.Parent = dimensionFolder
 
+    -- Niebla Suave
     local hazeEmitter = Instance.new("ParticleEmitter")
     hazeEmitter.Name = "InternalHaze"
     hazeEmitter.Texture = SMOKE_TEXTURE_ID 
-    hazeEmitter.Color = ColorSequence.new(AFO_DEEP_COLOR)
+    hazeEmitter.Color = ColorSequence.new(AFO_DEEP)
     hazeEmitter.LightEmission = 0.05 
     hazeEmitter.ZOffset = -1 
     hazeEmitter.Size = NumberSequence.new(boxSize * 0.8) 
@@ -378,23 +381,26 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- Nuevo Emisor de Glitch de Televisión
+    -- NUEVO: Estática/Glitch de TV
     local tvGlitchEmitter = Instance.new("ParticleEmitter")
-    tvGlitchEmitter.Name = "TV_Glitch_Effect"
-    tvGlitchEmitter.Texture = GLITCH_TEXTURE_ID
-    tvGlitchEmitter.Color = ColorSequence.new(Color3.fromRGB(200, 200, 255))
+    tvGlitchEmitter.Name = "TVGlitchEffect"
+    tvGlitchEmitter.Texture = NOISE_TEXTURE_ID
+    tvGlitchEmitter.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(0.5, AFO_GLITCH),
+        ColorSequenceKeypoint.new(1, AFO_BLACK)
+    })
     tvGlitchEmitter.LightEmission = 1
-    tvGlitchEmitter.ZOffset = 2
-    tvGlitchEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, boxSize * 0.5), NumberSequenceKeypoint.new(1, boxSize)})
+    tvGlitchEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, boxSize * 0.5), NumberSequenceKeypoint.new(1, boxSize * 1.2)})
     tvGlitchEmitter.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.1, 0.7),
-        NumberSequenceKeypoint.new(0.9, 0.7),
+        NumberSequenceKeypoint.new(0, 1), 
+        NumberSequenceKeypoint.new(0.5, 0.7), 
         NumberSequenceKeypoint.new(1, 1)
     })
-    tvGlitchEmitter.Lifetime = NumberRange.new(0.05, 0.15) -- Parpadeos ultra rápidos
+    tvGlitchEmitter.Lifetime = NumberRange.new(0.05, 0.15) -- Muy rápido para simular parpadeo de TV
     tvGlitchEmitter.Rate = 0
     tvGlitchEmitter.Speed = NumberRange.new(0)
+    tvGlitchEmitter.Rotation = NumberRange.new(0, 360)
     tvGlitchEmitter.Shape = Enum.ParticleEmitterShape.Box
     tvGlitchEmitter.Parent = softVolume
 
@@ -402,12 +408,13 @@ local function SpawnAFODimension(centerCF)
     local windVolume = softVolume:Clone()
     windVolume.Name = "WindVolume"
     windVolume.Parent = dimensionFolder
+    windVolume:ClearAllChildren()
 
     local chaoticWind = Instance.new("ParticleEmitter")
     chaoticWind.Name = "ChaoticWind"
     chaoticWind.Texture = NOISE_TEXTURE_ID 
     chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_MAIN_COLOR),
+        ColorSequenceKeypoint.new(0, AFO_COLOR),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
     })
     chaoticWind.LightEmission = 0.2
@@ -432,15 +439,15 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- Luz Base Fucsia/Baya
-    local mainLight = Instance.new("PointLight")
-    mainLight.Color = AFO_MAIN_COLOR 
-    mainLight.Range = boxSize * 3.24 
-    mainLight.Brightness = 0 
-    mainLight.Shadows = true 
-    mainLight.Parent = southPole
+    -- Luz de Color (Inicia en 0)
+    local colorLight = Instance.new("PointLight")
+    colorLight.Color = AFO_COLOR 
+    colorLight.Range = 0 
+    colorLight.Brightness = 0 
+    colorLight.Shadows = true 
+    colorLight.Parent = southPole
     
-    -- Luz Blanca (Núcleo Exponencial)
+    -- Luz Blanca (Inicia en 0)
     local whiteLight = Instance.new("PointLight")
     whiteLight.Color = Color3.fromRGB(255, 255, 255)
     whiteLight.Range = 0 
@@ -448,13 +455,14 @@ local function SpawnAFODimension(centerCF)
     whiteLight.Shadows = true
     whiteLight.Parent = southPole
 
+    -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
-        ColorSequenceKeypoint.new(0.5, AFO_MAIN_COLOR),
-        ColorSequenceKeypoint.new(1, AFO_DEEP_COLOR)
+        ColorSequenceKeypoint.new(0.5, AFO_COLOR),
+        ColorSequenceKeypoint.new(1, AFO_DEEP)
     })
     southParticles.LightEmission = 0.1
     southParticles.ZOffset = 0.2
@@ -487,22 +495,21 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- CURVA EXPONENCIAL: Lenta al inicio, explota masivamente al final
-        local exponentialAlpha = math.pow(alpha, 4) 
+        -- CURVA EXPONENCIAL (Aceleración drástica al final para cubrir todo rápido)
+        local expoAlpha = math.pow(alpha, 3)
         
-        -- El brillo principal es NULO al inicio. Sólo arranca cuando alpha pasa de 0.15
-        local delayAlpha = math.clamp((alpha - 0.15) / 0.85, 0, 1)
-        mainLight.Brightness = delayAlpha * 29.25 
+        -- Luces: Comienzan estrictamente en 0 y se expanden velozmente (Range límite en Roblox es 60)
+        colorLight.Brightness = expoAlpha * 29.25 
+        colorLight.Range = math.min(60, expoAlpha * (boxSize * 3.24))
         
-        -- Luz Blanca Sur: Crece brutalmente rápido usando la curva exponencial
-        whiteLight.Brightness = exponentialAlpha * 40
-        whiteLight.Range = (boxSize * 1.5) + (exponentialAlpha * boxSize * 25) -- Expansión masiva
+        whiteLight.Brightness = expoAlpha * 40
+        whiteLight.Range = math.min(60, expoAlpha * (boxSize * 6.48))
+        
+        -- Efecto Glitch TV se intensifica con el tiempo
+        tvGlitchEmitter.Rate = expoAlpha * 35
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
-        
-        -- El TV Glitch aumenta a medida que el alpha sube, creando estática intermitente
-        tvGlitchEmitter.Rate = exponentialAlpha * 60
         
         local softTrans = 1 - (alpha * 0.25) 
         hazeEmitter.Transparency = NumberSequence.new({
