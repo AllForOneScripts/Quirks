@@ -215,11 +215,11 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- --- PALETA: VIOLETA PURO ---
-    local AFO_VIOLET = Color3.fromRGB(110, 0, 255)     -- Violeta real, muy intenso
-    local AFO_DEEP_PURPLE = Color3.fromRGB(30, 0, 80)  -- Fondo y humo más azulados/morados
+    -- --- PALETA: MAGENTA PURO ---
+    local AFO_MAGENTA = Color3.fromRGB(255, 0, 255)    -- Magenta 100% puro
+    local AFO_DEEP_MAGENTA = Color3.fromRGB(60, 0, 60) -- Fondo y humo oscuro en tono magenta
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(130, 30, 255)     -- Chispas de Ruido en violeta brillante
+    local AFO_RUIDO = Color3.fromRGB(255, 50, 255)     -- Chispas de Ruido
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -248,6 +248,8 @@ local function SpawnAFODimension(centerCF)
         wall.Anchored = true
         wall.CanCollide = false
         wall.CanTouch = false
+        wall.CanQuery = false -- FUNDAMENTAL: Evita interferencia con Raycasts, hitboxes o cámara
+        wall.Locked = true
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
@@ -256,7 +258,7 @@ local function SpawnAFODimension(centerCF)
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
         bgUp.Transparency = 0.2 
-        bgUp.Color3 = AFO_DEEP_PURPLE 
+        bgUp.Color3 = AFO_DEEP_MAGENTA 
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
         bgUp.StudsPerTileV = boxSize / 1.5
@@ -269,12 +271,12 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Violeta)
+        -- Glow Neon (Magenta)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
         texNeonGlow.Transparency = 0.4 
-        texNeonGlow.Color3 = AFO_VIOLET 
+        texNeonGlow.Color3 = AFO_MAGENTA 
         texNeonGlow.Face = data.innerFace
         texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
         texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
@@ -282,12 +284,12 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal (Violeta Intenso)
+        -- Neon Principal (Magenta Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
         texNeon.Transparency = 0 
-        texNeon.Color3 = AFO_VIOLET
+        texNeon.Color3 = AFO_MAGENTA
         texNeon.Face = data.innerFace
         texNeon.StudsPerTileU = boxSize * 3 
         texNeon.StudsPerTileV = boxSize * 3 
@@ -303,6 +305,8 @@ local function SpawnAFODimension(centerCF)
     topPole.Transparency = 1
     topPole.Anchored = true
     topPole.CanCollide = false
+    topPole.CanTouch = false
+    topPole.CanQuery = false
     topPole.Parent = dimensionFolder
 
     local bottomPole = topPole:Clone()
@@ -315,7 +319,7 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.LightEmission = 0.1 
         smokeEmitter.ZOffset = 0.5 
         smokeEmitter.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, AFO_DEEP_PURPLE),
+            ColorSequenceKeypoint.new(0, AFO_DEEP_MAGENTA),
             ColorSequenceKeypoint.new(1, AFO_BLACK)
         })
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
@@ -357,13 +361,15 @@ local function SpawnAFODimension(centerCF)
     softVolume.CFrame = centerCF
     softVolume.Anchored = true
     softVolume.CanCollide = false
+    softVolume.CanTouch = false
+    softVolume.CanQuery = false
     softVolume.Transparency = 1
     softVolume.Parent = dimensionFolder
 
     local hazeEmitter = Instance.new("ParticleEmitter")
     hazeEmitter.Name = "InternalHaze"
     hazeEmitter.Texture = SMOKE_TEXTURE_ID 
-    hazeEmitter.Color = ColorSequence.new(AFO_DEEP_PURPLE)
+    hazeEmitter.Color = ColorSequence.new(AFO_DEEP_MAGENTA)
     hazeEmitter.LightEmission = 0.05 
     hazeEmitter.ZOffset = -1 
     hazeEmitter.Size = NumberSequence.new(boxSize * 0.8) 
@@ -383,7 +389,7 @@ local function SpawnAFODimension(centerCF)
     chaoticWind.Name = "ChaoticWind"
     chaoticWind.Texture = NOISE_TEXTURE_ID 
     chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_VIOLET),
+        ColorSequenceKeypoint.new(0, AFO_MAGENTA),
         ColorSequenceKeypoint.new(1, AFO_BLACK)
     })
     chaoticWind.LightEmission = 0.2
@@ -403,16 +409,26 @@ local function SpawnAFODimension(centerCF)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
     southPole.Anchored = true
     southPole.CanCollide = false
+    southPole.CanTouch = false
+    southPole.CanQuery = false
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    local southLight = Instance.new("PointLight")
-    southLight.Color = AFO_VIOLET 
-    -- Tamaño duplicado (antes 1.62, ahora 3.24)
-    southLight.Range = boxSize * 3.24 
-    southLight.Brightness = 0 
-    southLight.Shadows = true 
-    southLight.Parent = southPole
+    -- Luz Magenta Base
+    local magentaLight = Instance.new("PointLight")
+    magentaLight.Color = AFO_MAGENTA 
+    magentaLight.Range = boxSize * 3.24 
+    magentaLight.Brightness = 0 
+    magentaLight.Shadows = true 
+    magentaLight.Parent = southPole
+    
+    -- NUEVO: Luz Blanca (Núcleo) expandiéndose desde el Sur (x2 de tamaño)
+    local whiteLight = Instance.new("PointLight")
+    whiteLight.Color = Color3.fromRGB(255, 255, 255)
+    whiteLight.Range = boxSize * 6.48 -- Rango duplicado
+    whiteLight.Brightness = 0 
+    whiteLight.Shadows = true
+    whiteLight.Parent = southPole
 
     -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
@@ -420,8 +436,8 @@ local function SpawnAFODimension(centerCF)
     southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
-        ColorSequenceKeypoint.new(0.5, AFO_VIOLET),
-        ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
+        ColorSequenceKeypoint.new(0.5, AFO_MAGENTA),
+        ColorSequenceKeypoint.new(1, AFO_DEEP_MAGENTA)
     })
     southParticles.LightEmission = 0.1
     southParticles.ZOffset = 0.2
@@ -454,8 +470,11 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Brillo reducido a la mitad para no quemar a los personajes con violeta (Llega a 45)
-        southLight.Brightness = alpha * 45 
+        -- Brillo Magenta reducido en un 35% (Llega a un pico de 29.25)
+        magentaLight.Brightness = alpha * 29.25 
+        
+        -- Brillo Blanco (Crece suavemente para bañar el área de blanco desde el sur)
+        whiteLight.Brightness = alpha * 20
         
         southParticles.Rate = alpha * 400
 
