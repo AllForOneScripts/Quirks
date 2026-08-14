@@ -197,7 +197,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -222,7 +221,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 20 
+    local CLIMAX_TIME = 8 -- Ajustado para ser rápido e impactante (menos de 8.5s)
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -444,10 +443,10 @@ local function SpawnAFODimension(centerCF)
         local ambientAlpha = 1 - (alpha * 0.8) -- Cae hasta quedarse al 20%
         southLightFuchsia.Brightness = ambientAlpha * 35
         
-        -- 2. La luz blanca simula la energía del personaje. Crece lentamente a lo largo de los 20s.
+        -- 2. La luz blanca simula la energía del personaje. Crece de manera agresiva a lo largo de los 8s.
         -- Usamos alpha^1.5 para que la curva empiece lenta y acelere hacia el final, dando sensación de carga.
         local energyAlpha = alpha ^ 1.5 
-        southLightWhite.Brightness = energyAlpha * 100 -- Fuerte e imponente, pero no cega la cámara entera
+        southLightWhite.Brightness = energyAlpha * 100 -- Fuerte e imponente
         southLightWhite.Range = energyAlpha * (boxSize * 4.5) 
         
         southParticles.Rate = alpha * 400
