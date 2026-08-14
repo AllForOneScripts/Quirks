@@ -1,3 +1,5 @@
+print ("testing boot")
+
 if getgenv()._BootAnimRunning then
     return
 end
