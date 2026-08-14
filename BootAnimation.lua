@@ -223,7 +223,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 20 
+    local CLIMAX_TIME = 6 -- Cambiado a 6s
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -345,7 +345,7 @@ local function SpawnAFODimension(centerCF)
         noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = noiseEmitter
+        noiseEmitter.Parent = polePart -- ¡AQUÍ ESTABA EL ERROR! (antes era noiseEmitter.Parent = noiseEmitter)
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
