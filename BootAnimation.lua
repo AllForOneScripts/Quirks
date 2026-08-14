@@ -424,10 +424,10 @@ local function SpawnAFODimension(centerCF)
     southLight.Shadows = true 
     southLight.Parent = southPole
 
-    -- Partículas Envolventes Caóticas (CAPA MÁS SUPERIOR)
+    -- Partículas Envolventes Caóticas (CAPA MÁS SUPERIOR) - TEXTURA ACTUALIZADA
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
-    southParticles.Texture = SMOKE_TEXTURE_ID
+    southParticles.Texture = "rbxassetid://6673021984" -- TEXTURA CORREGIDA AQUÍ
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
         ColorSequenceKeypoint.new(0.5, AFO_FUCHSIA),
