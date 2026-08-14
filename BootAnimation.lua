@@ -1,5 +1,3 @@
-print ("testing boot")
-
 if getgenv()._BootAnimRunning then
     return
 end
@@ -216,10 +214,14 @@ local function SpawnAFODimension(centerCF)
     local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
+    
+    -- NUEVOS ASSETS LUZ SUR
+    local MAIN_LIGHT_TEX = "rbxassetid://14684195806"
+    local BG_LIGHT_TEX = "rbxassetid://6673021984"
 
     -- --- PALETA: FUCSIA ---
-    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)    
-    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)  
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
+    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          
 
     local NEON_SPEED = 180 
@@ -252,7 +254,7 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo Scrolling
+        -- Fondo Scrolling (Oscuro)
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -296,21 +298,21 @@ local function SpawnAFODimension(centerCF)
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
 
-        -- EFECTO MÁSCARA GLITCH (Ruido sobre el Neón)
+        -- Máscara de Glitch / Distorsión
         local texGlitch = Instance.new("Texture")
-        texGlitch.Name = "GlitchNoise"
+        texGlitch.Name = "GlitchMask"
         texGlitch.Texture = NOISE_TEXTURE_ID
         texGlitch.Transparency = 1 
         texGlitch.Color3 = AFO_BLACK 
         texGlitch.Face = data.innerFace
-        texGlitch.StudsPerTileU = boxSize * 4 
-        texGlitch.StudsPerTileV = boxSize * 4 
+        texGlitch.StudsPerTileU = boxSize * 2 
+        texGlitch.StudsPerTileV = boxSize * 2 
         texGlitch.ZIndex = 4 
         texGlitch.Parent = wall
         table.insert(allTextures, texGlitch)
     end
 
-    -- --- 2. HUMO CENTRAL (POLOS TOP/BOTTOM) ---
+    -- --- 2. HUMO CENTRAL Y POLOS TOP/BOTTOM ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
@@ -373,7 +375,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. LUCES ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 4. NUEVO SISTEMA DE LUZ BLANCA (PARTÍCULAS) DESDE EL SUR ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -382,45 +384,35 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Disminuirá)
-    local southLightFuchsia = Instance.new("PointLight")
-    southLightFuchsia.Name = "FuchsiaLight"
-    southLightFuchsia.Color = AFO_FUCHSIA 
-    southLightFuchsia.Range = 0 
-    southLightFuchsia.Brightness = 0 
-    southLightFuchsia.Shadows = true 
-    southLightFuchsia.Parent = southPole
-
-    -- NUEVO: PARTÍCULAS EXPANSIVAS ILUMINADORAS
-    local flashEmitter1 = Instance.new("ParticleEmitter")
-    flashEmitter1.Name = "WhiteFlash1"
-    flashEmitter1.Texture = "rbxassetid://14684195806"
-    flashEmitter1.Color = ColorSequence.new(Color3.new(1, 1, 1)) -- Blanco iluminador
-    flashEmitter1.LightEmission = 1 -- Brillo absoluto (iluminadora)
-    flashEmitter1.LightInfluence = 0
-    flashEmitter1.ZOffset = 1 -- Al frente
-    flashEmitter1.Size = NumberSequence.new(0.1)
-    flashEmitter1.Transparency = NumberSequence.new({
+    -- Partícula Principal (ID 14684195806)
+    local mainLightParticle = Instance.new("ParticleEmitter")
+    mainLightParticle.Name = "MainIllumination"
+    mainLightParticle.Texture = MAIN_LIGHT_TEX
+    mainLightParticle.Color = ColorSequence.new(Color3.new(1, 1, 1)) -- Luz blanca
+    mainLightParticle.LightEmission = 1 -- Brillo máximo
+    mainLightParticle.ZOffset = 2 -- Sobre la partícula de fondo
+    mainLightParticle.Speed = NumberRange.new(0)
+    mainLightParticle.Rate = 15 -- Emite constantemente para simular una luz sólida
+    mainLightParticle.Lifetime = NumberRange.new(1.5, 2)
+    mainLightParticle.Rotation = NumberRange.new(0, 360)
+    mainLightParticle.RotSpeed = NumberRange.new(-5, 5)
+    mainLightParticle.Size = NumberSequence.new(0.1) -- Inicia pequeña
+    mainLightParticle.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 1),
         NumberSequenceKeypoint.new(0.2, 0),
         NumberSequenceKeypoint.new(0.8, 0),
         NumberSequenceKeypoint.new(1, 1)
     })
-    flashEmitter1.Lifetime = NumberRange.new(1.5, 2)
-    flashEmitter1.Rate = 0 -- Controlado dinámicamente
-    flashEmitter1.Speed = NumberRange.new(0)
-    flashEmitter1.Rotation = NumberRange.new(0, 360)
-    flashEmitter1.RotSpeed = NumberRange.new(-15, 15)
-    flashEmitter1.Parent = southPole
+    mainLightParticle.Parent = southPole
 
-    local flashEmitter2 = flashEmitter1:Clone()
-    flashEmitter2.Name = "WhiteFlash2"
-    flashEmitter2.Texture = "rbxassetid://6673021984"
-    flashEmitter2.ZOffset = 0 -- Detrás de la primera
-    flashEmitter2.RotSpeed = NumberRange.new(-25, 25)
-    flashEmitter2.Parent = southPole
+    -- Partícula de Fondo (ID 6673021984)
+    local bgLightParticle = mainLightParticle:Clone()
+    bgLightParticle.Name = "BackgroundIllumination"
+    bgLightParticle.Texture = BG_LIGHT_TEX
+    bgLightParticle.ZOffset = 1 -- Detrás de la principal
+    bgLightParticle.Parent = southPole
 
-    -- Partículas Envolventes Caóticas 
+    -- Partículas Envolventes
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
@@ -447,7 +439,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 5. BUCLE DE ANIMACIÓN ---
+    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
     local startTime = os.clock()
     local conn
     
@@ -460,33 +452,18 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
-        -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
-        local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
-        if elapsed > 6 then fuchsiaCurve = 0 end 
-        southLightFuchsia.Brightness = fuchsiaCurve * 1500
-        southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
-
-        -- BLANCA EXPANSIVA (PARTÍCULAS): Empieza a subir después de 2 segundos y explota.
-        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
-        local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
+        -- Expansión de luz cegadora rápida (usando las partículas)
+        local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
+        local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
         
-        if whiteAlpha > 0 and whiteAlpha < 1 then
-            flashEmitter1.Rate = 12
-            flashEmitter2.Rate = 12
-            
-            -- Multiplicamos por 2 para asegurar que sale de la caja (60 * 2 = 120 studs de máximo)
-            local maxSize = boxSize * 2 
-            local currentSize1 = math.max(0.1, easeOutWhite * maxSize)
-            local currentSize2 = math.max(0.1, currentSize1 * 1.15) -- 15% más rápido/grande
-            
-            flashEmitter1.Size = NumberSequence.new(currentSize1)
-            flashEmitter2.Size = NumberSequence.new(currentSize2)
-        else
-            -- Si aún no empieza o ya terminó su clímax expansivo, dejamos de emitir
-            flashEmitter1.Rate = 0
-            flashEmitter2.Rate = 0
-        end
+        -- Calculamos el tamaño máximo para que salga de la caja (60 * 1.6 = 96)
+        local maxMainSize = boxSize * 1.6
+        local currentMainSize = easeOutLight * maxMainSize
+        
+        -- Forzamos a que el tamaño nunca sea 0 absoluto para evitar errores de Engine
+        mainLightParticle.Size = NumberSequence.new(math.max(0.1, currentMainSize))
+        -- La de fondo es un 15% más grande (lo que visualmente simula que se expande más rápido)
+        bgLightParticle.Size = NumberSequence.new(math.max(0.1, currentMainSize * 1.15))
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -501,11 +478,13 @@ local function SpawnAFODimension(centerCF)
 
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
-
-        local isGlitchActive = math.random() > 0.8
+        
+        -- Lógica de Glitch Aleatorio Espontáneo
+        local isGlitching = math.random() > 0.85
+        local glitchTrans = isGlitching and (math.random(20, 70) / 100) or 1
+        local glitchOffset = math.random(-100, 100) / 5
 
         for _, tex in ipairs(allTextures) do
-            -- Animación de Texturas Base
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = offsetNeon
@@ -516,16 +495,14 @@ local function SpawnAFODimension(centerCF)
                 tex.OffsetStudsV = -offsetBg
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
-            end
-            
-            -- Animación del Glitch (Ruido)
-            if tex.Name == "GlitchNoise" then
-                if isGlitchActive then
-                    tex.Transparency = math.random(10, 60) / 100 
-                    tex.OffsetStudsU = math.random(-100, 100)
-                    tex.OffsetStudsV = math.random(-100, 100)
+            elseif tex.Name == "GlitchMask" then
+                tex.Transparency = glitchTrans
+                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                    tex.OffsetStudsV = glitchOffset
+                    tex.OffsetStudsU = glitchOffset
                 else
-                    tex.Transparency = 1 
+                    tex.OffsetStudsU = glitchOffset
+                    tex.OffsetStudsV = glitchOffset
                 end
             end
         end
