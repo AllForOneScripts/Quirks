@@ -197,7 +197,6 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -345,7 +344,7 @@ local function SpawnAFODimension(centerCF)
         noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = polePart
+        noiseEmitter.Parent = noiseEmitter
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -374,28 +373,8 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO ---
-    local windVolume = softVolume:Clone()
-    windVolume.Name = "WindVolume"
-    windVolume.Parent = dimensionFolder
-
-    local chaoticWind = Instance.new("ParticleEmitter")
-    chaoticWind.Name = "ChaoticWind"
-    chaoticWind.Texture = NOISE_TEXTURE_ID 
-    chaoticWind.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, AFO_FUCHSIA),
-        ColorSequenceKeypoint.new(1, AFO_BLACK)
-    })
-    chaoticWind.LightEmission = 0.2
-    chaoticWind.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 2), NumberSequenceKeypoint.new(1, 0)})
-    chaoticWind.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 1)})
-    chaoticWind.Lifetime = NumberRange.new(3, 5)
-    chaoticWind.Rate = 100 
-    chaoticWind.Speed = NumberRange.new(10, 20) 
-    chaoticWind.SpreadAngle = Vector2.new(360, 360) 
-    chaoticWind.Acceleration = Vector3.new(0, -2, 0) 
-    chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
-    chaoticWind.Parent = windVolume
+    -- --- 4. VIENTO CAÓTICO (ELIMINADO A PETICIÓN) ---
+    -- Se ha eliminado el emisor de partículas que creaba el viento caótico y los cuadraditos transparentes.
 
     -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
@@ -454,13 +433,11 @@ local function SpawnAFODimension(centerCF)
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
         -- NUEVA LÓGICA DE LUZ: Expansión súper rápida y envolvente
-        -- Alcanza su máximo en los primeros 4-5 segundos para llenar todo el volumen rápidamente
         local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
-        -- Función de suavizado curvo (Quad Out) para que la explosión inicial se sienta rápida pero fluida
         local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
         
-        -- Brillo más alto y rango masivo (cubre más del doble de la caja entera rápidamente)
-        southLight.Brightness = easeOutLight * 65 
+        -- Brillo EXTREMADAMENTE alto y rango masivo para cegar
+        southLight.Brightness = easeOutLight * 5000 -- Aumentado de 65 a 5000 para cegar
         southLight.Range = easeOutLight * (boxSize * 8) 
         
         southParticles.Rate = alpha * 400
