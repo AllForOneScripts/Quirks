@@ -23,7 +23,6 @@ flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
 local flashFrame = Instance.new("Frame", flashGui)
--- Flash blanco reemplazado por oscuridad con fundido
 flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
 flashGui.Parent = pGui
@@ -293,6 +292,7 @@ local function SpawnAFODimension(centerCF)
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
         
+        -- Máscara de Glitch Oscura
         local texNoise = Instance.new("Texture")
         texNoise.Name = "NoiseGlitch"
         texNoise.Texture = NOISE_TEXTURE_ID
@@ -384,7 +384,30 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 5. PARTÍCULAS ENVOLVENTES ---
+    -- --- 4. VIENTO CAÓTICO ---
+    local windVolume = softVolume:Clone()
+    windVolume.Name = "WindVolume"
+    windVolume.Parent = dimensionFolder
+
+    local chaoticWind = Instance.new("ParticleEmitter")
+    chaoticWind.Name = "ChaoticWind"
+    chaoticWind.Texture = NOISE_TEXTURE_ID 
+    chaoticWind.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, AFO_FUCHSIA),
+        ColorSequenceKeypoint.new(1, AFO_BLACK)
+    })
+    chaoticWind.LightEmission = 0.2
+    chaoticWind.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 2), NumberSequenceKeypoint.new(1, 0)})
+    chaoticWind.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 1)})
+    chaoticWind.Lifetime = NumberRange.new(3, 5)
+    chaoticWind.Rate = 100 
+    chaoticWind.Speed = NumberRange.new(10, 20) 
+    chaoticWind.SpreadAngle = Vector2.new(360, 360) 
+    chaoticWind.Acceleration = Vector3.new(0, -2, 0) 
+    chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
+    chaoticWind.Parent = windVolume
+
+    -- --- 5. PARTÍCULAS ENVOLVENTES (SIN LUZ AMBIENTAL) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -447,6 +470,7 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
         
+        -- Lógica de Glitch (Ruido Rápido y Errático)
         local isGlitching = math.random() > 0.88 
         local targetNoiseTrans = isGlitching and (math.random(10, 50) / 100) or 1
         local randomGlitchOffsetX = isGlitching and math.random(-100, 100) or 0
@@ -798,7 +822,8 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    task.delay(2, function()
+    -- Cambio: 3 Segundos de retardo (1 segundo extra de oscuridad añadido)
+    task.delay(3, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
@@ -886,10 +911,8 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- BUG FIX: Sistema de regreso al suelo mejorado con Raycast
 root.Anchored = false
 
--- Configurar Raycast para detectar el suelo real
 local rayOrigin = finalPos + Vector3.new(0, 100, 0)
 local rayDirection = Vector3.new(0, -2000, 0)
 local raycastParams = RaycastParams.new()
@@ -900,7 +923,6 @@ local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
 local actualGroundY = originalGroundY
 
 if raycastResult then
-    -- Ajustar basándose en el punto de impacto, la altura de la cadera y la mitad de la raíz
     local extraHeight = (root.Size.Y / 2) + (hum.HipHeight > 0 and hum.HipHeight or 2)
     actualGroundY = raycastResult.Position.Y + extraHeight
 end
@@ -909,15 +931,13 @@ local targetCF = CFrame.new(Vector3.new(finalPos.X, actualGroundY, finalPos.Z)) 
 local teleportAttempts = 0
 local isGrounded = false
 
--- Múltiples teleports hasta asegurar contacto, aplicando empuje para forzar físicas
 repeat
     root.CFrame = targetCF
-    root.AssemblyLinearVelocity = Vector3.new(0, -150, 0) -- Empuje adicional hacia abajo
+    root.AssemblyLinearVelocity = Vector3.new(0, -150, 0) 
     root.AssemblyAngularVelocity = Vector3.zero
     task.wait(0.05)
     teleportAttempts = teleportAttempts + 1
     
-    -- Se evalúa si el personaje detuvo su caída brusca o el estado del humanoide cambió
     if root.AssemblyLinearVelocity.Y > -5 or hum:GetState() == Enum.HumanoidStateType.Landed then
         isGrounded = true
     end
