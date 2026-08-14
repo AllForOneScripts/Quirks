@@ -22,6 +22,7 @@ flashGui.IgnoreGuiInset = true
 flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
+-- Flash ahora es oscuridad completa (Negro)
 local flashFrame = Instance.new("Frame", flashGui)
 flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
@@ -93,6 +94,7 @@ end
 _G.cloneRoot = cloneRoot
 _G.cloneChar = cloneChar
 
+-- SISTEMA ORIGINAL DE TRANSPARENCIA DEL CUERPO
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
     if part:IsA("BasePart") then
@@ -265,7 +267,7 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Fucsia)
+        -- Glow Neon (Fucsia) - LÍNEAS INTACTAS
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
@@ -278,7 +280,7 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal (Fucsia Intenso)
+        -- Neon Principal (Fucsia Intenso) - LÍNEAS INTACTAS
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
@@ -290,19 +292,19 @@ local function SpawnAFODimension(centerCF)
         texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
-
-        -- MÁSCARA NOISE/GLITCH SOBRE NEÓN
-        local texGlitch = Instance.new("Texture")
-        texGlitch.Name = "NeonGlitchMask"
-        texGlitch.Texture = NOISE_TEXTURE_ID
-        texGlitch.Transparency = 1 -- Oculto por defecto
-        texGlitch.Color3 = AFO_BLACK -- Tapa el neón para romper la forma
-        texGlitch.Face = data.innerFace
-        texGlitch.StudsPerTileU = boxSize * 3 
-        texGlitch.StudsPerTileV = boxSize * 3 
-        texGlitch.ZIndex = 4 -- Por encima del neón principal
-        texGlitch.Parent = wall
-        table.insert(allTextures, texGlitch)
+        
+        -- Máscara de Ruido/Glitch (Cubre el Neon de forma transparente)
+        local texNoise = Instance.new("Texture")
+        texNoise.Name = "NoiseGlitch"
+        texNoise.Texture = NOISE_TEXTURE_ID
+        texNoise.Transparency = 1 
+        texNoise.Color3 = AFO_BLACK 
+        texNoise.Face = data.innerFace
+        texNoise.StudsPerTileU = boxSize * 3 
+        texNoise.StudsPerTileV = boxSize * 3 
+        texNoise.ZIndex = 4 
+        texNoise.Parent = wall
+        table.insert(allTextures, texNoise)
     end
 
     -- --- 2. HUMO CENTRAL Y RUIDO (POLOS TOP/BOTTOM) ---
@@ -354,7 +356,7 @@ local function SpawnAFODimension(centerCF)
         noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = polePart
+        noiseEmitter.Parent = polePart 
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -383,7 +385,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO (RESTAURADO) ---
+    -- --- 4. VIENTO CAÓTICO ---
     local windVolume = softVolume:Clone()
     windVolume.Name = "WindVolume"
     windVolume.Parent = dimensionFolder
@@ -406,7 +408,7 @@ local function SpawnAFODimension(centerCF)
     chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
     chaoticWind.Parent = windVolume
 
-    -- --- 5. PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -415,6 +417,14 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
+    local southLight = Instance.new("PointLight")
+    southLight.Color = AFO_FUCHSIA 
+    southLight.Range = 0 
+    southLight.Brightness = 0 
+    southLight.Shadows = true 
+    southLight.Parent = southPole
+
+    -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
@@ -441,7 +451,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 6. BUCLE DE ANIMACIÓN Y GLITCH ESPONTÁNEO ---
+    -- --- 6. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
     local startTime = os.clock()
     local conn
     
@@ -453,6 +463,12 @@ local function SpawnAFODimension(centerCF)
 
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
+        
+        -- Expansión del brillo Sur (POTENCIADO)
+        local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
+        local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
+        southLight.Brightness = easeOutLight * 65 
+        southLight.Range = easeOutLight * (boxSize * 8) 
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -468,27 +484,30 @@ local function SpawnAFODimension(centerCF)
 
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
-
-        -- Lógica de Ruido Glitch Espontáneo
-        local glitchActive = math.random() > 0.85 -- 15% de probabilidad por frame
-        local glitchTrans = glitchActive and (math.random(1, 4) / 10) or 1
-        local glitchOffset = math.random(-50, 50)
+        
+        -- Lógica del Glitch (Ruido bastante transparente, entre 75% y 95% transparente)
+        local isGlitching = math.random() > 0.85 
+        local targetNoiseTrans = isGlitching and (math.random(75, 95) / 100) or 1
+        local randomGlitchOffsetX = isGlitching and math.random(-100, 100) or 0
+        local randomGlitchOffsetY = isGlitching and math.random(-100, 100) or 0
+        local twitchNeon = isGlitching and (math.random(-20, 20) / 100) or 0
 
         for _, tex in ipairs(allTextures) do
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
+                -- Líneas fucsias intactas en movimiento
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
-                    tex.OffsetStudsV = offsetNeon
+                    tex.OffsetStudsV = offsetNeon + twitchNeon
                 else
-                    tex.OffsetStudsU = offsetNeon
+                    tex.OffsetStudsU = offsetNeon + twitchNeon
                 end
             elseif tex.Name == "BgUp" then
                 tex.OffsetStudsV = -offsetBg
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
-            elseif tex.Name == "NeonGlitchMask" then
-                tex.Transparency = glitchTrans
-                tex.OffsetStudsU = glitchOffset
-                tex.OffsetStudsV = -glitchOffset
+            elseif tex.Name == "NoiseGlitch" then
+                tex.Transparency = targetNoiseTrans
+                tex.OffsetStudsU = randomGlitchOffsetX
+                tex.OffsetStudsV = randomGlitchOffsetY
             end
         end
     end)
@@ -807,7 +826,6 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
--- --- TRANSICIÓN CON FLASH NEGRO Y RETARDO DE 1 SEGUNDO DE OSCURIDAD EXTRA ---
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
@@ -821,8 +839,8 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    -- Espera 1 segundo en total oscuridad antes de iniciar el fundido
-    task.delay(1.0, function()
+    -- Oscuridad prolongada (1s extra)
+    task.delay(3, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
@@ -840,6 +858,7 @@ repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - st
 cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 
+-- SE INICIA LA BURBUJA NEGRA AFO DURANTE LOS PRIMEROS 8.5 SEGUNDOS
 SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
@@ -879,6 +898,7 @@ end
 local finalCloneCF = cloneRoot.CFrame
 local finalPos = finalCloneCF.Position
 local finalRot = finalCloneCF - finalCloneCF.Position
+local targetCF = CFrame.new(finalPos) * finalRot
 
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
@@ -910,38 +930,40 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
+-- Raycast para detectar la altura real del suelo (Regreso firme a la tierra)
 root.Anchored = false
 
--- SISTEMA MEJORADO DE REGRESO AL SUELO POR RAYCASTING
-local rayOrigin = finalPos + Vector3.new(0, 100, 0)
-local rayDirection = Vector3.new(0, -2000, 0)
-local raycastParams = RaycastParams.new()
-raycastParams.FilterDescendantsInstances = {char, cloneChar}
-raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+local rayOrigin = targetCF.Position + Vector3.new(0, 50, 0)
+local rayDir = Vector3.new(0, -1000, 0)
+local rayParams = RaycastParams.new()
+rayParams.FilterDescendantsInstances = {char, cloneChar, workspace:FindFirstChild("AFO_Dimension_Effect")}
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-local actualGroundY = originalGroundY
-
-if raycastResult then
-    local extraHeight = (root.Size.Y / 2) + (hum.HipHeight > 0 and hum.HipHeight or 2)
-    actualGroundY = raycastResult.Position.Y + extraHeight
+local rayHit = workspace:Raycast(rayOrigin, rayDir, rayParams)
+local groundY = originalGroundY
+if rayHit then
+    groundY = rayHit.Position.Y
 end
 
-local targetCF = CFrame.new(Vector3.new(finalPos.X, actualGroundY, finalPos.Z)) * finalRot
+local YOffset = (root.Size.Y / 2) + 0.5
+local finalTargetPos = Vector3.new(targetCF.Position.X, groundY + YOffset, targetCF.Position.Z)
+local finalTargetCF = CFrame.new(finalTargetPos) * (targetCF - targetCF.Position)
+
 local teleportAttempts = 0
 local isGrounded = false
 
 repeat
-    root.CFrame = targetCF
-    root.AssemblyLinearVelocity = Vector3.new(0, -150, 0)
+    root.CFrame = finalTargetCF
+    root.AssemblyLinearVelocity = Vector3.new(0, -150, 0) 
     root.AssemblyAngularVelocity = Vector3.zero
     task.wait(0.05)
     teleportAttempts = teleportAttempts + 1
     
-    if root.AssemblyLinearVelocity.Y > -5 or hum:GetState() == Enum.HumanoidStateType.Landed then
+    local checkRay = workspace:Raycast(root.Position, Vector3.new(0, -4, 0), rayParams)
+    if checkRay or root.Position.Y <= (groundY + YOffset + 1) then
         isGrounded = true
     end
-until isGrounded or teleportAttempts > 30
+until isGrounded or teleportAttempts > 20
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
