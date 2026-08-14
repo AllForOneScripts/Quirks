@@ -204,90 +204,99 @@ local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
     dimensionFolder.Parent = workspace
-    local boxSize = 60
+
+    local boxSize = 60 
     local half = boxSize / 2
     local wallThickness = 2
+
+    -- --- ASSETS Y CONFIGURACIÓN ---
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
-    local BG_TEXTURE_ID = "rbxassetid://72194288856630"
-    local NOISE_TEXTURE_ID = "rbxassetid://71963165748803"
+    local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
+    local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
-    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
-    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)
-    local NEON_SPEED = 180
-    local BG_SPEED = 12
-    local CLIMAX_TIME = 20
+
+    -- --- PALETA: FUCSIA ---
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)    -- Fucsia solicitado
+    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)  -- Fondo y humo adaptados a tonos fucsia oscuro
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
+    local AFO_RUIDO = Color3.fromRGB(180, 50, 120)     -- Chispas de Ruido en fucsia brillante
+
+    local NEON_SPEED = 180 
+    local BG_SPEED = 12    
+    local CLIMAX_TIME = 20 
+
+    -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
-        {name = "Top", offset = CFrame.new(0, half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
+        {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
-        {name = "Front", offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
-        {name = "Back", offset = CFrame.new(0, 0, half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
-        {name = "Right", offset = CFrame.new(half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
-        {name = "Left", offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
+        {name = "Front",  offset = CFrame.new(0, 0, -half), size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Back},
+        {name = "Back",   offset = CFrame.new(0, 0, half),  size = Vector3.new(boxSize, boxSize, wallThickness), innerFace = Enum.NormalId.Front},
+        {name = "Right",  offset = CFrame.new(half, 0, 0),  size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Left},
+        {name = "Left",   offset = CFrame.new(-half, 0, 0), size = Vector3.new(wallThickness, boxSize, boxSize), innerFace = Enum.NormalId.Right}
     }
+
     local allTextures = {}
+
     for _, data in ipairs(facesData) do
         local wall = Instance.new("Part")
         wall.Name = data.name
         wall.Shape = Enum.PartType.Block
         wall.Size = data.size
         wall.CFrame = centerCF * data.offset
-        wall.Color = AFO_BLACK
+        wall.Color = AFO_BLACK 
         wall.Material = Enum.Material.SmoothPlastic
         wall.Anchored = true
         wall.CanCollide = false
         wall.CanTouch = false
-        wall.CastShadow = false
+        wall.CastShadow = false 
         wall.Parent = dimensionFolder
+
+        -- Fondo Scrolling (Oscuro)
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
-        bgUp.Transparency = 0.2
-        bgUp.Color3 = AFO_DEEP_PURPLE
+        bgUp.Transparency = 0.2 
+        bgUp.Color3 = AFO_DEEP_PURPLE 
         bgUp.Face = data.innerFace
         bgUp.StudsPerTileU = boxSize / 1.5
         bgUp.StudsPerTileV = boxSize / 1.5
-        bgUp.ZIndex = 1
+        bgUp.ZIndex = 1 
         bgUp.Parent = wall
         table.insert(allTextures, bgUp)
+
         local bgDown = bgUp:Clone()
         bgDown.Name = "BgDown"
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
+
+        -- Glow Neon (Fucsia)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
-        texNeonGlow.Transparency = 0.4
-        texNeonGlow.Color3 = AFO_FUCHSIA
+        texNeonGlow.Transparency = 0.4 
+        texNeonGlow.Color3 = AFO_FUCHSIA 
         texNeonGlow.Face = data.innerFace
-        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35
-        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35
-        texNeonGlow.ZIndex = 2
+        texNeonGlow.StudsPerTileU = (boxSize * 3) * 1.35 
+        texNeonGlow.StudsPerTileV = (boxSize * 3) * 1.35 
+        texNeonGlow.ZIndex = 2 
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
+
+        -- Neon Principal (Fucsia Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
-        texNeon.Transparency = 0
+        texNeon.Transparency = 0 
         texNeon.Color3 = AFO_FUCHSIA
         texNeon.Face = data.innerFace
-        texNeon.StudsPerTileU = boxSize * 3
-        texNeon.StudsPerTileV = boxSize * 3
-        texNeon.ZIndex = 3
+        texNeon.StudsPerTileU = boxSize * 3 
+        texNeon.StudsPerTileV = boxSize * 3 
+        texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
-        local texGlitch = Instance.new("Texture")
-        texGlitch.Name = "GlitchMask"
-        texGlitch.Texture = NOISE_TEXTURE_ID
-        texGlitch.Transparency = 1
-        texGlitch.Color3 = AFO_BLACK
-        texGlitch.Face = data.innerFace
-        texGlitch.StudsPerTileU = boxSize * 2
-        texGlitch.StudsPerTileV = boxSize * 2
-        texGlitch.ZIndex = 4
-        texGlitch.Parent = wall
-        table.insert(allTextures, texGlitch)
     end
+
+    -- --- 2. HUMO CENTRAL Y RUIDO (POLOS TOP/BOTTOM) ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
@@ -295,27 +304,54 @@ local function SpawnAFODimension(centerCF)
     topPole.Anchored = true
     topPole.CanCollide = false
     topPole.Parent = dimensionFolder
+
     local bottomPole = topPole:Clone()
     bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
     bottomPole.Parent = dimensionFolder
+
     local function createSinisterSmoke(polePart, emitDirection)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
-        smokeEmitter.LightEmission = 0.1
-        smokeEmitter.ZOffset = 0.5
-        smokeEmitter.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, AFO_DEEP_PURPLE), ColorSequenceKeypoint.new(1, AFO_BLACK)})
+        smokeEmitter.LightEmission = 0.1 
+        smokeEmitter.ZOffset = 0.5 
+        smokeEmitter.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, AFO_DEEP_PURPLE),
+            ColorSequenceKeypoint.new(1, AFO_BLACK)
+        })
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 40)})
-        smokeEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.3, 0.85), NumberSequenceKeypoint.new(1, 1)})
+        smokeEmitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1), 
+            NumberSequenceKeypoint.new(0.3, 0.85), 
+            NumberSequenceKeypoint.new(1, 1)
+        })
         smokeEmitter.Lifetime = NumberRange.new(4, 6)
-        smokeEmitter.Rate = 20
-        smokeEmitter.Speed = NumberRange.new(5, 10)
+        smokeEmitter.Rate = 20 
+        smokeEmitter.Speed = NumberRange.new(5, 10) 
         smokeEmitter.EmissionDirection = emitDirection
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
+
+        local noiseEmitter = Instance.new("ParticleEmitter")
+        noiseEmitter.Texture = NOISE_TEXTURE_ID
+        noiseEmitter.LightEmission = 0.8 
+        noiseEmitter.ZOffset = 0.6 
+        noiseEmitter.Color = ColorSequence.new(AFO_RUIDO)
+        noiseEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 15)})
+        noiseEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0), NumberSequenceKeypoint.new(1, 1)})
+        noiseEmitter.Lifetime = NumberRange.new(1, 3)
+        noiseEmitter.Rate = 15 
+        noiseEmitter.Speed = NumberRange.new(20, 50) 
+        noiseEmitter.Drag = 5 
+        noiseEmitter.EmissionDirection = emitDirection
+        noiseEmitter.SpreadAngle = Vector2.new(360, 360)
+        noiseEmitter.Parent = noiseEmitter
     end
+
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
+
+    -- --- 3. EFECTO "SOFT" PROGRESIVO (NIEBLA INTERNA CENTRAL) ---
     local softVolume = Instance.new("Part")
     softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     softVolume.CFrame = centerCF
@@ -323,19 +359,25 @@ local function SpawnAFODimension(centerCF)
     softVolume.CanCollide = false
     softVolume.Transparency = 1
     softVolume.Parent = dimensionFolder
+
     local hazeEmitter = Instance.new("ParticleEmitter")
     hazeEmitter.Name = "InternalHaze"
-    hazeEmitter.Texture = SMOKE_TEXTURE_ID
+    hazeEmitter.Texture = SMOKE_TEXTURE_ID 
     hazeEmitter.Color = ColorSequence.new(AFO_DEEP_PURPLE)
-    hazeEmitter.LightEmission = 0.05
-    hazeEmitter.ZOffset = -1
-    hazeEmitter.Size = NumberSequence.new(boxSize * 0.8)
-    hazeEmitter.Transparency = NumberSequence.new(1)
-    hazeEmitter.Lifetime = NumberRange.new(10)
-    hazeEmitter.Rate = 0
-    hazeEmitter.Speed = NumberRange.new(0)
+    hazeEmitter.LightEmission = 0.05 
+    hazeEmitter.ZOffset = -1 
+    hazeEmitter.Size = NumberSequence.new(boxSize * 0.8) 
+    hazeEmitter.Transparency = NumberSequence.new(1) 
+    hazeEmitter.Lifetime = NumberRange.new(10) 
+    hazeEmitter.Rate = 0 
+    hazeEmitter.Speed = NumberRange.new(0) 
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
+
+    -- --- 4. VIENTO CAÓTICO (ELIMINADO A PETICIÓN) ---
+    -- Se ha eliminado el emisor de partículas que creaba el viento caótico y los cuadraditos transparentes.
+
+    -- --- 5. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -343,49 +385,74 @@ local function SpawnAFODimension(centerCF)
     southPole.CanCollide = false
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
-    -- Punto de luz eliminado
+
+    -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
-    southParticles.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, AFO_BLACK), ColorSequenceKeypoint.new(0.5, AFO_FUCHSIA), ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)})
+    southParticles.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, AFO_BLACK),
+        ColorSequenceKeypoint.new(0.5, AFO_FUCHSIA),
+        ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
+    })
     southParticles.LightEmission = 0.1
     southParticles.ZOffset = 0.2
     southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 10), NumberSequenceKeypoint.new(1, 0)})
-    southParticles.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.2, 0.8), NumberSequenceKeypoint.new(0.8, 0.8), NumberSequenceKeypoint.new(1, 1)})
+    southParticles.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1), 
+        NumberSequenceKeypoint.new(0.2, 0.8), 
+        NumberSequenceKeypoint.new(0.8, 0.8), 
+        NumberSequenceKeypoint.new(1, 1)
+    })
     southParticles.Lifetime = NumberRange.new(5, 7)
-    southParticles.Rate = 0
-    southParticles.Speed = NumberRange.new(20, 40)
+    southParticles.Rate = 0 
+    southParticles.Speed = NumberRange.new(20, 40) 
     southParticles.EmissionDirection = Enum.NormalId.Front
-    southParticles.SpreadAngle = Vector2.new(80, 80)
-    southParticles.Drag = 3
+    southParticles.SpreadAngle = Vector2.new(80, 80) 
+    southParticles.Drag = 3 
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
+
+    -- --- 6. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
     local startTime = os.clock()
     local conn
+    
     conn = RunService.RenderStepped:Connect(function()
-        if not dimensionFolder.Parent then if conn then conn:Disconnect() end return end
+        if not dimensionFolder.Parent then
+            if conn then conn:Disconnect() end
+            return
+        end
+
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
+        
         southParticles.Rate = alpha * 400
-        hazeEmitter.Rate = alpha * 10
-        local softTrans = 1 - (alpha * 0.25)
-        hazeEmitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, softTrans), NumberSequenceKeypoint.new(1, 1)})
+
+        hazeEmitter.Rate = alpha * 10 
+        
+        local softTrans = 1 - (alpha * 0.25) 
+        hazeEmitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, softTrans),
+            NumberSequenceKeypoint.new(1, 1)
+        })
+        
         hazeEmitter.Size = NumberSequence.new((boxSize * 0.8) + (alpha * boxSize * 0.2))
+
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
-        local isGlitching = math.random() > 0.85
-        local glitchTrans = isGlitching and (math.random(20, 70) / 100) or 1
-        local glitchOffset = math.random(-100, 100) / 5
+
         for _, tex in ipairs(allTextures) do
             if tex.Name == "NeonMain" or tex.Name == "NeonGlow" then
-                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then tex.OffsetStudsV = offsetNeon else tex.OffsetStudsU = offsetNeon end
+                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
+                    tex.OffsetStudsV = offsetNeon
+                else
+                    tex.OffsetStudsU = offsetNeon
+                end
             elseif tex.Name == "BgUp" then
                 tex.OffsetStudsV = -offsetBg
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
-            elseif tex.Name == "GlitchMask" then
-                tex.Transparency = glitchTrans
-                if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then tex.OffsetStudsV = glitchOffset tex.OffsetStudsU = glitchOffset else tex.OffsetStudsU = glitchOffset tex.OffsetStudsV = glitchOffset end
             end
         end
     end)
