@@ -424,7 +424,7 @@ local function SpawnAFODimension(centerCF)
     southLight.Shadows = true 
     southLight.Parent = southPole
 
-    -- Partículas Envolventes Caóticas 
+    -- Partículas Envolventes Caóticas (CAPA MÁS SUPERIOR)
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
@@ -433,13 +433,16 @@ local function SpawnAFODimension(centerCF)
         ColorSequenceKeypoint.new(0.5, AFO_FUCHSIA),
         ColorSequenceKeypoint.new(1, AFO_DEEP_PURPLE)
     })
+    
+    -- ZOffset y LightInfluence ajustados para que NADA lo obstruya
+    southParticles.ZOffset = 100 
+    southParticles.LightInfluence = 0 
     southParticles.LightEmission = 0.1
-    southParticles.ZOffset = 0.2
-    southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 10), NumberSequenceKeypoint.new(1, 0)})
+    southParticles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 15), NumberSequenceKeypoint.new(1, 0)})
     southParticles.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 1), 
-        NumberSequenceKeypoint.new(0.2, 0.8), 
-        NumberSequenceKeypoint.new(0.8, 0.8), 
+        NumberSequenceKeypoint.new(0.2, 0.7), 
+        NumberSequenceKeypoint.new(0.8, 0.7), 
         NumberSequenceKeypoint.new(1, 1)
     })
     southParticles.Lifetime = NumberRange.new(5, 7)
@@ -464,11 +467,11 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Expansión del brillo Sur (POTENCIADO)
+        -- Expansión del brillo Sur (CORREGIDO LÍMITE DE MOTOR ROBLOX: MAX 60 RANGE)
         local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
         local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
         southLight.Brightness = easeOutLight * 65 
-        southLight.Range = easeOutLight * (boxSize * 8) 
+        southLight.Range = math.clamp(easeOutLight * 60, 0, 60) 
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -841,7 +844,7 @@ task.delay(8.5, function()
     
     -- Oscuridad prolongada (1s extra)
     task.delay(3, function()
-        local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
+        local tw = TweenService:Create(fade, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
     end)
