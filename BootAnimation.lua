@@ -23,7 +23,7 @@ flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
 local flashFrame = Instance.new("Frame", flashGui)
-flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)  -- Cambiado a negro para oscuridad con fundido
+flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
 flashGui.Parent = pGui
 
@@ -197,10 +197,9 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
+local function SpawnAFODimension(centerCF, duration)
+    duration = duration or 45  -- Duración total del efecto en segundos (ajústalo si lo necesitas)
 
-local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
     dimensionFolder.Parent = workspace
@@ -216,16 +215,16 @@ local function SpawnAFODimension(centerCF)
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
     -- --- PALETA: FUCSIA ---
-    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)    -- Fucsia solicitado
-    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)  -- Fondo y humo adaptados a tonos fucsia oscuro
-    local AFO_BLACK = Color3.fromRGB(5, 5, 5)          -- Paredes y Vacío
-    local AFO_RUIDO = Color3.fromRGB(180, 50, 120)     -- Chispas de Ruido en fucsia brillante
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
+    local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
+    local AFO_BLACK = Color3.fromRGB(5, 5, 5)
+    local AFO_RUIDO = Color3.fromRGB(180, 50, 120)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
     local CLIMAX_TIME = 20 
 
-    -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
+    -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA ---
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
@@ -251,7 +250,6 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Fondo Scrolling (Oscuro)
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -269,7 +267,6 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(allTextures, bgDown)
 
-        -- Glow Neon (Fucsia)
         local texNeonGlow = Instance.new("Texture")
         texNeonGlow.Name = "NeonGlow"
         texNeonGlow.Texture = NEON_TEXTURE_ID
@@ -282,7 +279,6 @@ local function SpawnAFODimension(centerCF)
         texNeonGlow.Parent = wall
         table.insert(allTextures, texNeonGlow)
 
-        -- Neon Principal (Fucsia Intenso)
         local texNeon = Instance.new("Texture")
         texNeon.Name = "NeonMain"
         texNeon.Texture = NEON_TEXTURE_ID
@@ -296,7 +292,7 @@ local function SpawnAFODimension(centerCF)
         table.insert(allTextures, texNeon)
     end
 
-    -- --- 2. HUMO CENTRAL Y RUIDO (POLOS TOP/BOTTOM) ---
+    -- --- 2. HUMO CENTRAL Y RUIDO ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
@@ -345,13 +341,13 @@ local function SpawnAFODimension(centerCF)
         noiseEmitter.Drag = 5 
         noiseEmitter.EmissionDirection = emitDirection
         noiseEmitter.SpreadAngle = Vector2.new(360, 360)
-        noiseEmitter.Parent = noiseEmitter
+        noiseEmitter.Parent = polePart  -- ✅ CORREGIDO: antes era noiseEmitter
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. EFECTO "SOFT" PROGRESIVO (NIEBLA INTERNA CENTRAL) ---
+    -- --- 3. NIEBLA INTERNA ---
     local softVolume = Instance.new("Part")
     softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     softVolume.CFrame = centerCF
@@ -374,7 +370,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. LUZ Y PARTÍCULAS ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 4. PARTÍCULAS DESDE EL SUR ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -383,7 +379,6 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
@@ -410,7 +405,7 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
+    -- --- 5. BUCLE DE ANIMACIÓN ---
     local startTime = os.clock()
     local conn
     
@@ -424,7 +419,6 @@ local function SpawnAFODimension(centerCF)
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
         southParticles.Rate = alpha * 400
-
         hazeEmitter.Rate = alpha * 10 
         
         local softTrans = 1 - (alpha * 0.25) 
@@ -451,6 +445,13 @@ local function SpawnAFODimension(centerCF)
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
             end
+        end
+    end)
+
+    -- ✅ NUEVO: Destruir el folder automáticamente después de la duración indicada
+    task.delay(duration, function()
+        if dimensionFolder and dimensionFolder.Parent then
+            dimensionFolder:Destroy()
         end
     end)
 end
@@ -781,7 +782,7 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    task.delay(2.5, function()  -- +0.5s añadido
+    task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
@@ -804,17 +805,9 @@ SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
--- Fundido del flash inicial (ahora negro)
 local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
 fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
-
--- Aseguramos que el flash se destruya incluso si algo falla
-task.delay(10, function()
-    if flashGui and flashGui.Parent then
-        flashGui:Destroy()
-    end
-end)
 
 local bgAnims = {}
 if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
@@ -881,48 +874,18 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- SISTEMA MEJORADO DE REGRESO AL SUELO
+-- BUG FIX: Forzar teletransporte hasta confirmar que estás en el suelo (No más jugador en el aire al terminar)
 root.Anchored = false
+local safeYLimit = originalGroundY + 100
+local teleportAttempts = 0
 
--- Función para encontrar el suelo real con raycast
-local function findGroundY(posX, posZ)
-    local rayOrigin = Vector3.new(posX, originalGroundY + 200, posZ) -- desde arriba
-    local rayDirection = Vector3.new(0, -400, 0)
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-    rayParams.FilterDescendantsInstances = {char, cloneChar}
-    local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
-    if result then
-        return result.Position.Y
-    else
-        return originalGroundY
-    end
-end
-
-local groundY = findGroundY(targetPos.X, targetPos.Z)
-local landingY = groundY + 1.5 -- offset para evitar clipping
-local landingCF = CFrame.new(targetPos.X, landingY, targetPos.Z) * finalRot
-
--- Múltiples teleports hasta confirmar contacto con el suelo
-for attempt = 1, 30 do
-    root.CFrame = landingCF
+repeat
+    root.CFrame = targetCF
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
     task.wait(0.05)
-    if root.Position.Y <= landingY + 0.5 then
-        break
-    end
-end
-
--- Si aún no está en el suelo, forzamos hacia abajo con velocidad
-if root.Position.Y > landingY + 0.5 then
-    local downBV = Instance.new("BodyVelocity")
-    downBV.Velocity = Vector3.new(0, -200, 0)
-    downBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    downBV.Parent = root
-    task.wait(0.5)
-    downBV:Destroy()
-end
+    teleportAttempts = teleportAttempts + 1
+until (root.Position.Y < safeYLimit) or teleportAttempts > 20
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
