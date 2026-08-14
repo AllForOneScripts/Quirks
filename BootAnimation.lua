@@ -197,6 +197,7 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -379,19 +380,19 @@ local function SpawnAFODimension(centerCF)
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Inicia alta, Disminuirá)
+    -- LUZ 1: Ambiental Fucsia (Baño inicial)
     local southLightFuchsia = Instance.new("PointLight")
     southLightFuchsia.Name = "FuchsiaLight"
     southLightFuchsia.Color = AFO_FUCHSIA 
-    southLightFuchsia.Range = boxSize * 6 -- Inicia con rango alto
-    southLightFuchsia.Brightness = 3000 -- Inicia con brillo alto
+    southLightFuchsia.Range = boxSize * 3 
+    southLightFuchsia.Brightness = 30 -- Un brillo ambiental manejable
     southLightFuchsia.Shadows = true 
     southLightFuchsia.Parent = southPole
 
-    -- LUZ 2: Blanca Cegadora (Inicia en 0, Aumentará masivamente)
+    -- LUZ 2: Blanca / Energía de Contraluz
     local southLightWhite = Instance.new("PointLight")
-    southLightWhite.Name = "WhiteBlindLight"
-    southLightWhite.Color = Color3.new(1, 1, 1) -- Blanco puro
+    southLightWhite.Name = "WhiteEnergyLight"
+    southLightWhite.Color = Color3.new(1, 0.95, 0.95) -- Blanco con un micro toque cálido
     southLightWhite.Range = 0 
     southLightWhite.Brightness = 0 
     southLightWhite.Shadows = true 
@@ -437,20 +438,17 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja de forma inversamente proporcional.
+        -- DINÁMICA DE LUCES CINEMATOGRÁFICA
         
-        -- Blanca Cegadora: Empieza a subir después de 1 segundo y alcanza su clímax a los 5 segundos.
-        local whiteAlpha = math.clamp((elapsed - 1) / 4, 0, 1) 
-        local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
+        -- 1. La luz fucsia ambiental inicia bañando la zona y se atenúa (pero sin apagarse al 100%)
+        local ambientAlpha = 1 - (alpha * 0.8) -- Cae hasta quedarse al 20%
+        southLightFuchsia.Brightness = ambientAlpha * 35
         
-        southLightWhite.Brightness = easeOutWhite * 10000 -- Ceguera absoluta
-        southLightWhite.Range = easeOutWhite * (boxSize * 10) 
-
-        -- Fucsia Ambiental: Inicia al máximo (1) y baja a 0 mientras la luz blanca (whiteAlpha) sube a 1.
-        local fuchsiaAlpha = 1 - whiteAlpha
-        southLightFuchsia.Brightness = fuchsiaAlpha * 3000
-        -- El rango se mantiene razonablemente alto para no crear un corte abrupto de luz antes de apagarse.
-        southLightFuchsia.Range = (fuchsiaAlpha * (boxSize * 4)) + (boxSize * 2)
+        -- 2. La luz blanca simula la energía del personaje. Crece lentamente a lo largo de los 20s.
+        -- Usamos alpha^1.5 para que la curva empiece lenta y acelere hacia el final, dando sensación de carga.
+        local energyAlpha = alpha ^ 1.5 
+        southLightWhite.Brightness = energyAlpha * 100 -- Fuerte e imponente, pero no cega la cámara entera
+        southLightWhite.Range = energyAlpha * (boxSize * 4.5) 
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
