@@ -424,10 +424,25 @@ local function SpawnAFODimension(centerCF)
     southLight.Shadows = true 
     southLight.Parent = southPole
 
-    -- Partículas Envolventes Caóticas (CAPA MÁS SUPERIOR) - TEXTURA ACTUALIZADA
+    -- NUEVO: Partícula visual de textura para la Luz del Sur (para evitar el cuadrado brilloso)
+    local southLightVisual = Instance.new("ParticleEmitter")
+    southLightVisual.Name = "SouthLightVisual"
+    southLightVisual.Texture = "rbxassetid://6673021984"
+    southLightVisual.Color = ColorSequence.new(AFO_FUCHSIA)
+    southLightVisual.LightEmission = 1
+    southLightVisual.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 30), NumberSequenceKeypoint.new(1, 0)})
+    southLightVisual.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1)})
+    southLightVisual.Lifetime = NumberRange.new(1.5, 2.5)
+    southLightVisual.Rate = 0
+    southLightVisual.Speed = NumberRange.new(0)
+    southLightVisual.LockedToPart = true
+    southLightVisual.ZOffset = 50
+    southLightVisual.Parent = southPole
+
+    -- Partículas Envolventes Caóticas (CAPA MÁS SUPERIOR)
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
-    southParticles.Texture = "rbxassetid://6673021984" -- TEXTURA CORREGIDA AQUÍ
+    southParticles.Texture = SMOKE_TEXTURE_ID
     southParticles.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, AFO_BLACK),
         ColorSequenceKeypoint.new(0.5, AFO_FUCHSIA),
@@ -472,6 +487,9 @@ local function SpawnAFODimension(centerCF)
         local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
         southLight.Brightness = easeOutLight * 65 
         southLight.Range = math.clamp(easeOutLight * 60, 0, 60) 
+        
+        -- Progresión de la textura de la luz del sur
+        southLightVisual.Rate = easeOutLight * 15
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
