@@ -197,6 +197,7 @@ end
 ---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
 -----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 
 local function SpawnAFODimension(centerCF)
@@ -221,7 +222,7 @@ local function SpawnAFODimension(centerCF)
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
-    local CLIMAX_TIME = 8 -- Ajustado a menos de 8.5s para sincronizar las partículas con tu código de luz
+    local CLIMAX_TIME = 8 -- Ajustado a menos de 8.5s
 
     -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA (PAREDES INTERNAS) ---
     local facesData = {
@@ -370,16 +371,21 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. LUCES ENVOLVENTES DESDE EL SUR (BACK) ---
+    -- --- 4. ÁREA SUR (BACK) - AHORA COMO FONDO NEÓN OMINOSO ---
     local southPole = Instance.new("Part")
-    southPole.Size = Vector3.new(boxSize, boxSize, 2)
+    southPole.Name = "SouthOminousBackdrop"
+    -- Hacemos la pieza un poco más pequeña que la pared total para que parezca un aura centrada, 
+    -- o la mantenemos del tamaño de la pared.
+    southPole.Size = Vector3.new(boxSize * 0.7, boxSize * 0.7, 2) 
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
     southPole.Anchored = true
     southPole.CanCollide = false
-    southPole.Transparency = 1
+    southPole.Material = Enum.Material.Neon -- Brillará intensamente
+    southPole.Color = Color3.new(1, 1, 1) -- Color blanco puro
+    southPole.Transparency = 1 -- Inicia completamente invisible
     southPole.Parent = dimensionFolder
 
-    -- LUZ 1: Ambiental Fucsia (Disminuirá)
+    -- LUZ 1: Ambiental Fucsia (Se mantiene la curva senoidal)
     local southLightFuchsia = Instance.new("PointLight")
     southLightFuchsia.Name = "FuchsiaLight"
     southLightFuchsia.Color = AFO_FUCHSIA 
@@ -387,15 +393,6 @@ local function SpawnAFODimension(centerCF)
     southLightFuchsia.Brightness = 0 
     southLightFuchsia.Shadows = true 
     southLightFuchsia.Parent = southPole
-
-    -- LUZ 2: Blanca Cegadora (Aumentará masivamente)
-    local southLightWhite = Instance.new("PointLight")
-    southLightWhite.Name = "WhiteBlindLight"
-    southLightWhite.Color = Color3.new(1, 1, 1) -- Blanco puro
-    southLightWhite.Range = 0 
-    southLightWhite.Brightness = 0 
-    southLightWhite.Shadows = true 
-    southLightWhite.Parent = southPole
 
     -- Partículas Envolventes Caóticas 
     local southParticles = Instance.new("ParticleEmitter")
@@ -437,18 +434,20 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- DINÁMICA DE LUCES: Blanco sube, Fucsia baja.
+        -- DINÁMICA DE LUCES Y FONDO
+        
         -- Fucsia: Sube rápido en los primeros 2 segundos, luego cae lentamente a 0
         local fuchsiaCurve = math.clamp(math.sin((elapsed / 6) * math.pi), 0, 1)
-        if elapsed > 6 then fuchsiaCurve = 0 end -- Asegura que se apague después de 6s
+        if elapsed > 6 then fuchsiaCurve = 0 end 
         southLightFuchsia.Brightness = fuchsiaCurve * 1500
         southLightFuchsia.Range = fuchsiaCurve * (boxSize * 4)
 
-        -- Blanca Cegadora: Empieza a subir después de 2 segundos y explota.
-        local whiteAlpha = math.clamp((elapsed - 2) / 4, 0, 1) 
+        -- Pintado de Blanco Ominoso: Empieza a aparecer después de 2 segundos 
+        -- y se revela rápidamente (en 1.5 segundos).
+        local whiteAlpha = math.clamp((elapsed - 2) / 1.5, 0, 1) 
         local easeOutWhite = 1 - (1 - whiteAlpha) * (1 - whiteAlpha)
-        southLightWhite.Brightness = easeOutWhite * 10000 -- Ceguera absoluta
-        southLightWhite.Range = easeOutWhite * (boxSize * 10) 
+        -- Reducimos la transparencia de 1 a 0 (o 0.1 para que no sea excesivo)
+        southPole.Transparency = 1 - (easeOutWhite * 0.9)
         
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
@@ -484,13 +483,11 @@ local function SpawnAFODimension(centerCF)
             -- Animación del Glitch (Ruido)
             if tex.Name == "GlitchNoise" then
                 if isGlitchActive then
-                    -- Aparece aleatoriamente creando "cortes" o distorsión
                     tex.Transparency = math.random(10, 60) / 100 
-                    -- Salta a una posición aleatoria para verse muy errático
                     tex.OffsetStudsU = math.random(-100, 100)
                     tex.OffsetStudsV = math.random(-100, 100)
                 else
-                    tex.Transparency = 1 -- Desaparece al instante
+                    tex.Transparency = 1 
                 end
             end
         end
