@@ -215,7 +215,7 @@ local function SpawnAFODimension(centerCF)
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
     
-    -- ID DE LAS PARTÍCULAS SUR AJUSTADAS PARA VISIBILIDAD
+    -- IMÁGENES LUZ SUR (ESTÁTICAS)
     local MAIN_LIGHT_TEX = "rbxassetid://14684195806"
     local BG_LIGHT_TEX = "rbxassetid://6673021984"
 
@@ -223,7 +223,6 @@ local function SpawnAFODimension(centerCF)
     local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
     local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)          
-    local AFO_RUIDO = Color3.fromRGB(180, 50, 120)     
 
     local NEON_SPEED = 180 
     local BG_SPEED = 12    
@@ -299,16 +298,16 @@ local function SpawnAFODimension(centerCF)
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
 
-        -- NUEVO: Máscara de Glitch / Distorsión
+        -- Máscara de Glitch / Distorsión
         local texGlitch = Instance.new("Texture")
         texGlitch.Name = "GlitchMask"
         texGlitch.Texture = NOISE_TEXTURE_ID
-        texGlitch.Transparency = 1 -- Oculta por defecto
-        texGlitch.Color3 = AFO_BLACK -- Color negro para crear ese efecto de máscara/distorsión que corta la luz
+        texGlitch.Transparency = 1 
+        texGlitch.Color3 = AFO_BLACK 
         texGlitch.Face = data.innerFace
         texGlitch.StudsPerTileU = boxSize * 2 
         texGlitch.StudsPerTileV = boxSize * 2 
-        texGlitch.ZIndex = 4 -- Sobre todo lo demás
+        texGlitch.ZIndex = 4 
         texGlitch.Parent = wall
         table.insert(allTextures, texGlitch)
     end
@@ -348,8 +347,6 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-10, 10)
         smokeEmitter.Parent = polePart
-        
-        -- ¡Emisor de ruido eliminado por completo de aquí!
     end
 
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
@@ -378,7 +375,7 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. NUEVO SISTEMA DE PARTÍCULAS SUR (EN LUGAR DE LA LUZ) ---
+    -- --- 4. NUEVO SISTEMA LUZ SUR ESTÁTICA (100% VFX) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -386,42 +383,50 @@ local function SpawnAFODimension(centerCF)
     southPole.CanCollide = false
     southPole.Transparency = 1
     southPole.Parent = dimensionFolder
+    
+    local southAttachment = Instance.new("Attachment")
+    southAttachment.Parent = southPole
 
-    -- Partícula Principal (ID 14684195806) AJUSTADA PARA VISIBILIDAD INICIAL
+    -- Cálculo nativo de crecimiento para que ocurra a los 5 segundos.
+    -- (5 segundos entre CLIMAX_TIME 20s es el 25% de la vida de la partícula = 0.25)
+    local growthKeypoint = 5 / CLIMAX_TIME
+    local finalSize = boxSize * 3 
+
+    -- Partícula Principal Estática
     local mainLightParticle = Instance.new("ParticleEmitter")
     mainLightParticle.Name = "MainIllumination"
     mainLightParticle.Texture = MAIN_LIGHT_TEX
-    mainLightParticle.Color = ColorSequence.new(Color3.new(1, 1, 1)) -- Luz blanca
-    mainLightParticle.LightEmission = 1 -- Brillo máximo
-    mainLightParticle.ZOffset = 2 -- Sobre la partícula de fondo
-    mainLightParticle.Speed = NumberRange.new(0) -- Sin velocidad inicial
-    mainLightParticle.Rate = 15 -- Emite constantemente para simular una luz sólida
-    mainLightParticle.Lifetime = NumberRange.new(1.5, 2)
-    mainLightParticle.Rotation = NumberRange.new(0, 360)
-    mainLightParticle.RotSpeed = NumberRange.new(-5, 5)
-    mainLightParticle.Size = NumberSequence.new(0.1) -- Inicia pequeña (pero visible)
-    mainLightParticle.Transparency = NumberSequence.new({ -- Ajuste de transparencia para visibilidad
-        NumberSequenceKeypoint.new(0, 0.5), -- No totalmente invisible al principio
-        NumberSequenceKeypoint.new(0.2, 0), -- Visible
-        NumberSequenceKeypoint.new(0.8, 0), -- Visible
-        NumberSequenceKeypoint.new(1, 1)    -- Desvanecimiento
+    mainLightParticle.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    mainLightParticle.LightEmission = 1
+    mainLightParticle.ZOffset = 0.1 -- Bajo para no tapar los neones y la pared
+    mainLightParticle.Rate = 0      -- NO emite por sí sola, lo disparamos una sola vez
+    mainLightParticle.Speed = NumberRange.new(0)
+    mainLightParticle.Rotation = NumberRange.new(0) -- No rota
+    mainLightParticle.LockedToPart = true -- 100% anclada y estática
+    mainLightParticle.Lifetime = NumberRange.new(CLIMAX_TIME)
+    
+    -- Crecimiento gestionado por el motor gráfico (nada de bucles Lua)
+    mainLightParticle.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(growthKeypoint, finalSize), 
+        NumberSequenceKeypoint.new(1, finalSize)
     })
-    mainLightParticle.Parent = southPole
+    mainLightParticle.Parent = southAttachment
 
-    -- Partícula de Fondo (ID 6673021984) AJUSTADA PARA VISIBILIDAD INICIAL
+    -- Partícula de Fondo Estática
     local bgLightParticle = mainLightParticle:Clone()
     bgLightParticle.Name = "BackgroundIllumination"
     bgLightParticle.Texture = BG_LIGHT_TEX
-    bgLightParticle.ZOffset = 1 -- Detrás de la principal
-    bgLightParticle.Transparency = NumberSequence.new({ -- Ajuste de transparencia para visibilidad
-        NumberSequenceKeypoint.new(0, 0.6), -- Un poco más transparente al principio
-        NumberSequenceKeypoint.new(0.2, 0.1), -- Visible
-        NumberSequenceKeypoint.new(0.8, 0.1), -- Visible
-        NumberSequenceKeypoint.new(1, 1)    -- Desvanecimiento
+    bgLightParticle.ZOffset = 0.05 -- Justo detrás de la principal
+    -- Crece el 15% extra más rápido
+    bgLightParticle.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(growthKeypoint, finalSize * 1.15),
+        NumberSequenceKeypoint.new(1, finalSize * 1.15)
     })
-    bgLightParticle.Parent = southPole
+    bgLightParticle.Parent = southAttachment
 
-    -- Partículas Envolventes (MANTENIDAS INTACTAS)
+    -- Partículas Envolventes
     local southParticles = Instance.new("ParticleEmitter")
     southParticles.Name = "SouthEnvelopingVoid"
     southParticles.Texture = SMOKE_TEXTURE_ID
@@ -448,7 +453,12 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 5. BUCLE DE ANIMACIÓN Y CRECIMIENTO PROGRESIVO ---
+    -- DISPARO ÚNICO de las imágenes estáticas (hace que empiece la animación nativa de su Size)
+    mainLightParticle:Emit(1)
+    bgLightParticle:Emit(1)
+
+
+    -- --- 5. BUCLE DE ANIMACIÓN (COMPLETAMENTE LIMPIO) ---
     local startTime = os.clock()
     local conn
     
@@ -461,21 +471,7 @@ local function SpawnAFODimension(centerCF)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / CLIMAX_TIME, 0, 1)
         
-        -- Expansión de las partículas de iluminación sur
-        -- Usamos la misma lógica de "lightAlpha" para la expansión rápida (5s)
-        local lightAlpha = math.clamp(elapsed / 5, 0, 1) 
-        local easeOutLight = 1 - (1 - lightAlpha) * (1 - lightAlpha) 
-        
-        -- Calculamos el tamaño máximo para que sea "muy grande" (ej: boxSize * 4 = 240)
-        -- Y que salga de la caja (60 * 1.6 = 96 ya salía, pero 240 es mucho más grande)
-        local maxMainSize = boxSize * 4
-        local currentMainSize = easeOutLight * maxMainSize
-        
-        -- Forzamos a que el tamaño nunca sea 0 absoluto para evitar errores de Engine
-        mainLightParticle.Size = NumberSequence.new(math.max(0.1, currentMainSize))
-        -- La de fondo es un 15% más grande
-        bgLightParticle.Size = NumberSequence.new(math.max(0.1, currentMainSize * 1.15))
-        
+        -- Crecimiento progresivo de la niebla y partículas envolventes
         southParticles.Rate = alpha * 400
         hazeEmitter.Rate = alpha * 10 
         
@@ -490,12 +486,9 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
         
-        -- Lógica de Glitch Aleatorio Espontáneo
-        -- Un 15% de probabilidad en cada frame de que la textura haga un destello
+        -- Lógica de Glitch
         local isGlitching = math.random() > 0.85
-        -- Cuando no hay glitch, transparencia = 1 (invisible). Si hay, un valor aleatorio para hacerlo irregular.
         local glitchTrans = isGlitching and (math.random(20, 70) / 100) or 1
-        -- Posición aleatoria caótica
         local glitchOffset = math.random(-100, 100) / 5
 
         for _, tex in ipairs(allTextures) do
@@ -510,7 +503,6 @@ local function SpawnAFODimension(centerCF)
             elseif tex.Name == "BgDown" then
                 tex.OffsetStudsV = offsetBg
             elseif tex.Name == "GlitchMask" then
-                -- Aplicar los valores de distorsión
                 tex.Transparency = glitchTrans
                 if tex.Parent.Name == "Top" or tex.Parent.Name == "Bottom" then
                     tex.OffsetStudsV = glitchOffset
