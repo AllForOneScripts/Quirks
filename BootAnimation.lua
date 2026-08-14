@@ -7,6 +7,7 @@ local function FreeCinematic()
     getgenv()._BootAnimRunning = false
 end
 
+-- --- SERVICIOS PRINCIPALES ---
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -17,6 +18,7 @@ local player = Players.LocalPlayer
 local cam = workspace.CurrentCamera
 local pGui = player:WaitForChild("PlayerGui")
 
+-- --- PANTALLA DE CARGA / FLASH INICIAL ---
 local flashGui = Instance.new("ScreenGui")
 flashGui.IgnoreGuiInset = true
 flashGui.ResetOnSpawn = false
@@ -93,7 +95,7 @@ end
 _G.cloneRoot = cloneRoot
 _G.cloneChar = cloneChar
 
--- SISTEMA ORIGINAL DE TRANSPARENCIA DEL CUERPO (RESTAURADO)
+-- --- MANEJO DE TRANSPARENCIA DEL CUERPO ---
 local originalParts = {}
 for _, part in ipairs(char:GetDescendants()) do
     if part:IsA("BasePart") then
@@ -194,12 +196,7 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
----------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
------------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
----------------------------------------------------------------------------------------------------------------------------------------------------------------
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
-
+-- --- SISTEMA AFO DIMENSIÓN ---
 local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
@@ -209,13 +206,11 @@ local function SpawnAFODimension(centerCF)
     local half = boxSize / 2
     local wallThickness = 2
 
-    -- --- ASSETS Y CONFIGURACIÓN ---
     local NEON_TEXTURE_ID = "rbxassetid://17146735339"
     local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
     local NOISE_TEXTURE_ID = "rbxassetid://71963165748803" 
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- --- PALETA: FUCSIA ---
     local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
     local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)
@@ -225,7 +220,6 @@ local function SpawnAFODimension(centerCF)
     local BG_SPEED = 12    
     local CLIMAX_TIME = 20 
 
-    -- --- 1. CONSTRUCCIÓN DE LA ESTRUCTURA ---
     local facesData = {
         {name = "Top",    offset = CFrame.new(0, half, 0),  size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Bottom},
         {name = "Bottom", offset = CFrame.new(0, -half, 0), size = Vector3.new(boxSize, wallThickness, boxSize), innerFace = Enum.NormalId.Top},
@@ -291,8 +285,7 @@ local function SpawnAFODimension(centerCF)
         texNeon.ZIndex = 3 
         texNeon.Parent = wall
         table.insert(allTextures, texNeon)
-        
-        -- Máscara de Glitch Oscura
+
         local texNoise = Instance.new("Texture")
         texNoise.Name = "NoiseGlitch"
         texNoise.Texture = NOISE_TEXTURE_ID
@@ -306,7 +299,6 @@ local function SpawnAFODimension(centerCF)
         table.insert(allTextures, texNoise)
     end
 
-    -- --- 2. HUMO CENTRAL Y RUIDO ---
     local topPole = Instance.new("Part")
     topPole.Size = Vector3.new(boxSize, 1, boxSize)
     topPole.CFrame = centerCF * CFrame.new(0, half, 0)
@@ -361,7 +353,6 @@ local function SpawnAFODimension(centerCF)
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
-    -- --- 3. EFECTO "SOFT" PROGRESIVO ---
     local softVolume = Instance.new("Part")
     softVolume.Size = Vector3.new(boxSize, boxSize, boxSize)
     softVolume.CFrame = centerCF
@@ -384,7 +375,6 @@ local function SpawnAFODimension(centerCF)
     hazeEmitter.Shape = Enum.ParticleEmitterShape.Box
     hazeEmitter.Parent = softVolume
 
-    -- --- 4. VIENTO CAÓTICO ---
     local windVolume = softVolume:Clone()
     windVolume.Name = "WindVolume"
     windVolume.Parent = dimensionFolder
@@ -407,7 +397,6 @@ local function SpawnAFODimension(centerCF)
     chaoticWind.Shape = Enum.ParticleEmitterShape.Box 
     chaoticWind.Parent = windVolume
 
-    -- --- 5. PARTÍCULAS ENVOLVENTES (SIN LUZ AMBIENTAL) ---
     local southPole = Instance.new("Part")
     southPole.Size = Vector3.new(boxSize, boxSize, 2)
     southPole.CFrame = centerCF * CFrame.new(0, 0, half - 1)
@@ -442,7 +431,6 @@ local function SpawnAFODimension(centerCF)
     southParticles.Shape = Enum.ParticleEmitterShape.Box
     southParticles.Parent = southPole
 
-    -- --- 6. BUCLE DE ANIMACIÓN ---
     local startTime = os.clock()
     local conn
     
@@ -470,7 +458,6 @@ local function SpawnAFODimension(centerCF)
         local offsetNeon = elapsed * NEON_SPEED
         local offsetBg = elapsed * BG_SPEED
         
-        -- Lógica de Glitch (Ruido Rápido y Errático)
         local isGlitching = math.random() > 0.88 
         local targetNoiseTrans = isGlitching and (math.random(10, 50) / 100) or 1
         local randomGlitchOffsetX = isGlitching and math.random(-100, 100) or 0
@@ -495,10 +482,8 @@ local function SpawnAFODimension(centerCF)
         end
     end)
 end
----------------------------------------------------------------------------------------------------------------------------------------------------------------
------------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
------------------------------------------------------------------------------FIN-------------------------------------------------------------------------------
 
+-- --- DESCARGA Y CONFIGURACIÓN DE ASSETS ---
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
 
@@ -784,6 +769,7 @@ local function PlayKeyframeSequence(Model, KFS, Speed)
     }
 end
 
+-- --- EJECUCIÓN DEL SCRIPT Y CARGA DE ASSETS ---
 local s, Asset = pcall(function() return game:GetObjects(GetCustomResource("CosmicG.rbxmx", AnimAssetURL))[1] end)
 if not s or not Asset then
     flashGui:Destroy()
@@ -809,6 +795,7 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
+-- SEGUNDO FLASH NEGRO (A LOS 8.5s CON 3s DE DURACIÓN)
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
@@ -822,7 +809,6 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    -- Cambio: 3 Segundos de retardo (1 segundo extra de oscuridad añadido)
     task.delay(3, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
