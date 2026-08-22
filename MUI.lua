@@ -23,6 +23,11 @@ M.Config = {
             Delay = 5,
             Duration = 5,
             ExtendUntilSourceDies = true,
+            -- "Impulse" keeps the real body in the protected sky state and
+            -- creates a local, script-readable exclusion zone at the source.
+            -- Set Style = "Dodge" to use the movable clone presentation.
+            Style = "Impulse",
+            DisplayName = "Bakugo's Nuker",
         },
     },
 
@@ -47,7 +52,9 @@ M.Config = {
 
     ActivationSoundId = "140694363106746",
     DeactivationSoundId = "130457690489621",
-    SoundVolume = 1.35,
+    SoundVolume = 4,
+    PingInstantThreshold = 0.18,
+    Locale = "en",
 
     Aura = {
         Enabled = true,
@@ -65,6 +72,13 @@ M.Config = {
     ThreatLineOuterThickness = 18,
     ThreatLineInnerThickness = 8,
     ThreatFarLightRange = 72,
+    ImpulseRadius = 38,
+    ImpulseWallHeight = 64,
+    ImpulseWallThickness = 2,
+    ImpulseEmergencyDistance = 12,
+    FallSafetyY = -250,
+    FallSafetyScanRadius = 360,
+    FallSafetyPlatformLifetime = 7,
     ForceDismissKey = Enum.KeyCode.X,
 }
 
@@ -78,6 +92,7 @@ local MUIPendingDodge = nil
 local MUIActiveUntil = 0
 local MUIActiveDuration = 0
 local MUIActiveDodgeName = nil
+local MUIActiveStyle = nil
 local MUIActiveSource = nil
 local MUIExtendUntilSourceDies = false
 local MUISourceDied = false
@@ -120,11 +135,21 @@ local MUICloneTracks = {}
 local MUIHud = nil
 local MUIHudCards = nil
 local MUIHudLines = nil
+local MUIRealBodyLine = nil
 local MUILastHudUpdate = 0
 local MUILastAuraUpdate = 0
 local MUISkySafetyStartedAt = 0
 local MUIHudDismissButton = nil
 local MUIForceDismissAll
+local MUIImpulseFolder = nil
+local MUIImpulseZone = nil
+local MUIFallPlatform = nil
+local MUIFallPlatformLastTouched = 0
+
+local MUIStrings = {
+    en = { threat = "⚠ THREAT DETECTED", impulse = "IMPULSE DEFENSE", dodge = "DODGE DEFENSE" },
+    es = { threat = "⚠ AMENAZA DETECTADA", impulse = "DEFENSA IMPULSE", dodge = "DEFENSA DODGE" },
+}
 
 local function MUIDisconnect(MUIConnection)
     if MUIConnection then
@@ -152,6 +177,26 @@ end
 local function MUIGetHumanoid(MUICharacter)
     return MUICharacter
         and MUICharacter:FindFirstChildOfClass("Humanoid")
+end
+
+local function MUIGetText(MUIKey)
+    local MUILocale = MUIStrings[M.Config.Locale] or MUIStrings.en
+    return MUILocale[MUIKey] or MUIStrings.en[MUIKey] or MUIKey
+end
+
+local function MUIGetDodgeDisplayName(MUIDodge)
+    return (MUIDodge and (MUIDodge.DisplayName or MUIDodge.Name)) or "Unknown"
+end
+
+-- Stats is not available in every Roblox client, so an unavailable reading is
+-- deliberately treated as low ping rather than forcing a defensive state.
+local function MUIGetPingSeconds()
+    local MUIOk, MUIPing = pcall(function()
+        local MUIItem = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]
+        return MUIItem and MUIItem:GetValue()
+    end)
+    local MUIValue = MUIOk and tonumber(MUIPing)
+    return MUIValue and math.max(0, MUIValue / 1000) or 0
 end
 
 local function MUIRegisterActiveSource(MUIPlayer, MUIDodge)
@@ -246,6 +291,8 @@ local function MUIRebuildDodgeIndex()
             and MUIDuration > 0 then
             MUIDodgeByAnimationId[MUIId] = {
                 Name = MUIName,
+                DisplayName = MUIDodge.DisplayName or MUIName,
+                Style = MUIDodge.Style == "Impulse" and "Impulse" or "Dodge",
                 Delay = MUIDelay,
                 Duration = MUIDuration,
                 ExtendUntilSourceDies = MUIDodge.ExtendUntilSourceDies == true,
@@ -654,6 +701,93 @@ local function MUIUpdateAura(MUINow)
     end
 end
 
+-- Full MUI visual signature for the clone.  All instances are parented under
+-- the clone, so MUIDestroyClone performs one complete, reliable cleanup.
+local function MUICreateDivineCloneVFX()
+    if not MUICloneModel then return end
+    local MUIHighlight = Instance.new("Highlight")
+    MUIHighlight.Name = "MUI_DivineGlow"
+    MUIHighlight.FillTransparency = 0.99
+    MUIHighlight.FillColor = Color3.fromRGB(240, 250, 255)
+    MUIHighlight.OutlineTransparency = 0
+    MUIHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    MUIHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    MUIHighlight.Parent = MUICloneModel
+
+    for _, MUIPart in ipairs(MUICloneModel:GetDescendants()) do
+        if MUIPart:IsA("BasePart")
+            and not MUIPart:FindFirstAncestorOfClass("Accessory")
+            and MUIPart.Name ~= "HumanoidRootPart"
+            and MUIPart.Transparency < 1 then
+            local MUIName = MUIPart.Name:lower()
+            local MUIScale = math.clamp(
+                (MUIPart.Size.X + MUIPart.Size.Y + MUIPart.Size.Z) / 3,
+                0.6, 1.5
+            ) * 0.64
+            local MUIArm = MUIName:find("arm") or MUIName:find("hand")
+            local MUILeg = MUIName:find("leg") or MUIName:find("foot")
+            if MUIName:find("torso") then MUIScale *= 1.6 end
+            if MUIArm then MUIScale *= 1.45 end
+            if MUILeg then MUIScale *= 1.55 end
+
+            local MUIAttachment = Instance.new("Attachment")
+            MUIAttachment.Name = "MUI_DivineNode"
+            if MUIName:find("head") then
+                MUIAttachment.Position = Vector3.new(0, -MUIPart.Size.Y * 0.35, 0)
+            elseif MUIName:find("foot") then
+                MUIAttachment.Position = Vector3.new(0, MUIPart.Size.Y * 0.25, 0)
+            end
+            MUIAttachment.Parent = MUIPart
+
+            local function MUIEmitter(MUIEmitterName, MUIColor, MUIRate, MUILifetime, MUISpeed, MUIAcceleration, MUISize)
+                local MUIEmitterObject = Instance.new("ParticleEmitter")
+                MUIEmitterObject.Name = MUIEmitterName
+                MUIEmitterObject.Texture = "rbxassetid://74305120244941"
+                MUIEmitterObject.LockedToPart = true
+                MUIEmitterObject.Color = MUIColor
+                MUIEmitterObject.Rate = MUIRate
+                MUIEmitterObject.Lifetime = MUILifetime
+                MUIEmitterObject.Speed = MUISpeed
+                MUIEmitterObject.Acceleration = MUIAcceleration
+                MUIEmitterObject.Rotation = NumberRange.new(-180, 180)
+                MUIEmitterObject.RotSpeed = NumberRange.new(-30, 30)
+                MUIEmitterObject.Size = MUISize
+                MUIEmitterObject.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 1),
+                    NumberSequenceKeypoint.new(0.22, 0.55),
+                    NumberSequenceKeypoint.new(1, 1),
+                })
+                MUIEmitterObject.LightEmission = 0.9
+                MUIEmitterObject.LightInfluence = 0
+                MUIEmitterObject.Parent = MUIAttachment
+                return MUIEmitterObject
+            end
+            local MUIAcceleration = MUIArm and Vector3.new(0, -12, 0)
+                or (MUILeg and Vector3.new(0, 5, 0) or Vector3.new(0, 3, 0))
+            MUIEmitter("C1_LiquidEdge", ColorSequence.new(Color3.fromRGB(220, 245, 255)), 20,
+                NumberRange.new(0.4, 0.6), NumberRange.new(0.5, 1.2), MUIAcceleration,
+                NumberSequence.new(0.9 * MUIScale, 1.2 * MUIScale, 0.5 * MUIScale))
+            MUIEmitter("C1_Sub_SlidingFires", ColorSequence.new(Color3.fromRGB(210, 245, 255)), 40,
+                NumberRange.new(0.2, 0.4), NumberRange.new(0.1, 0.5), MUIAcceleration * 2,
+                NumberSequence.new(0.1 * MUIScale, 0.3 * MUIScale, 0.05 * MUIScale)).RotSpeed = NumberRange.new(200, 400)
+            MUIEmitter("C2_EnergyFlow", ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 80, 255)),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(60, 100, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 20, 150)),
+            }), 15, NumberRange.new(0.5, 0.8), NumberRange.new(1, 2.5),
+                MUIArm and Vector3.new(0, -20, 0) or Vector3.new(0, 8, 0),
+                NumberSequence.new(1.2 * MUIScale, 1.6 * MUIScale, 0.8 * MUIScale))
+            MUIEmitter("C4_CrystalAflame", ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 255, 255)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+            }), 15, NumberRange.new(0.3, 0.5), NumberRange.new(1.5, 3),
+                MUIArm and Vector3.new(0, -18, 0) or Vector3.new(0, 8, 0),
+                NumberSequence.new(0.4 * MUIScale, 0.7 * MUIScale, 0.3 * MUIScale))
+        end
+    end
+end
+
 local function MUIGroundPosition(MUIPosition, MUICharacter)
     local MUIRayParams = RaycastParams.new()
     MUIRayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -711,6 +845,17 @@ local function MUIBuildHud()
     MUIHudLines.Size = UDim2.fromScale(1, 1)
     MUIHudLines.Parent = MUIHud
 
+    MUIRealBodyLine = Instance.new("Frame")
+    MUIRealBodyLine.Name = "MUICloneToRealBodyLine"
+    MUIRealBodyLine.AnchorPoint = Vector2.new(0, 0.5)
+    MUIRealBodyLine.BackgroundColor3 = Color3.fromRGB(70, 185, 255)
+    MUIRealBodyLine.BackgroundTransparency = 0.42
+    MUIRealBodyLine.BorderSizePixel = 0
+    MUIRealBodyLine.Size = UDim2.fromOffset(0, 3)
+    MUIRealBodyLine.Visible = false
+    MUIRealBodyLine.ZIndex = 1
+    MUIRealBodyLine.Parent = MUIHudLines
+
     MUIHudDismissButton = Instance.new("TextButton")
     MUIHudDismissButton.Name = "MUIForceDismiss"
     MUIHudDismissButton.AnchorPoint = Vector2.new(1, 0)
@@ -753,19 +898,19 @@ local function MUICreateThreatCard(MUIThreat)
     MUIScale.Parent = MUIGroup
 
     local MUIPanel = Instance.new("Frame")
-    MUIPanel.BackgroundColor3 = Color3.fromRGB(8, 8, 10)
-    MUIPanel.BackgroundTransparency = 0.08
+    MUIPanel.BackgroundColor3 = Color3.fromRGB(8, 5, 16)
+    MUIPanel.BackgroundTransparency = 0.04
     MUIPanel.BorderSizePixel = 0
     MUIPanel.Size = UDim2.fromScale(1, 1)
     MUIPanel.Parent = MUIGroup
     Instance.new("UICorner", MUIPanel).CornerRadius = UDim.new(0, 7)
     local MUIStroke = Instance.new("UIStroke")
-    MUIStroke.Color = Color3.fromRGB(255, 209, 35)
+    MUIStroke.Color = Color3.fromRGB(155, 75, 255)
     MUIStroke.Thickness = 2
     MUIStroke.Parent = MUIPanel
 
     local MUIDangerStrip = Instance.new("Frame")
-    MUIDangerStrip.BackgroundColor3 = Color3.fromRGB(255, 209, 35)
+    MUIDangerStrip.BackgroundColor3 = Color3.fromRGB(155, 75, 255)
     MUIDangerStrip.BorderSizePixel = 0
     MUIDangerStrip.Size = UDim2.new(0, 5, 1, -14)
     MUIDangerStrip.Position = UDim2.fromOffset(8, 7)
@@ -787,15 +932,15 @@ local function MUICreateThreatCard(MUIThreat)
         return MUILabel
     end
 
-    MUICardLabel("ThreatLabel", 8, Enum.Font.GothamBold, 13, Color3.fromRGB(255, 221, 65)).Text = "THREAT DETECTED"
+    MUICardLabel("ThreatLabel", 8, Enum.Font.GothamBold, 13, Color3.fromRGB(220, 190, 255)).Text = MUIGetText("threat")
     local MUIName = MUICardLabel("NameLabel", 29, Enum.Font.GothamBold, 13, Color3.fromRGB(245, 245, 245))
     local MUIDistance = MUICardLabel("DistanceLabel", 50, Enum.Font.Gotham, 11, Color3.fromRGB(220, 220, 220))
     local MUIHealth = MUICardLabel("HealthLabel", 67, Enum.Font.Gotham, 11, Color3.fromRGB(220, 220, 220))
-    local MUIAbility = MUICardLabel("AbilityLabel", 84, Enum.Font.GothamBold, 10, Color3.fromRGB(255, 209, 35))
+    local MUIAbility = MUICardLabel("AbilityLabel", 84, Enum.Font.GothamBold, 10, Color3.fromRGB(200, 145, 255))
     MUIAbility.Size = UDim2.new(1, -35, 0, 17)
 
     local MUIImageHolder = Instance.new("Frame")
-    MUIImageHolder.BackgroundColor3 = Color3.fromRGB(255, 209, 35)
+    MUIImageHolder.BackgroundColor3 = Color3.fromRGB(155, 75, 255)
     MUIImageHolder.BorderSizePixel = 0
     MUIImageHolder.Position = UDim2.new(1, -57, 0, 26)
     MUIImageHolder.Size = UDim2.fromOffset(44, 44)
@@ -876,6 +1021,21 @@ local function MUICreateLine(MUIThreat)
     MUIInner.Size = UDim2.new(1, 0, 0, M.Config.ThreatLineInnerThickness)
     MUIInner.ZIndex = 3
     MUIInner.Parent = MUIOuter
+    local MUIWarningGradient = Instance.new("UIGradient")
+    MUIWarningGradient.Name = "MUIWarningTexture"
+    MUIWarningGradient.Rotation = 0
+    MUIWarningGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(18, 18, 18)),
+        ColorSequenceKeypoint.new(0.24, Color3.fromRGB(18, 18, 18)),
+        ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 210, 25)),
+        ColorSequenceKeypoint.new(0.49, Color3.fromRGB(255, 210, 25)),
+        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(18, 18, 18)),
+        ColorSequenceKeypoint.new(0.74, Color3.fromRGB(18, 18, 18)),
+        ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 210, 25)),
+        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 210, 25)),
+    })
+    MUIWarningGradient.Parent = MUIInner
+    MUIThreat.WarningGradient = MUIWarningGradient
     MUIThreat.Line = MUIOuter
 end
 
@@ -885,16 +1045,6 @@ local function MUICreateFarLight(MUIThreat)
     if not MUIRoot then
         return
     end
-    local MUIHighlight = Instance.new("Highlight")
-    MUIHighlight.Name = "MUIThreatFarLight"
-    MUIHighlight.FillColor = Color3.fromRGB(255, 202, 0)
-    MUIHighlight.OutlineColor = Color3.fromRGB(255, 240, 120)
-    MUIHighlight.FillTransparency = 0.55
-    MUIHighlight.OutlineTransparency = 0
-    MUIHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    MUIHighlight.Adornee = MUICharacter
-    MUIHighlight.Parent = MUICharacter
-
     local MUIBillboard = Instance.new("BillboardGui")
     MUIBillboard.Name = "MUIThreatBeacon"
     MUIBillboard.Adornee = MUIRoot
@@ -923,7 +1073,6 @@ local function MUICreateFarLight(MUIThreat)
     MUIPointLight.Shadows = false
     MUIPointLight.Parent = MUIRoot
 
-    MUIThreat.Highlight = MUIHighlight
     MUIThreat.Beacon = MUIBillboard
     MUIThreat.BeaconScale = MUIBeaconScale
     MUIThreat.FarLight = MUIPointLight
@@ -933,9 +1082,6 @@ local function MUIDestroyThreatVisuals(MUIThreat)
     if MUIThreat.Line then
         MUIThreat.Line:Destroy()
     end
-    if MUIThreat.Highlight then
-        MUIThreat.Highlight:Destroy()
-    end
     if MUIThreat.Beacon then
         MUIThreat.Beacon:Destroy()
     end
@@ -943,7 +1089,6 @@ local function MUIDestroyThreatVisuals(MUIThreat)
         MUIThreat.FarLight:Destroy()
     end
     MUIThreat.Line = nil
-    MUIThreat.Highlight = nil
     MUIThreat.Beacon = nil
     MUIThreat.FarLight = nil
 end
@@ -985,6 +1130,8 @@ local function MUIMarkThreat(MUIPlayer, MUIDodge)
     local MUIThreat = MUIThreats[MUIPlayer]
     if MUIThreat then
         MUIThreat.DodgeName = MUIDodge.Name
+        MUIThreat.DodgeDisplayName = MUIGetDodgeDisplayName(MUIDodge)
+        MUIThreat.Style = MUIDodge.Style
         MUIThreat.ExpiresAt = MUINow + M.Config.ThreatAlertLifetime
         MUIThreat.Removing = false
         return
@@ -993,6 +1140,8 @@ local function MUIMarkThreat(MUIPlayer, MUIDodge)
     MUIThreat = {
         Player = MUIPlayer,
         DodgeName = MUIDodge.Name,
+        DodgeDisplayName = MUIGetDodgeDisplayName(MUIDodge),
+        Style = MUIDodge.Style,
         MarkedAt = MUINow,
         ExpiresAt = MUINow + M.Config.ThreatAlertLifetime,
     }
@@ -1058,14 +1207,11 @@ local function MUIUpdateThreatHud(MUINow)
                 MUIThreat.CardLabels.Health,
                 string.format("HP  %.0f / %.0f", math.max(0, MUIHumanoid.Health), MUIHumanoid.MaxHealth)
             )
-            MUISetText(MUIThreat.CardLabels.Ability, MUIThreat.DodgeName)
+            MUISetText(MUIThreat.CardLabels.Ability, MUIThreat.DodgeDisplayName)
         end
 
         if MUIThreat.BeaconScale then
             MUIThreat.BeaconScale.Scale = 0.92 + math.abs(math.sin(MUINow * 7)) * 0.18
-        end
-        if MUIThreat.Highlight then
-            MUIThreat.Highlight.FillTransparency = 0.44 + math.abs(math.sin(MUINow * 6)) * 0.22
         end
     end
 end
@@ -1083,6 +1229,23 @@ local function MUIRenderThreatLines()
     end
     local MUIOriginScreen, MUIOriginVisible =
         MUICamera:WorldToViewportPoint(MUIOriginPosition)
+
+    local MUIRealRoot = MUIGetRoot(MUILocalPlayer and MUILocalPlayer.Character)
+    local MUIRealScreen, MUIRealVisible
+    if MUIRealRoot then
+        MUIRealScreen, MUIRealVisible = MUICamera:WorldToViewportPoint(MUIRealRoot.Position)
+    end
+    if MUIRealBodyLine then
+        if MUIDefenseActive and MUICloneRoot and MUIOriginVisible and MUIRealVisible then
+            local MUIRealDelta = Vector2.new(MUIRealScreen.X - MUIOriginScreen.X, MUIRealScreen.Y - MUIOriginScreen.Y)
+            MUIRealBodyLine.Visible = MUIRealDelta.Magnitude >= 2
+            MUIRealBodyLine.Position = UDim2.fromOffset(MUIOriginScreen.X, MUIOriginScreen.Y)
+            MUIRealBodyLine.Size = UDim2.fromOffset(MUIRealDelta.Magnitude, 3)
+            MUIRealBodyLine.Rotation = math.deg(math.atan2(MUIRealDelta.Y, MUIRealDelta.X))
+        else
+            MUIRealBodyLine.Visible = false
+        end
+    end
 
     for _, MUIThreat in pairs(MUIThreats) do
         local MUILine = MUIThreat.Line
@@ -1112,6 +1275,9 @@ local function MUIRenderThreatLines()
         MUILine.Position = UDim2.fromOffset(MUIOriginScreen.X, MUIOriginScreen.Y)
         MUILine.Size = UDim2.fromOffset(MUILength, M.Config.ThreatLineOuterThickness)
         MUILine.Rotation = math.deg(math.atan2(MUIDelta.Y, MUIDelta.X))
+        if MUIThreat.WarningGradient then
+            MUIThreat.WarningGradient.Offset = Vector2.new((os.clock() * 1.8) % 1, 0)
+        end
     end
 end
 
@@ -1243,6 +1409,104 @@ local function MUIEnforceSkySafety(MUIRoot, MUIHumanoid)
     end
 end
 
+local function MUIDestroyImpulseZone()
+    if MUIImpulseZone then MUIImpulseZone:Destroy() end
+    MUIImpulseZone = nil
+end
+
+-- This marker is intentionally local. Attributes provide a stable contract for
+-- other local modules without claiming to create server-authoritative physics.
+local function MUICreateImpulseZone(MUISource)
+    MUIDestroyImpulseZone()
+    local MUIRoot = MUIGetRoot(MUISource and MUISource.Character)
+    if not MUIRoot then return end
+    MUIImpulseFolder = MUIImpulseFolder or Instance.new("Folder")
+    MUIImpulseFolder.Name = "MUI_ImpulseZones"
+    MUIImpulseFolder.Parent = workspace
+    local MUIZone = Instance.new("Part")
+    MUIZone.Name = "MUI_ImpulseBarrier"
+    MUIZone.Shape = Enum.PartType.Cylinder
+    MUIZone.Size = Vector3.new(M.Config.ImpulseWallHeight, M.Config.ImpulseRadius * 2, M.Config.ImpulseRadius * 2)
+    MUIZone.CFrame = CFrame.new(MUIRoot.Position) * CFrame.Angles(0, 0, math.rad(90))
+    MUIZone.Anchored = true
+    MUIZone.CanCollide = false
+    MUIZone.CanTouch = false
+    MUIZone.CanQuery = true
+    MUIZone.Material = Enum.Material.ForceField
+    MUIZone.Color = Color3.fromRGB(145, 70, 255)
+    MUIZone.Transparency = 0.94
+    MUIZone:SetAttribute("MUIImpulseZone", true)
+    MUIZone:SetAttribute("NoTeleportZone", true)
+    MUIZone:SetAttribute("Radius", M.Config.ImpulseRadius)
+    MUIZone:SetAttribute("SourceUserId", MUISource.UserId)
+    MUIZone.Parent = MUIImpulseFolder
+    MUIImpulseZone = MUIZone
+end
+
+local function MUIEnforceImpulseDistance(MUIRoot)
+    if not MUIImpulseZone or not MUIActiveSource then return end
+    local MUISourceRoot = MUIGetRoot(MUIActiveSource.Character)
+    if not MUISourceRoot then return end
+    MUIImpulseZone.CFrame = CFrame.new(MUISourceRoot.Position) * CFrame.Angles(0, 0, math.rad(90))
+    local MUIOffset = MUIRoot.Position - MUISourceRoot.Position
+    local MUIFlat = Vector3.new(MUIOffset.X, 0, MUIOffset.Z)
+    if MUIFlat.Magnitude < M.Config.ImpulseEmergencyDistance then
+        local MUIDirection = MUIFlat.Magnitude > 0.01 and MUIFlat.Unit or Vector3.new(0, 0, 1)
+        local MUISafe = MUISourceRoot.Position + MUIDirection * M.Config.ImpulseRadius
+        MUIRoot.CFrame = CFrame.new(MUISafe.X, math.max(MUIRoot.Position.Y, MUISafe.Y + 8), MUISafe.Z)
+        MUIRoot.AssemblyLinearVelocity = Vector3.zero
+        MUIRoot.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+local function MUICreateFallPlatform(MUIRoot, MUICharacter)
+    if MUIFallPlatform then MUIFallPlatform:Destroy() end
+    MUIFallPlatform = Instance.new("Part")
+    MUIFallPlatform.Name = "MUI_FallSafetyPlatform"
+    MUIFallPlatform.Size = Vector3.new(90, 5, 90)
+    MUIFallPlatform.CFrame = CFrame.new(MUIRoot.Position.X, MUIRoot.Position.Y - MUIGetFootOffset(MUICharacter) - 2.5, MUIRoot.Position.Z)
+    MUIFallPlatform.Anchored = true
+    MUIFallPlatform.CanCollide = true
+    MUIFallPlatform.CanTouch = true
+    MUIFallPlatform.CanQuery = true
+    MUIFallPlatform.Material = Enum.Material.ForceField
+    MUIFallPlatform.Color = Color3.fromRGB(95, 190, 255)
+    MUIFallPlatform.Transparency = 0.82
+    MUIFallPlatform:SetAttribute("MUIFallSafety", true)
+    MUIFallPlatform.Parent = workspace
+    MUIFallPlatformLastTouched = os.clock()
+    MUIFallPlatform.Touched:Connect(function(MUIHit)
+        if MUIHit:IsDescendantOf(MUICharacter) then MUIFallPlatformLastTouched = os.clock() end
+    end)
+end
+
+local function MUIEnforceFallSafety(MUIRoot, MUICharacter)
+    if MUIFallPlatform and os.clock() - MUIFallPlatformLastTouched >= M.Config.FallSafetyPlatformLifetime then
+        MUIFallPlatform:Destroy()
+        MUIFallPlatform = nil
+    end
+    if MUIRoot.Position.Y >= M.Config.FallSafetyY then return end
+    local MUIParams = RaycastParams.new()
+    MUIParams.FilterType = Enum.RaycastFilterType.Exclude
+    MUIParams.FilterDescendantsInstances = { MUICharacter, MUICloneModel, MUICameraSubject }
+    local MUIBestPosition = nil
+    for MUIIndex = 0, 12 do
+        local MUIAngle = (MUIIndex / 12) * math.pi * 2
+        local MUIOffset = Vector3.new(math.cos(MUIAngle) * M.Config.FallSafetyScanRadius, 0, math.sin(MUIAngle) * M.Config.FallSafetyScanRadius)
+        local MUIHit = workspace:Raycast(MUIRoot.Position + MUIOffset + Vector3.new(0, 1200, 0), Vector3.new(0, -2400, 0), MUIParams)
+        if MUIHit and MUIHit.Position.Y > M.Config.FallSafetyY
+            and (not MUIBestPosition or MUIHit.Position.Y > MUIBestPosition.Y) then
+            MUIBestPosition = MUIHit.Position
+        end
+    end
+    if MUIBestPosition then
+        MUIRoot.CFrame = CFrame.new(MUIBestPosition + Vector3.new(0, MUIGetFootOffset(MUICharacter) + 0.5, 0))
+    else
+        MUICreateFallPlatform(MUIRoot, MUICharacter)
+        MUIRoot.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
 local MUIDeactivate
 
 local function MUIBegin(MUIDodge, MUISource)
@@ -1261,22 +1525,24 @@ local function MUIBegin(MUIDodge, MUISource)
         MUIRoot.Position,
         MUICharacter
     )
-    local _, MUIYaw = MUIRoot.CFrame:ToOrientation()
-    local MUICloneCFrame = CFrame.new(MUIVirtualRootPosition)
-        * CFrame.Angles(0, MUIYaw, 0)
-    MUICloneModel, MUICloneRoot =
-        MUICreateClone(MUICharacter, MUICloneCFrame)
-    if not MUICloneRoot then
-        MUIDestroyClone()
-        MUIVirtualRootPosition = nil
-        return
+    if MUIDodge.Style == "Dodge" then
+        local _, MUIYaw = MUIRoot.CFrame:ToOrientation()
+        local MUICloneCFrame = CFrame.new(MUIVirtualRootPosition)
+            * CFrame.Angles(0, MUIYaw, 0)
+        MUICloneModel, MUICloneRoot = MUICreateClone(MUICharacter, MUICloneCFrame)
+        if not MUICloneRoot then
+            MUIDestroyClone()
+            MUIVirtualRootPosition = nil
+            return
+        end
+        MUICloneFootOffset = MUIGetCloneFootOffset(MUICloneModel, MUICloneRoot)
     end
-    MUICloneFootOffset = MUIGetCloneFootOffset(MUICloneModel, MUICloneRoot)
 
     MUIDefenseActive = true
     MUIActivationToken += 1
     local MUIToken = MUIActivationToken
     MUIActiveDodgeName = MUIDodge.Name
+    MUIActiveStyle = MUIDodge.Style
     MUIActiveDuration = MUIDodge.Duration
     MUIActiveUntil = os.clock() + MUIDodge.Duration
     MUIActiveSource = MUISource
@@ -1289,8 +1555,13 @@ local function MUIBegin(MUIDodge, MUISource)
     MUISkySafetyStartedAt = os.clock()
     MUICameraSubject = MUICreateCameraSubject(MUIVirtualRootPosition)
     MUIHideRealCharacter(MUICharacter)
-    MUICreateAura()
-    MUICreateCloneCountdown()
+    if MUICloneRoot then
+        MUICreateAura()
+        MUICreateDivineCloneVFX()
+        MUICreateCloneCountdown()
+    else
+        MUICreateImpulseZone(MUISource)
+    end
     MUIWatchSourceDeath(MUISource)
 
     local MUICamera = workspace.CurrentCamera
@@ -1352,6 +1623,8 @@ MUIDeactivate = function(MUIReturnToClone)
     MUIVirtualRootPosition = nil
     MUISkyY = nil
     MUIActiveDodgeName = nil
+    MUIActiveStyle = nil
+    MUIDestroyImpulseZone()
     MUIActiveDuration = 0
     MUIActiveSource = nil
     table.clear(MUIActiveSources)
@@ -1492,7 +1765,9 @@ local function MUITrigger(MUIDodge, MUIPlayer)
     if MUIPendingDodge then
         return
     end
-    if MUIDodge.Delay <= 0 then
+    -- With high latency, the warning delay is more dangerous than useful:
+    -- enter the protected state on the same animation frame instead.
+    if MUIDodge.Delay <= 0 or MUIGetPingSeconds() >= M.Config.PingInstantThreshold then
         MUIBegin(MUIDodge, MUIPlayer)
         return
     end
@@ -1590,6 +1865,12 @@ local function MUIHeartbeat(MUIDeltaTime)
         MUIUpdateThreatHud(MUINow)
     end
 
+    local MUIFreeCharacter = MUILocalPlayer and MUILocalPlayer.Character
+    local MUIFreeRoot = MUIGetRoot(MUIFreeCharacter)
+    if MUIFreeRoot and MUIFreeCharacter then
+        MUIEnforceFallSafety(MUIFreeRoot, MUIFreeCharacter)
+    end
+
     if not MUIDefenseActive then
         return
     end
@@ -1605,6 +1886,9 @@ local function MUIHeartbeat(MUIDeltaTime)
     end
     -- Safety enforcement runs before clone/UI work every frame.
     MUIEnforceSkySafety(MUIRoot, MUIHumanoid)
+    if MUIActiveStyle == "Impulse" then
+        MUIEnforceImpulseDistance(MUIRoot)
+    end
     MUIRefreshSourceDeath()
     if MUINow >= MUIActiveUntil then
         if MUIExtendUntilSourceDies and MUIHasLiveExtendingSource() then
@@ -1614,7 +1898,9 @@ local function MUIHeartbeat(MUIDeltaTime)
         end
         return
     end
-    MUIMoveClone(MUIDeltaTime, MUICharacter)
+    if MUIActiveStyle == "Dodge" then
+        MUIMoveClone(MUIDeltaTime, MUICharacter)
+    end
     MUIUpdateCloneAndCamera()
     MUIUpdateCloneCountdown(MUINow)
     if MUINow - MUILastAuraUpdate >= M.Config.Aura.UpdateInterval then
@@ -1708,9 +1994,19 @@ function M.Stop()
     if MUIHud then
         MUIHud:Destroy()
     end
+    MUIDestroyImpulseZone()
+    if MUIImpulseFolder then
+        MUIImpulseFolder:Destroy()
+        MUIImpulseFolder = nil
+    end
+    if MUIFallPlatform then
+        MUIFallPlatform:Destroy()
+        MUIFallPlatform = nil
+    end
     MUIHud = nil
     MUIHudCards = nil
     MUIHudLines = nil
+    MUIRealBodyLine = nil
     MUIHudDismissButton = nil
     MUILastHudUpdate = 0
     MUILastAuraUpdate = 0
@@ -1748,7 +2044,8 @@ function M.GetMarkedThreats()
             player = MUIThreat.Player,
             name = MUIThreat.Player.Name,
             displayName = MUIThreat.Player.DisplayName,
-            ability = MUIThreat.DodgeName,
+            ability = MUIThreat.DodgeDisplayName or MUIThreat.DodgeName,
+            style = MUIThreat.Style,
             distance = MUIRoot and MUIOrigin
                 and (MUIRoot.Position - MUIOrigin).Magnitude
                 or nil,
@@ -1762,6 +2059,7 @@ function M.GetThreatState()
     return {
         defenseActive = MUIDefenseActive,
         activeDodge = MUIActiveDodgeName,
+        activeStyle = MUIActiveStyle,
         activeSource = MUIActiveSource,
         markedThreats = M.GetMarkedThreats(),
     }
