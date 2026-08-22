@@ -149,30 +149,45 @@ local function getLockTarget()
         if okTarget then target = result end
     end
 
-    -- Las distintas revisiones de Lock.lua pueden devolver el Player, el
-    -- Character, el HRP o solamente targetName dentro de GetStatus().
-    target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
-        or status.player or status.target
-    if typeof(target) == "Instance" then
-        if target:IsA("Player") then
-            local root = getLiveRoot(target)
-            if root then return target, root, true end
-        elseif target:IsA("Model") then
-            local player = Players:GetPlayerFromCharacter(target)
-            local root = getLiveRoot(player)
-            if player and root then return player, root, true end
-        elseif target:IsA("BasePart") then
-            local model = target:FindFirstAncestorOfClass("Model")
-            local player = model and Players:GetPlayerFromCharacter(model)
-            local root = getLiveRoot(player)
-            if player and root then return player, root, true end
+    local function resolvePlayer(candidate)
+        if typeof(candidate) == "Instance" then
+            if candidate:IsA("Player") then
+                local root = getLiveRoot(candidate)
+                if root then return candidate, root end
+            elseif candidate:IsA("Model") then
+                local player = Players:GetPlayerFromCharacter(candidate)
+                local root = getLiveRoot(player)
+                if player and root then return player, root end
+            elseif candidate:IsA("BasePart") then
+                local model = candidate:FindFirstAncestorOfClass("Model")
+                local player = model and Players:GetPlayerFromCharacter(model)
+                local root = getLiveRoot(player)
+                if player and root then return player, root end
+            end
+        elseif type(candidate) == "table" then
+            return resolvePlayer(candidate.player or candidate.targetPlayer
+                or candidate.character or candidate.targetCharacter
+                or candidate.root or candidate.targetRoot or candidate.target)
         end
+        return nil
     end
 
-    local targetName = status.targetName
-    if type(targetName) == "string" then
+    -- No se confía únicamente en GetTarget(): algunas versiones mantienen ahí
+    -- una referencia anterior mientras GetStatus() ya tiene el objetivo actual.
+    -- pairs es intencional: GetTarget() puede no existir y dejar el primer
+    -- elemento nil; ipairs se detendría ahí e ignoraría GetStatus().
+    for _, candidate in pairs({
+        target, status.targetPlayer, status.targetCharacter, status.targetRoot,
+        status.player, status.target,
+    }) do
+        local player, root = resolvePlayer(candidate)
+        if player and root then return player, root, true end
+    end
+
+    if type(status.targetName) == "string" then
+        local targetName = status.targetName:gsub("^@", ""):lower()
         for _, player in ipairs(Players:GetPlayers()) do
-            if player.Name == targetName or player.DisplayName == targetName then
+            if player.Name:lower() == targetName or player.DisplayName:lower() == targetName then
                 local root = getLiveRoot(player)
                 if root then return player, root, true end
             end
@@ -421,10 +436,19 @@ end
 function M.GetTeleportTarget()
     if not _holding then return nil end
     local lockedPlayer, lockedRoot = getLockTarget()
+    -- Esta API también puede ser consumida por otros módulos. Nunca les
+    -- entrega un objetivo pasivo mientras haya un Lock resoluble.
+    if lockedPlayer and lockedRoot then
+        return {
+            player = lockedPlayer,
+            hrp = lockedRoot,
+            isLockedByModule = true,
+        }
+    end
     return {
         player = _targetPlayer,
         hrp = _targetHRP,
-        isLockedByModule = lockedPlayer ~= nil and lockedRoot ~= nil,
+        isLockedByModule = false,
     }
 end
 
