@@ -19,6 +19,7 @@ local _targetPlayer
 local _leftDown = false
 local _rightDown = false
 local _rescore = 0
+local _wasLockActive = false
 
 -- Estado del TP de caída. Durante el breve anclaje mantiene al personaje al
 -- costado de la cabeza; después lo suelta con velocidad vertical descendente.
@@ -46,6 +47,11 @@ local PB = {
     FALL_HEAD_STICK_TIME = 0.22,
     FALL_STICK_VELOCITY = -20,
     FALL_RELEASE_VELOCITY = -140,
+    FALL_PREDICT_MOVEMENT = 0.12,
+    FALL_GUIDED_DESCENT_TIME = 0.38,
+    FALL_MAX_CORRECTION = 24,
+    FALL_HITBOX_VERTICAL_REACH = 3,
+    FALL_GROUND_SAFETY_MARGIN = 0.75,
     -- Anclaje recto y bajo: el HRP queda dentro de la hitbox superior del
     -- objetivo, sin desplazarlo a un lado ni situarlo sobre su cabeza.
     FALL_HEAD_HEIGHT_ADJUSTMENT = -3.5,
@@ -55,6 +61,7 @@ local function resetDrop()
     _dropTargetRoot = nil
     _dropStickUntil = 0
     _dropCompletedFor = nil
+    _dropGuideUntil = 0
 end
 
 local function resetTarget()
@@ -129,11 +136,11 @@ end
 -- para seguir siendo compatible con versiones antiguas del módulo.
 local function getLockTarget()
     local lock = getLockApi()
-    if not lock or type(lock.GetStatus) ~= "function" then return nil end
+    if not lock or type(lock.GetStatus) ~= "function" then return nil, nil, false end
 
     local okStatus, status = pcall(lock.GetStatus)
     if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
-        return nil
+        return nil, nil, false
     end
 
     local target
@@ -149,14 +156,16 @@ local function getLockTarget()
     if typeof(target) == "Instance" then
         if target:IsA("Player") then
             local root = getLiveRoot(target)
-            if root then return target, root end
+            if root then return target, root, true end
         elseif target:IsA("Model") then
             local player = Players:GetPlayerFromCharacter(target)
-            local root = target:FindFirstChild("HumanoidRootPart")
-            if player and root then return player, root end
+            local root = getLiveRoot(player)
+            if player and root then return player, root, true end
         elseif target:IsA("BasePart") then
-            local player = Players:GetPlayerFromCharacter(target.Parent)
-            if player then return player, target end
+            local model = target:FindFirstAncestorOfClass("Model")
+            local player = model and Players:GetPlayerFromCharacter(model)
+            local root = getLiveRoot(player)
+            if player and root then return player, root, true end
         end
     end
 
@@ -165,12 +174,14 @@ local function getLockTarget()
         for _, player in ipairs(Players:GetPlayers()) do
             if player.Name == targetName or player.DisplayName == targetName then
                 local root = getLiveRoot(player)
-                if root then return player, root end
+                if root then return player, root, true end
             end
         end
     end
 
-    return nil
+    -- Lock sigue activo aunque el personaje esté reapareciendo o su referencia
+    -- se actualice tarde. En ese estado el escaneo pasivo queda bloqueado.
+    return nil, nil, true
 end
 
 local function getPredictedPosition(targetRoot)
@@ -200,6 +211,14 @@ local function aimCamera(targetPosition)
     end
 end
 
+local function getGroundBelow(position, ignored)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = ignored
+    params.RespectCanCollide = true
+    return workspace:Raycast(position + Vector3.new(0, 3, 0), Vector3.new(0, -10000, 0), params)
+end
+
 local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
     local now = tick()
 
@@ -215,6 +234,7 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
         and myRoot.Position.Y - targetRoot.Position.Y >= PB.FALL_TRIGGER_HEIGHT then
         _dropTargetRoot = targetRoot
         _dropStickUntil = now + PB.FALL_HEAD_STICK_TIME
+        _dropGuideUntil = 0
     end
 
     if _dropTargetRoot ~= targetRoot then return false end
@@ -229,19 +249,53 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
         local footHeight = myHumanoid.HipHeight + (myRoot.Size.Y / 2) + 0.15
         local height = footHeight + PB.FALL_HEAD_HEIGHT_ADJUSTMENT
 
-        myRoot.CFrame = CFrame.new(headPosition + Vector3.new(0, height, 0))
+        local targetVelocity = targetRoot.AssemblyLinearVelocity
+        local predictedHead = headPosition + Vector3.new(targetVelocity.X, 0, targetVelocity.Z) * PB.FALL_PREDICT_MOVEMENT
+        local ground = getGroundBelow(predictedHead, { myRoot.Parent, targetRoot.Parent })
+        local entryY = math.max(
+            headPosition.Y + height,
+            targetRoot.Position.Y + PB.FALL_HITBOX_VERTICAL_REACH
+        )
+        if ground then
+            entryY = math.max(
+                entryY,
+                ground.Position.Y + PB.FALL_HITBOX_VERTICAL_REACH + PB.FALL_GROUND_SAFETY_MARGIN
+            )
+        end
+
+        myRoot.CFrame = CFrame.new(predictedHead.X, entryY, predictedHead.Z)
         myRoot.AssemblyLinearVelocity = Vector3.new(
-            targetRoot.AssemblyLinearVelocity.X,
+            targetVelocity.X,
             PB.FALL_STICK_VELOCITY,
-            targetRoot.AssemblyLinearVelocity.Z
+            targetVelocity.Z
+        )
+        return true
+    end
+
+    if _dropGuideUntil == 0 then
+        _dropGuideUntil = now + PB.FALL_GUIDED_DESCENT_TIME
+    end
+
+    local velocity = targetRoot.AssemblyLinearVelocity
+    local predictedPosition = targetRoot.Position
+        + Vector3.new(velocity.X, 0, velocity.Z) * PB.FALL_PREDICT_MOVEMENT
+    local correction = Vector3.new(
+        predictedPosition.X - myRoot.Position.X, 0,
+        predictedPosition.Z - myRoot.Position.Z
+    )
+
+    if now < _dropGuideUntil and correction.Magnitude <= PB.FALL_MAX_CORRECTION then
+        myRoot.CFrame = CFrame.new(predictedPosition.X, myRoot.Position.Y, predictedPosition.Z)
+        myRoot.AssemblyLinearVelocity = Vector3.new(
+            velocity.X, PB.FALL_RELEASE_VELOCITY, velocity.Z
         )
         return true
     end
 
     myRoot.AssemblyLinearVelocity = Vector3.new(
-        targetRoot.AssemblyLinearVelocity.X,
+        velocity.X,
         PB.FALL_RELEASE_VELOCITY,
-        targetRoot.AssemblyLinearVelocity.Z
+        velocity.Z
     )
     _dropCompletedFor = targetRoot
     _dropTargetRoot = nil
@@ -284,8 +338,20 @@ function M.Start(lplr)
 
         -- Un Lock válido reemplaza por completo el escaneo pasivo.
         local lockedPlayer, lockedRoot = getLockTarget()
-        local isLocked = lockedPlayer ~= nil
+        -- Lock solo toma control cuando está activo Y su objetivo aún es
+        -- válido. Si no hay objetivo, Passive Bang vuelve a su selección
+        -- tradicional aunque el módulo Lock permanezca encendido.
+        local isLocked = lockedPlayer ~= nil and lockedRoot ~= nil
+        if isLocked ~= _wasLockActive then
+            resetDrop()
+            _wasLockActive = isLocked
+        end
         if isLocked then
+            if _targetHRP ~= lockedRoot then
+                -- Un nuevo objetivo Lock no hereda ninguna fase de caída del
+                -- objetivo pasivo anterior.
+                resetDrop()
+            end
             _targetPlayer, _targetHRP = lockedPlayer, lockedRoot
             _rescore = PB.RESCORE_INTERVAL
         else
@@ -326,7 +392,7 @@ function M.Start(lplr)
             aimCamera(predicted)
         end
 
-        if _leftDown and _rightDown then
+        if not isLocked and _leftDown and _rightDown then
             resetTarget()
             _leftDown, _rightDown = false, false
         end
@@ -338,6 +404,7 @@ function M.Stop()
     table.clear(_conns)
     _holding = false
     _leftDown, _rightDown = false, false
+    _wasLockActive = false
     resetTarget()
 end
 
@@ -353,8 +420,12 @@ end
 
 function M.GetTeleportTarget()
     if not _holding then return nil end
-    local lockedPlayer = getLockTarget()
-    return { player = _targetPlayer, hrp = _targetHRP, isLockedByModule = lockedPlayer ~= nil }
+    local lockedPlayer, lockedRoot = getLockTarget()
+    return {
+        player = _targetPlayer,
+        hrp = _targetHRP,
+        isLockedByModule = lockedPlayer ~= nil and lockedRoot ~= nil,
+    }
 end
 
 return M
