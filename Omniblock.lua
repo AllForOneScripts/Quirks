@@ -472,6 +472,33 @@ local function omniGetLockTarget()
         local okTarget, value = pcall(lock.GetTarget)
         if okTarget then target = value end
     end
+    local function resolvePlayer(candidate)
+        if typeof(candidate) == "Instance" then
+            if candidate:IsA("Player") then
+                return getLivePlayer(candidate)
+            elseif candidate:IsA("Model") then
+                return getLivePlayer(Players:GetPlayerFromCharacter(candidate))
+            elseif candidate:IsA("BasePart") then
+                local model = candidate:FindFirstAncestorOfClass("Model")
+                return getLivePlayer(model and Players:GetPlayerFromCharacter(model))
+            end
+        elseif type(candidate) == "table" then
+            return resolvePlayer(candidate.player or candidate.targetPlayer
+                or candidate.character or candidate.targetCharacter
+                or candidate.root or candidate.targetRoot or candidate.target)
+        end
+        return nil
+    end
+
+    -- pairs conserva los campos de GetStatus() aunque GetTarget devuelva nil.
+    for _, candidate in pairs({
+        target, status.targetPlayer, status.targetCharacter, status.targetRoot,
+        status.player, status.target,
+    }) do
+        local player = resolvePlayer(candidate)
+        if player then return player end
+    end
+
     target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
         or status.player or status.target
 
@@ -491,8 +518,9 @@ local function omniGetLockTarget()
     -- Esta es la ruta normal del Lock Reader proporcionado.
     local targetName = status.targetName
     if type(targetName) == "string" then
+        targetName = targetName:gsub("^@", ""):lower()
         for _, player in ipairs(Players:GetPlayers()) do
-            if player.Name == targetName or player.DisplayName == targetName then
+            if player.Name:lower() == targetName or player.DisplayName:lower() == targetName then
                 return getLivePlayer(player)
             end
         end
