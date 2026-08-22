@@ -102,7 +102,11 @@ local omniCloneNormalGravity = OCFG.CLONE_NORMAL_GRAVITY
 local omniCloneWasAirborne = false
 local omni4DPinned = false; local omniPinGui = nil
 local omniLockModuleRef = nil
-local omniPublicState = { threats = {}, primary = nil, distances = {}, is4D = false, is4DPinned = false, mode4D = "off" }
+local omniPublicState = {
+    threats = {}, primary = nil, distances = {},
+    is4D = false, is4DPinned = false, mode4D = "off",
+    lockActive = false, lockResolved = false,
+}
 local omniLastPublicUpdate = 0
 
 -- Variables para movimiento errático en alerta
@@ -443,16 +447,28 @@ local function omniThreatLevel(originPos, tHRP, tHum)
     return math.clamp(distT*0.5 + hp*0.25 + math.clamp(spd/40,0,1)*0.25, 0, 1)
 end
 
--- El Lock Reader expone GetStatus(); IsLockActive/GetTarget son opcionales.
--- Siempre devuelve un Player, que es lo que omniBuildThreats compara.
+-- Devuelve Player, HRP y el estado activo de Lock. El tercer valor permite
+-- distinguir entre "Lock apagado" y "Lock activo sin Character válido".
+local function omniResolveLockPlayer(candidate)
+    if typeof(candidate) ~= "Instance" then return nil end
+
+    if candidate:IsA("Player") then return candidate end
+    if candidate:IsA("Model") then return Players:GetPlayerFromCharacter(candidate) end
+    if candidate:IsA("BasePart") then
+        local model = candidate:FindFirstAncestorOfClass("Model")
+        return model and Players:GetPlayerFromCharacter(model)
+    end
+    return nil
+end
+
 local function omniGetLockTarget()
     local lock = omniLockModuleRef
     if type(lock) ~= "table" then lock = rawget(getgenv(), "AFO_LOCK_API") end
-    if type(lock) ~= "table" or type(lock.GetStatus) ~= "function" then return nil end
+    if type(lock) ~= "table" or type(lock.GetStatus) ~= "function" then return nil, nil, false end
 
     local okStatus, status = pcall(lock.GetStatus)
     if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
-        return nil
+        return nil, nil, false
     end
 
     local target
@@ -463,27 +479,58 @@ local function omniGetLockTarget()
     target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
         or status.player or status.target
 
-    if typeof(target) == "Instance" then
-        if target:IsA("Player") then return target end
-        if target:IsA("Model") then return Players:GetPlayerFromCharacter(target) end
-        if target:IsA("BasePart") then return Players:GetPlayerFromCharacter(target.Parent) end
-    end
+    local player = omniResolveLockPlayer(target)
 
-    -- Esta es la ruta normal del Lock Reader proporcionado.
-    local targetName = status.targetName
-    if type(targetName) == "string" then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Name == targetName or player.DisplayName == targetName then
-                return player
+    -- Algunas versiones solo ofrecen el nombre o UserId dentro de GetStatus.
+    if not player and type(status.targetUserId) == "number" then
+        player = Players:GetPlayerByUserId(status.targetUserId)
+    end
+    if not player and type(status.userId) == "number" then
+        player = Players:GetPlayerByUserId(status.userId)
+    end
+    if not player and type(status.targetName) == "string" then
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if candidate.Name == status.targetName then
+                player = candidate
+                break
+            end
+        end
+        if not player then
+            for _, candidate in ipairs(Players:GetPlayers()) do
+                if candidate.DisplayName == status.targetName then
+                    player = candidate
+                    break
+                end
             end
         end
     end
 
-    return nil
+    if player and player ~= _lplr then
+        local char = player.Character
+        local hrp = omniGetHRP(char)
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            return player, hrp, true
+        end
+    end
+
+    return nil, nil, true
 end
 
 local function omniBuildThreats(myHRP)
-    local locked = omniGetLockTarget()
+    local lockedPlayer, lockedHRP, lockActive = omniGetLockTarget()
+    -- Lock con objetivo válido apaga por completo el ranking/detección pasiva.
+    -- No hay límite de distancia para ese objetivo.
+    if lockedPlayer and lockedHRP then
+        local hum = lockedPlayer.Character:FindFirstChildOfClass("Humanoid")
+        local distance = (lockedHRP.Position - myHRP.Position).Magnitude
+        return {{
+            HRP = lockedHRP, Hum = hum, Player = lockedPlayer,
+            Distance = distance, Score = math.huge, IsLocked = true,
+            LockActive = true,
+        }}
+    end
+
     local threats = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= _lplr and p.Character then
@@ -492,16 +539,14 @@ local function omniBuildThreats(myHRP)
                 local distance = (hrp.Position - myHRP.Position).Magnitude
                 if distance < 100 then
                     table.insert(threats, { HRP = hrp, Hum = hum, Player = p, Distance = distance,
-                        Score = omniThreatLevel(myHRP.Position, hrp, hum), IsLocked = p == locked })
+                        Score = omniThreatLevel(myHRP.Position, hrp, hum), IsLocked = false,
+                        LockActive = lockActive })
                 end
             end
         end
     end
     table.sort(threats, function(a, b)
-        if math.abs(a.Score - b.Score) < 0.001 then
-            if a.IsLocked ~= b.IsLocked then return a.IsLocked end
-            return a.Distance < b.Distance
-        end
+        if math.abs(a.Score - b.Score) < 0.001 then return a.Distance < b.Distance end
         return a.Score > b.Score
     end)
     return threats
@@ -516,6 +561,9 @@ local function omniUpdatePublicState(threats)
         omniPublicState.distances[i] = t.Distance
     end
     omniPublicState.primary = omniPublicState.threats[1]
+    local _, _, lockActive = omniGetLockTarget()
+    omniPublicState.lockActive = lockActive
+    omniPublicState.lockResolved = threats[1] and threats[1].IsLocked == true or false
     omniPublicState.is4D = omniInSky
     omniPublicState.is4DPinned = omni4DPinned
     omniPublicState.mode4D = omni4DPinned and "pinned" or (omniInSky and "4d" or "off")
@@ -970,14 +1018,18 @@ local function omniStart()
                 if omniOrbitTimer <= 0 then omniOrbiting = false end
             end
 
-            -- Detectar amenaza en el cielo (skyThreat)
-            local skyThreat = nil
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= _lplr and p.Character then
-                    local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
-                    if tHRP and (tHRP.Position - myHRP.Position).Magnitude < 50 then
-                        skyThreat = tHRP
-                        break
+            -- Lock también domina la detección en 4D. Sólo cuando no hay un
+            -- objetivo Lock válido se conserva el escaneo cercano tradicional.
+            local _, lockedSkyHRP = omniGetLockTarget()
+            local skyThreat = lockedSkyHRP
+            if not skyThreat then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= _lplr and p.Character then
+                        local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
+                        if tHRP and (tHRP.Position - myHRP.Position).Magnitude < 50 then
+                            skyThreat = tHRP
+                            break
+                        end
                     end
                 end
             end
