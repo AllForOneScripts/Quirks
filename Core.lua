@@ -2,6 +2,13 @@
 --  SECCIÓN 1: PROTECCIÓN Y PRIMER HILO (BOOT ANIMATION)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Argumento opcional del loadstring, por ejemplo: loadstring(...)("Wiftor")
+-- Se usa como avatar inicial de CopyAvatar sin fijarlo dentro del módulo.
+local EXECUTOR_DEFAULT_AVATAR = ...
+if type(EXECUTOR_DEFAULT_AVATAR) ~= "string" or EXECUTOR_DEFAULT_AVATAR == "" then
+    EXECUTOR_DEFAULT_AVATAR = nil
+end
+
 if getgenv()._AFO_HUB_LOADED then
     warn("[All for One] Ya hay una instancia del hub corriendo. Ciérrala antes de abrir otra.")
     return
@@ -68,8 +75,8 @@ local function QueueSelf()
     local queuedSource = string.format([[
 getgenv()._AFO_HUB_LOADED = nil
 getgenv()._AFO_RELOAD_QUEUED = nil
-loadstring(game:HttpGet(%q))()
-]], SELF_URL)
+loadstring(game:HttpGet(%q))(%q)
+]], SELF_URL, EXECUTOR_DEFAULT_AVATAR or "")
 
     local ok, err = pcall(_qt, queuedSource)
     if not ok then
@@ -715,7 +722,9 @@ local function copyAvatarStart()
     if not _copyAvatarModule then _copyAvatarModule = loadModule("CopyAvatar") end
     if type(_copyAvatarModule) == "table" and type(_copyAvatarModule.Start) == "function" then
         if not copyAvatarStarted then
-            local ok, err = pcall(function() _copyAvatarModule.Start(Keys, lplr) end)
+            local ok, err = pcall(function()
+                _copyAvatarModule.Start(Keys, lplr, EXECUTOR_DEFAULT_AVATAR)
+            end)
             if not ok then warn("[AFO] No se pudo iniciar CopyAvatar: " .. tostring(err)); return false end
             copyAvatarStarted = true
         end
