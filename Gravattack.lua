@@ -25,6 +25,13 @@ local VELOCIDAD_DESCENSO_SLAM = -140
 -- Ajuste del agarre: copia la posición baja del TP de Passive Bang.
 local AJUSTE_ALTURA_CABEZA_SLAM = -3.5
 
+-- Seguimiento del objetivo durante el ZAAASH.
+local PREDICCION_MOVIMIENTO_SLAM = 0.12
+local TIEMPO_GUIADO_DESCENSO_SLAM = 0.38
+local DISTANCIA_MAX_CORRECCION_SLAM = 24
+local ALCANCE_VERTICAL_HITBOX_SLAM = 3
+local MARGEN_SEGURO_SUELO_SLAM = 0.75
+
 -- ==========================================
 -- ESTADO
 -- ==========================================
@@ -215,6 +222,19 @@ local function BuscarSueloDebajo()
 	)
 end
 
+local function BuscarSueloDebajoDe(posicion, instanciasIgnoradas)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = instanciasIgnoradas
+	rayParams.RespectCanCollide = true
+
+	return workspace:Raycast(
+		posicion + Vector3.new(0, 3, 0),
+		Vector3.new(0, -10000, 0),
+		rayParams
+	)
+end
+
 local function BuscarObjetivoDebajo()
 	if not rootPart then return nil end
 
@@ -259,19 +279,13 @@ local function PegarALaCabeza(objetivoRoot)
 	end
 
 	local tiempo = 0
+	local faseDescenso = false
 	local conexion
 
 	conexion = RunService.Heartbeat:Connect(function(dt)
-		if not _isActive
-			or not rootPart
-			or not humanoid
-			or not objetivoRoot
-			or not objetivoRoot.Parent then
-
-			if conexion then
-				conexion:Disconnect()
-			end
-
+		if not _isActive or not rootPart or not humanoid
+			or not objetivoRoot or not objetivoRoot.Parent then
+			if conexion then conexion:Disconnect() end
 			isSlamming = false
 			lastSlamEndTime = tick()
 			return
@@ -279,38 +293,77 @@ local function PegarALaCabeza(objetivoRoot)
 
 		tiempo += dt
 
-		if tiempo >= TIEMPO_PEGADO_CABEZA then
-			conexion:Disconnect()
-
-			rootPart.AssemblyLinearVelocity = Vector3.new(
-				objetivoRoot.AssemblyLinearVelocity.X,
-				VELOCIDAD_DESCENSO_SLAM,
-				objetivoRoot.AssemblyLinearVelocity.Z
-			)
-
-			isSlamming = false
-			lastSlamEndTime = tick()
-			return
-		end
-
 		local cabeza = objetivoRoot.Parent:FindFirstChild("Head")
 		local posicionCabeza = cabeza and cabeza.Position
 			or (objetivoRoot.Position + Vector3.new(0, objetivoRoot.Size.Y, 0))
+		local velocidadObjetivo = objetivoRoot.AssemblyLinearVelocity
+		-- Predice la posición inmediatamente posterior a un dash del objetivo.
+		local posicionPredicha = posicionCabeza
+			+ Vector3.new(velocidadObjetivo.X, 0, velocidadObjetivo.Z)
+				* PREDICCION_MOVIMIENTO_SLAM
 
 		local alturaSobreCabeza = humanoid.HipHeight
-			+ (rootPart.Size.Y / 2)
-			+ 0.15
-			+ AJUSTE_ALTURA_CABEZA_SLAM
+			+ (rootPart.Size.Y / 2) + 0.15 + AJUSTE_ALTURA_CABEZA_SLAM
+		local sueloObjetivo = BuscarSueloDebajoDe(posicionPredicha, {
+			character,
+			objetivoRoot.Parent,
+		})
 
-		rootPart.CFrame = CFrame.new(
-			posicionCabeza + Vector3.new(0, alturaSobreCabeza, 0)
+		-- Empieza desde una Y desde la que la zona de impacto alcanza primero al
+		-- objetivo, sin que su borde inferior toque el suelo antes.
+		local alturaEntrada = math.max(
+			posicionCabeza.Y + alturaSobreCabeza,
+			objetivoRoot.Position.Y + ALCANCE_VERTICAL_HITBOX_SLAM
 		)
 
+		if sueloObjetivo then
+			alturaEntrada = math.max(
+				alturaEntrada,
+				sueloObjetivo.Position.Y
+					+ ALCANCE_VERTICAL_HITBOX_SLAM
+					+ MARGEN_SEGURO_SUELO_SLAM
+			)
+		end
+
+		if not faseDescenso and tiempo >= TIEMPO_PEGADO_CABEZA then
+			faseDescenso = true
+			tiempo = 0
+		end
+
+		if not faseDescenso then
+			rootPart.CFrame = CFrame.new(
+				posicionPredicha.X, alturaEntrada, posicionPredicha.Z
+			)
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				velocidadObjetivo.X, -20, velocidadObjetivo.Z
+			)
+			return
+		end
+
+		-- Mantiene el X/Z enganchado al objetivo durante el inicio de la caída.
+		-- Así un dash súbito no deja el golpe dirigido hacia suelo vacío.
+		local diferenciaXZ = Vector3.new(
+			posicionPredicha.X - rootPart.Position.X, 0,
+			posicionPredicha.Z - rootPart.Position.Z
+		)
+
+		if tiempo < TIEMPO_GUIADO_DESCENSO_SLAM
+			and diferenciaXZ.Magnitude <= DISTANCIA_MAX_CORRECCION_SLAM then
+			rootPart.CFrame = CFrame.new(
+				posicionPredicha.X, rootPart.Position.Y, posicionPredicha.Z
+			)
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				velocidadObjetivo.X, VELOCIDAD_DESCENSO_SLAM, velocidadObjetivo.Z
+			)
+			return
+		end
+
+		conexion:Disconnect()
 		rootPart.AssemblyLinearVelocity = Vector3.new(
-			objetivoRoot.AssemblyLinearVelocity.X,
-			-20,
-			objetivoRoot.AssemblyLinearVelocity.Z
+			velocidadObjetivo.X, VELOCIDAD_DESCENSO_SLAM, velocidadObjetivo.Z
 		)
+		isSlamming = false
+		lastSlamEndTime = tick()
 	end)
 
 	table.insert(_conns, conexion)
