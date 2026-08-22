@@ -376,8 +376,8 @@ function M.Stop(restoreAvatar)
 	end
 end
 
-function M.Start(firstArgument, secondArgument)
-	-- Compatible con Start(Keys, Player) y Start(Player, Keys).
+function M.Start(firstArgument, secondArgument, thirdArgument)
+	-- Compatible con Start(Keys, Player, avatar) y Start(Player, Keys, avatar).
 	if typeof(firstArgument) == "Instance" and firstArgument:IsA("Player") then
 		localPlayer = firstArgument
 		keys = secondArgument
@@ -391,6 +391,16 @@ function M.Start(firstArgument, secondArgument)
 		return false
 	end
 
+	-- El avatar predeterminado llega desde Core.lua.
+	-- Si no se pasó un usuario válido, conserva el avatar propio.
+	local defaultAvatar = type(thirdArgument) == "string"
+		and thirdArgument
+		or localPlayer.Name
+
+	if defaultAvatar == "" then
+		defaultAvatar = localPlayer.Name
+	end
+
 	if keys then
 		local configuredKey = keys.CopyAvatar or keys.Toggle
 		if typeof(configuredKey) == "EnumItem" then
@@ -398,8 +408,6 @@ function M.Start(firstArgument, secondArgument)
 		end
 	end
 
-	-- Cancela tareas anteriores y elimina una GUI vieja,
-	-- sin restaurar el avatar durante el arranque.
 	requestId += 1
 	disconnectAll()
 
@@ -416,7 +424,7 @@ function M.Start(firstArgument, secondArgument)
 
 	active = true
 	isOpen = false
-	lastUsername = "Wiftor"
+	lastUsername = defaultAvatar
 
 	gui = Instance.new("ScreenGui")
 	gui.Name = "AFO_AvatarChanger"
@@ -477,7 +485,7 @@ function M.Start(firstArgument, secondArgument)
 	textBox.TextColor3 = C_TEXT
 	textBox.PlaceholderColor3 = C_SUB
 	textBox.PlaceholderText = "Username..."
-	textBox.Text = "Wiftor"
+	textBox.Text = defaultAvatar
 	textBox.Font = Enum.Font.Gotham
 	textBox.TextSize = 12
 	textBox.BorderSizePixel = 0
@@ -605,7 +613,7 @@ function M.Start(firstArgument, secondArgument)
 		end
 	end))
 
-	startNewAvatar("Wiftor")
+	startNewAvatar(defaultAvatar)
 
 	return true
 end
