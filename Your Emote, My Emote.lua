@@ -10,6 +10,7 @@ local _panelHideTimer, _warningTimer = nil, nil
 local _yHeld, _uHeld, _tHeld = false, false, false
 local _expandConsumed, _tyConsumed, _isInputOpen = false, false, false
 local _circleIndicatorBB, _circleIndicatorConn, _circleAlphaThread, _pulseThread = nil, nil, nil, nil
+local _playerRenderConn, _playerInputChanged, _playerInputEnded = nil, nil, nil
 
 -- Dependencias inyectadas por Start()
 local _Keys, _lplr, _CoreGui, _RunService, _TweenService, _camera, _Players, _UserInputService
@@ -29,7 +30,12 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local emoteExecuteKey = Keys.EmoteExecute
     local emoteExpandKey  = Keys.EmoteExpand
 
-    if _screenGui then return end  -- ya activo
+    if _screenGui and _screenGui.Parent then return end  -- ya activo
+    _screenGui = nil
+    -- Limpia una instancia huérfana de una ejecución anterior para que nunca
+    -- se superpongan HUDs o queden paneles vacíos.
+    local previousGui = _CoreGui:FindFirstChild("StealerHUD")
+    if previousGui then pcall(function() previousGui:Destroy() end) end
 
     -- ══════════════════════════════════════════════
     -- A partir de aquí va TODO el código original
@@ -66,6 +72,23 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local AFO_TEXT       = Color3.fromRGB(220, 190, 255)
     local AFO_WARN       = Color3.fromRGB(255, 80, 80)
     local AFO_GREEN      = Color3.fromRGB(80, 255, 150)
+
+    -- ==========================================
+    -- UTILIDADES DE ANIMACION E HISTORIAL
+    -- ==========================================
+    local MarketplaceService = game:GetService("MarketplaceService")
+    local function shortId(value)
+        return (value and value:match("%d+")) or value or "?"
+    end
+    local function normalizeAnimationId(value)
+        local digits = tostring(value or ""):match("%d+")
+        return digits and ("rbxassetid://" .. digits) or nil
+    end
+    local function formatDuration(seconds)
+        seconds = tonumber(seconds) or 0
+        if seconds <= 0 then return L("Duración desconocida", "Unknown duration") end
+        return string.format(L("Duración · %.2fs", "Duration · %.2fs"), seconds)
+    end
 
     local BASE_HEIGHT    = 62
     local PLAYING_HEIGHT = 70
@@ -235,7 +258,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     historyFrame.Position = UDim2.new(0, 9, 0, 34)
     historyFrame.BackgroundTransparency = 1
     historyFrame.BorderSizePixel = 0
-    historyFrame.ScrollBarThickness = 3
+    historyFrame.ScrollBarThickness = 6
     historyFrame.ScrollBarImageColor3 = AFO_ACCENT
     historyFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     historyFrame.ZIndex = 4
@@ -246,6 +269,130 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     historyLayout.SortOrder = Enum.SortOrder.LayoutOrder
     historyLayout.Padding = UDim.new(0, 4)
     historyLayout.Parent = historyFrame
+
+    -- ==========================================
+    -- REPRODUCTOR UNICO (U / HISTORIAL)
+    -- ==========================================
+    -- Un solo panel reutilizable evita que se acumulen ventanas al reproducir
+    -- desde el historial. Permanece abierto aunque se cierre el historial.
+    local playerPanel = Instance.new("Frame")
+    playerPanel.Name = "AnimationPlayer"
+    playerPanel.AnchorPoint = Vector2.new(0, 1)
+    playerPanel.Size = UDim2.new(0, 348, 0, 218)
+    playerPanel.Position = UDim2.new(0.5, 152, 1, -126)
+    playerPanel.BackgroundColor3 = AFO_BLACK
+    playerPanel.BackgroundTransparency = 0.04
+    playerPanel.BorderSizePixel = 0
+    playerPanel.Visible = false
+    playerPanel.ZIndex = 30
+    playerPanel.Parent = screenGui
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 12); c.Parent = playerPanel end
+    do local s = Instance.new("UIStroke"); s.Color = AFO_ACCENT; s.Thickness = 2; s.Parent = playerPanel end
+    do
+        local g = Instance.new("UIGradient")
+        g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, AFO_BLACK), ColorSequenceKeypoint.new(1, AFO_PURPLE_DIM)})
+        g.Rotation = 75; g.Parent = playerPanel
+    end
+
+    local playerHeader = Instance.new("TextLabel")
+    playerHeader.Size = UDim2.new(1, -54, 0, 26)
+    playerHeader.Position = UDim2.new(0, 10, 0, 7)
+    playerHeader.BackgroundTransparency = 1
+    playerHeader.Text = L("REPRODUCTOR DE ANIMACIONES", "ANIMATION PLAYER")
+    playerHeader.TextColor3 = AFO_ACCENT
+    playerHeader.Font = Enum.Font.GothamBold
+    playerHeader.TextSize = 13
+    playerHeader.TextXAlignment = Enum.TextXAlignment.Left
+    playerHeader.ZIndex = 31
+    playerHeader.Parent = playerPanel
+
+    local playerClose = Instance.new("TextButton")
+    playerClose.Size = UDim2.new(0, 26, 0, 26)
+    playerClose.Position = UDim2.new(1, -34, 0, 7)
+    playerClose.BackgroundColor3 = AFO_WARN
+    playerClose.Text = "X"
+    playerClose.TextColor3 = Color3.new(1, 1, 1)
+    playerClose.Font = Enum.Font.GothamBold
+    playerClose.TextSize = 13
+    playerClose.BorderSizePixel = 0
+    playerClose.ZIndex = 32
+    playerClose.Parent = playerPanel
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = playerClose end
+
+    local playerInput = Instance.new("TextBox")
+    playerInput.Size = UDim2.new(1, -20, 0, 28)
+    playerInput.Position = UDim2.new(0, 10, 0, 39)
+    playerInput.BackgroundColor3 = AFO_PURPLE_DIM
+    playerInput.BackgroundTransparency = 0.15
+    playerInput.PlaceholderText = L("ID de animación (números o rbxassetid://)", "Animation ID (numbers or rbxassetid://)")
+    playerInput.PlaceholderColor3 = Color3.fromRGB(155, 125, 190)
+    playerInput.Text = ""
+    playerInput.TextColor3 = AFO_TEXT
+    playerInput.Font = Enum.Font.Code
+    playerInput.TextSize = 12
+    playerInput.ClearTextOnFocus = false
+    playerInput.BorderSizePixel = 0
+    playerInput.ZIndex = 31
+    playerInput.Parent = playerPanel
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = playerInput end
+
+    local playerName = Instance.new("TextLabel")
+    playerName.Size = UDim2.new(1, -20, 0, 17)
+    playerName.Position = UDim2.new(0, 10, 0, 72)
+    playerName.BackgroundTransparency = 1
+    playerName.Text = L("Carga una animación con U", "Load an animation with U")
+    playerName.TextColor3 = AFO_TEXT
+    playerName.Font = Enum.Font.GothamSemibold
+    playerName.TextSize = 11
+    playerName.TextXAlignment = Enum.TextXAlignment.Left
+    playerName.TextTruncate = Enum.TextTruncate.AtEnd
+    playerName.ZIndex = 31
+    playerName.Parent = playerPanel
+
+    local timelineBar = Instance.new("TextButton")
+    timelineBar.Size = UDim2.new(1, -20, 0, 12)
+    timelineBar.Position = UDim2.new(0, 10, 0, 98)
+    timelineBar.BackgroundColor3 = Color3.fromRGB(28, 18, 45)
+    timelineBar.Text = ""
+    timelineBar.AutoButtonColor = false
+    timelineBar.BorderSizePixel = 0
+    timelineBar.ZIndex = 31
+    timelineBar.Parent = playerPanel
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = timelineBar end
+    local timelineFill = Instance.new("Frame")
+    timelineFill.Size = UDim2.new(0, 0, 1, 0)
+    timelineFill.BackgroundColor3 = AFO_ACCENT
+    timelineFill.BorderSizePixel = 0
+    timelineFill.ZIndex = 32
+    timelineFill.Parent = timelineBar
+    do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = timelineFill end
+
+    local timeLabel = Instance.new("TextLabel")
+    timeLabel.Size = UDim2.new(1, -20, 0, 16)
+    timeLabel.Position = UDim2.new(0, 10, 0, 114)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.Text = "0.00s / 0.00s · 0%"
+    timeLabel.TextColor3 = AFO_TEXT
+    timeLabel.Font = Enum.Font.Gotham
+    timeLabel.TextSize = 10
+    timeLabel.TextXAlignment = Enum.TextXAlignment.Center
+    timeLabel.ZIndex = 31
+    timeLabel.Parent = playerPanel
+
+    local function makePlayerButton(text, position, size, color)
+        local button = Instance.new("TextButton")
+        button.Size = size; button.Position = position
+        button.BackgroundColor3 = color or Color3.fromRGB(28, 18, 45)
+        button.TextColor3 = AFO_TEXT; button.Text = text
+        button.Font = Enum.Font.GothamBold; button.TextSize = 11
+        button.BorderSizePixel = 0; button.ZIndex = 31; button.Parent = playerPanel
+        local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = button
+        return button
+    end
+    local playButton = makePlayerButton(L("▶ Cargar", "▶ Load"), UDim2.new(0, 10, 0, 140), UDim2.new(0.31, -4, 0, 28), AFO_PURPLE)
+    local pauseButton = makePlayerButton(L("❚❚ Pausa", "❚❚ Pause"), UDim2.new(0.31, 4, 0, 140), UDim2.new(0.31, -4, 0, 28))
+    local loopButton = makePlayerButton(L("↻ Loop", "↻ Loop"), UDim2.new(0.62, 4, 0, 140), UDim2.new(0.38, -14, 0, 28))
+    local stopButton = makePlayerButton(L("■ Detener todo", "■ Stop all"), UDim2.new(0, 10, 0, 176), UDim2.new(1, -20, 0, 28), Color3.fromRGB(75, 22, 36))
 
     local inputPopup = Instance.new("Frame")
     inputPopup.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -335,6 +482,9 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
     local expandConsumed = false; local tyConsumed = false; local isInputOpen = false
     local circleIndicatorBB = nil; local circleIndicatorConn = nil
     local circleAlphaThread = nil; local pulseThread = nil
+    local playerTrack, playerRenderConn = nil, nil
+    local playerPaused, playerLooped, playerScrubbing = false, false, false
+    local playAnimationInPlayer
 
     -- Guarda referencias para Stop()
     _stealerTrack  = nil; _stolenTrack = nil; _animator = nil; _animatorConn = nil
@@ -457,11 +607,13 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         _TweenService:Create(panel, TWEEN_OUT, {BackgroundTransparency = 1}):Play()
         _TweenService:Create(stroke, TWEEN_OUT, {Transparency = 1}):Play()
         task.delay(0.35, function()
-            panel.Visible = false
-            shadow.Visible = false
-            warningLabel.Visible = false
-            execBtn.Visible = false
-            idButton.Visible = false
+            if not isStealerActive and not isStolenPlaying and not isExpanded then
+                panel.Visible = false
+                shadow.Visible = false
+                warningLabel.Visible = false
+                execBtn.Visible = false
+                idButton.Visible = false
+            end
         end)
     end
 
@@ -538,6 +690,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         _TweenService:Create(idButton, TWEEN_IN, {TextTransparency = 0, BackgroundTransparency = 0.4}):Play()
     end
 
+    local rebuildHistoryUI
     local function addToHistory(animId, ownerName, ownerDisplay)
         if not animId or animId == "" then return end
         if #stolenHistory > 0 and stolenHistory[#stolenHistory].animId == animId then return end
@@ -546,19 +699,44 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             animId = animId,
             ownerName = ownerName or clipboard_label,
             displayName = ownerDisplay or ownerName or clipboard_label,
+            animationName = L("Resolviendo animación…", "Resolving animation…"),
+            duration = 0,
         })
         if #stolenHistory > MAX_HISTORY then table.remove(stolenHistory, 1) end
+        local addedEntry = stolenHistory[#stolenHistory]
+        task.spawn(function()
+            local ok, info = pcall(function()
+                return MarketplaceService:GetProductInfo(tonumber(shortId(animId)), Enum.InfoType.Asset)
+            end)
+            if ok and info and addedEntry then
+                addedEntry.animationName = info.Name or addedEntry.animationName
+                if isExpanded then rebuildHistoryUI() end
+            end
+        end)
     end
 
-    local function rebuildHistoryUI()
+    rebuildHistoryUI = function()
         for _, child in ipairs(historyFrame:GetChildren()) do
             if child:IsA("GuiObject") then child:Destroy() end
+        end
+        if #stolenHistory == 0 then
+            local emptyLabel = Instance.new("TextLabel")
+            emptyLabel.Size = UDim2.new(1, -8, 0, 26)
+            emptyLabel.BackgroundTransparency = 1
+            emptyLabel.Text = L("Aún no hay animaciones en el historial.", "There are no animations in the history yet.")
+            emptyLabel.TextColor3 = AFO_TEXT
+            emptyLabel.TextTransparency = 0.3
+            emptyLabel.Font = Enum.Font.Gotham
+            emptyLabel.TextSize = 11
+            emptyLabel.TextWrapped = true
+            emptyLabel.ZIndex = 6
+            emptyLabel.Parent = historyFrame
         end
         local totalH = 0
         for i = #stolenHistory, 1, -1 do
             local entry = stolenHistory[i]
             local row = Instance.new("Frame")
-            row.Size = UDim2.new(1, 0, 0, 50)
+            row.Size = UDim2.new(1, 0, 0, 76)
             row.BackgroundColor3 = AFO_PURPLE_DIM
             row.BackgroundTransparency = 0.35
             row.BorderSizePixel = 0
@@ -566,21 +744,35 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             row.ZIndex = 5
             row.Parent = historyFrame
             do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,6); c.Parent = row end
+            local ownerLabel = Instance.new("TextLabel")
+            ownerLabel.Size = UDim2.new(1, -62, 0, 14)
+            ownerLabel.Position = UDim2.new(0, 6, 0, 3)
+            ownerLabel.BackgroundTransparency = 1
+            ownerLabel.TextColor3 = AFO_TEXT
+            ownerLabel.TextTransparency = 0.35
+            ownerLabel.Text = L("Usuario robado: ", "Stolen user: ") .. entry.displayName .. " · " .. entry.ownerName
+            ownerLabel.Font = Enum.Font.Gotham
+            ownerLabel.TextSize = 9
+            ownerLabel.TextXAlignment = Enum.TextXAlignment.Left
+            ownerLabel.TextTruncate = Enum.TextTruncate.AtEnd
+            ownerLabel.ZIndex = 6
+            ownerLabel.Parent = row
             local nameLabel = Instance.new("TextLabel")
-            nameLabel.Size = UDim2.new(1, -8, 0, 18)
-            nameLabel.Position = UDim2.new(0, 6, 0, 3)
+            nameLabel.Size = UDim2.new(1, -62, 0, 18)
+            nameLabel.Position = UDim2.new(0, 6, 0, 17)
             nameLabel.BackgroundTransparency = 1
             nameLabel.TextColor3 = AFO_TEXT
-            nameLabel.Text = L("De: ", "From: ") .. entry.displayName
+            nameLabel.Text = (entry.animationName or "?") .. " · " .. (entry.animId:match("%d+") or entry.animId)
             nameLabel.Font = Enum.Font.GothamSemibold
-            nameLabel.TextScaled = true
+            nameLabel.TextSize = 11
             nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
             nameLabel.ZIndex = 6
             nameLabel.Parent = row
             local idShort = entry.animId:match("%d+") or entry.animId
             local copyBtn = Instance.new("TextButton")
-            copyBtn.Size = UDim2.new(1, -8, 0, 22)
-            copyBtn.Position = UDim2.new(0, 4, 0, 23)
+            copyBtn.Size = UDim2.new(1, -62, 0, 19)
+            copyBtn.Position = UDim2.new(0, 4, 0, 37)
             copyBtn.BackgroundColor3 = AFO_BLACK
             copyBtn.BackgroundTransparency = 0.2
             copyBtn.TextColor3 = AFO_ACCENT
@@ -605,9 +797,37 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
                 copyBtn.TextColor3 = AFO_ACCENT
                 copied = false
             end)
-            totalH = totalH + 54
+            local durationLabel = Instance.new("TextLabel")
+            durationLabel.Size = UDim2.new(1, -62, 0, 14)
+            durationLabel.Position = UDim2.new(0, 6, 0, 59)
+            durationLabel.BackgroundTransparency = 1
+            durationLabel.TextColor3 = AFO_ACCENT
+            durationLabel.Text = "━━━━ " .. formatDuration(entry.duration) .. " ━━━━"
+            durationLabel.Font = Enum.Font.Gotham
+            durationLabel.TextSize = 9
+            durationLabel.TextXAlignment = Enum.TextXAlignment.Left
+            durationLabel.ZIndex = 6
+            durationLabel.Parent = row
+            local playHistoryButton = Instance.new("TextButton")
+            playHistoryButton.Size = UDim2.new(0, 52, 0, 54)
+            playHistoryButton.Position = UDim2.new(1, -56, 0, 11)
+            playHistoryButton.BackgroundColor3 = AFO_PURPLE
+            playHistoryButton.TextColor3 = Color3.new(1, 1, 1)
+            playHistoryButton.Text = ">"
+            playHistoryButton.Font = Enum.Font.GothamBold
+            playHistoryButton.TextSize = 20
+            playHistoryButton.BorderSizePixel = 0
+            playHistoryButton.ZIndex = 7
+            playHistoryButton.Parent = row
+            do local c3 = Instance.new("UICorner"); c3.CornerRadius = UDim.new(0, 7); c3.Parent = playHistoryButton end
+            playHistoryButton.MouseButton1Click:Connect(function()
+                if playAnimationInPlayer then playAnimationInPlayer(entry.animId, entry.animationName, entry) end
+            end)
+            totalH = totalH + 80
         end
         historyFrame.CanvasSize = UDim2.new(0, 0, 0, totalH)
+        -- La fila más reciente queda arriba; el ScrollBar permite recorrer las anteriores.
+        historyFrame.CanvasPosition = Vector2.new(0, 0)
     end
 
     local function openHistoryPanel()
@@ -617,7 +837,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         local baseH = getPanelBaseH()
         local rows = math.min(#stolenHistory, MAX_HISTORY)
         local headerH = 34
-        local rawHistH = rows * 54
+        local rawHistH = rows * 80
         local vp = _camera.ViewportSize
         local maxTotal = math.floor(vp.Y - 30)
         local maxHistH = maxTotal - baseH - headerH
@@ -654,6 +874,111 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
         if not animator then return end
         for _, t in ipairs(animator:GetPlayingAnimationTracks()) do t:Stop(0) end
     end
+
+    -- ==========================================
+    -- LOGICA DEL REPRODUCTOR Y KEYFRAMES
+    -- ==========================================
+    local function closePlayer(stopTrack)
+        if stopTrack and playerTrack then pcall(function() playerTrack:Stop(0.12) end) end
+        if stopTrack then playerTrack = nil end
+        if playerRenderConn then playerRenderConn:Disconnect(); playerRenderConn = nil; _playerRenderConn = nil end
+        playerPanel.Visible = false
+    end
+
+    local function updatePlayerTimeline()
+        if not playerTrack then
+            timelineFill.Size = UDim2.new(0, 0, 1, 0)
+            timeLabel.Text = "0.00s / 0.00s · 0%"
+            return
+        end
+        local length = math.max(playerTrack.Length or 0, 0.001)
+        local position = math.clamp(playerTrack.TimePosition or 0, 0, length)
+        local percentage = position / length
+        timelineFill.Size = UDim2.new(percentage, 0, 1, 0)
+        timeLabel.Text = string.format("%.2fs / %.2fs · %d%%", position, length, math.floor(percentage * 100))
+    end
+
+    local function startPlayerTimeline(entry)
+        if playerRenderConn then playerRenderConn:Disconnect() end
+        playerRenderConn = _RunService.RenderStepped:Connect(function()
+            if not playerTrack then return end
+            updatePlayerTimeline()
+            if entry and playerTrack.Length and playerTrack.Length > 0 and entry.duration ~= playerTrack.Length then
+                entry.duration = playerTrack.Length
+                if isExpanded then rebuildHistoryUI() end
+            end
+        end)
+        _playerRenderConn = playerRenderConn
+    end
+
+    playAnimationInPlayer = function(rawId, animationName, historyEntry)
+        local animationId = normalizeAnimationId(rawId)
+        if not animationId or not animator then
+            showWarning(L("⚠ ID de animación inválido", "⚠ Invalid animation ID"))
+            return
+        end
+        -- Cargar una nueva animación sustituye por completo a la anterior.
+        unlockAnimations()
+        stopAllTracks()
+        if playerTrack then pcall(function() playerTrack:Stop(0) end) end
+        isStolenPlaying = false
+        stolenTrack = nil
+        _stolenTrack = nil
+        local animObj = Instance.new("Animation")
+        animObj.AnimationId = animationId
+        local newTrack = animator:LoadAnimation(animObj)
+        newTrack.Priority = Enum.AnimationPriority.Action4
+        newTrack.Looped = false
+        newTrack:Play(0.1, 1, 1)
+        playerTrack = newTrack
+        playerPaused, playerLooped = false, false
+        playerInput.Text = shortId(animationId)
+        playerName.Text = (animationName and animationName ~= "" and animationName or L("Animación sin nombre", "Unnamed animation")) .. " · " .. shortId(animationId)
+        pauseButton.Text = L("❚❚ Pausa", "❚❚ Pause")
+        loopButton.Text = L("↻ Loop", "↻ Loop")
+        loopButton.BackgroundColor3 = Color3.fromRGB(28, 18, 45)
+        playerPanel.Visible = true
+        startPlayerTimeline(historyEntry)
+    end
+
+    playerClose.MouseButton1Click:Connect(function() closePlayer(true) end)
+    stopButton.MouseButton1Click:Connect(function()
+        unlockAnimations(); stopAllTracks(); playerTrack = nil; isStolenPlaying = false
+        closePlayer(false)
+    end)
+    playButton.MouseButton1Click:Connect(function() playAnimationInPlayer(playerInput.Text, nil, nil) end)
+    playerInput.FocusLost:Connect(function(enterPressed)
+        if enterPressed then playAnimationInPlayer(playerInput.Text, nil, nil) end
+    end)
+    pauseButton.MouseButton1Click:Connect(function()
+        if not playerTrack then return end
+        if playerPaused then
+            if playerTrack.TimePosition >= math.max(playerTrack.Length - 0.05, 0) then playerTrack.TimePosition = 0; playerTrack:Play() else playerTrack:AdjustSpeed(1) end
+            playerPaused = false; pauseButton.Text = L("❚❚ Pausa", "❚❚ Pause")
+        else
+            playerTrack:AdjustSpeed(0); playerPaused = true; pauseButton.Text = L("▶ Reanudar", "▶ Resume")
+        end
+    end)
+    loopButton.MouseButton1Click:Connect(function()
+        if not playerTrack then return end
+        playerLooped = not playerLooped
+        playerTrack.Looped = playerLooped
+        loopButton.Text = playerLooped and L("↻ Loop ON", "↻ Loop ON") or L("↻ Loop", "↻ Loop")
+        loopButton.BackgroundColor3 = playerLooped and Color3.fromRGB(20, 75, 42) or Color3.fromRGB(28, 18, 45)
+    end)
+    timelineBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then playerScrubbing = true end
+    end)
+    _playerInputChanged = _UserInputService.InputChanged:Connect(function(input)
+        if playerScrubbing and input.UserInputType == Enum.UserInputType.MouseMovement and playerTrack and playerTrack.Length > 0 then
+            local fraction = math.clamp((input.Position.X - timelineBar.AbsolutePosition.X) / timelineBar.AbsoluteSize.X, 0, 1)
+            playerTrack.TimePosition = fraction * playerTrack.Length
+            updatePlayerTimeline()
+        end
+    end)
+    _playerInputEnded = _UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then playerScrubbing = false end
+    end)
 
     local BLOCKED_ANIM_IDS = {
         STEALER_ANIM_ID,
@@ -1006,6 +1331,10 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
             if yHeld and not expandConsumed then
                 expandConsumed = true
                 if isExpanded then closeHistoryPanel() else if panel.Visible then openHistoryPanel() end end
+            elseif not yHeld then
+                -- U abre/cierra el reproductor único; Y+U conserva el historial.
+                playerPanel.Visible = not playerPanel.Visible
+                if playerPanel.Visible then playerInput:CaptureFocus() end
             end
             return
         end
@@ -1024,6 +1353,7 @@ function M.Start(Keys, lplr, CoreGui, RunService, TweenService, camera)
 
     local function iniciarMiscChar(char)
         unlockAnimations()
+        closePlayer(true)
         stealerTrack = nil; stolenTrack = nil
         _stealerTrack = nil; _stolenTrack = nil
         stoledAnimId = nil; stolenAnimOwner = nil; stolenAnimSource = nil
@@ -1053,6 +1383,9 @@ function M.Stop(preserveEnabled)
     if _miscInputBegin then pcall(function() _miscInputBegin:Disconnect() end); _miscInputBegin = nil end
     if _miscInputEnd then pcall(function() _miscInputEnd:Disconnect() end); _miscInputEnd = nil end
     if _miscCharConn then pcall(function() _miscCharConn:Disconnect() end); _miscCharConn = nil end
+    if _playerRenderConn then pcall(function() _playerRenderConn:Disconnect() end); _playerRenderConn = nil end
+    if _playerInputChanged then pcall(function() _playerInputChanged:Disconnect() end); _playerInputChanged = nil end
+    if _playerInputEnded then pcall(function() _playerInputEnded:Disconnect() end); _playerInputEnded = nil end
     if _animatorConn then pcall(function() _animatorConn:Disconnect() end); _animatorConn = nil end
     if _circleAlphaThread then pcall(function() task.cancel(_circleAlphaThread) end); _circleAlphaThread = nil end
     if _pulseThread then pcall(function() task.cancel(_pulseThread) end); _pulseThread = nil end
