@@ -23,10 +23,9 @@ M.Config = {
             Delay = 5,
             Duration = 5,
             ExtendUntilSourceDies = true,
-            -- "Impulse" keeps the real body in the protected sky state and
-            -- creates a local, script-readable exclusion zone at the source.
-            -- Set Style = "Dodge" to use the movable clone presentation.
-            Style = "Impulse",
+            -- "Dodge" creates and controls the movable clone presentation.
+            -- "Impulse" intentionally suppresses the clone and its movement.
+            Style = "Dodge",
             DisplayName = "Bakugo's Nuker",
         },
     },
