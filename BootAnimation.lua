@@ -210,8 +210,8 @@ local function SpawnAFODimension(centerCF)
     local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- El patrón de líneas se mantiene siempre fucsia, independiente del fondo.
-    local AFO_FUCHSIA = Color3.fromRGB(255, 0, 255)
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
+    local NEON_FUCHSIA = Color3.fromRGB(255, 0, 255)
     local AFO_BRIGHT_PURPLE = Color3.fromRGB(170, 0, 255)
     local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)
@@ -275,11 +275,11 @@ local function SpawnAFODimension(centerCF)
         neonGlow.Name = "NeonGlow"
         neonGlow.BackgroundTransparency = 1
         neonGlow.Image = NEON_TEXTURE_ID
-        neonGlow.ImageColor3 = AFO_FUCHSIA
+        neonGlow.ImageColor3 = NEON_FUCHSIA
         neonGlow.ImageTransparency = 0.6 
         neonGlow.AnchorPoint = Vector2.new(0.5, 0.5)
         neonGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
-        neonGlow.Size = UDim2.new(1.85, 0, 1.85, 0)
+        neonGlow.Size = UDim2.new(1.35, 0, 1.35, 0)
         neonGlow.ZIndex = 2
         neonGlow.Parent = surfGui
         
@@ -287,10 +287,10 @@ local function SpawnAFODimension(centerCF)
         neonMain.Name = "NeonMain"
         neonMain.BackgroundTransparency = 1
         neonMain.Image = NEON_TEXTURE_ID
-        neonMain.ImageColor3 = AFO_FUCHSIA
+        neonMain.ImageColor3 = NEON_FUCHSIA
         neonMain.AnchorPoint = Vector2.new(0.5, 0.5)
         neonMain.Position = UDim2.new(0.5, 0, 0.5, 0)
-        neonMain.Size = UDim2.new(1.7, 0, 1.7, 0)
+        neonMain.Size = UDim2.new(1.25, 0, 1.25, 0)
         neonMain.ZIndex = 3
         neonMain.Parent = surfGui
 
@@ -450,14 +450,14 @@ local function SpawnAFODimension(centerCF)
                 local glow = gui:FindFirstChild("NeonGlow")
                 
                 -- Zoom y rotación continua rápida
-                local currentScale = 1.7 + (alpha * 6)
+                local currentScale = 1 + (alpha * 6)
                 if main then
                     main.Rotation = main.Rotation + (dt * 150)
                     main.Size = UDim2.new(currentScale, 0, currentScale, 0)
                 end
                 if glow then
                     glow.Rotation = glow.Rotation + (dt * 150)
-                    glow.Size = UDim2.new(currentScale + 0.15, 0, currentScale + 0.15, 0)
+                    glow.Size = UDim2.new(currentScale + 0.1, 0, currentScale + 0.1, 0)
                 end
             end
 
@@ -527,20 +527,18 @@ local function manualAttachAccessory(accessory, character)
 end
 
 local function ApplyDummyAppearance(rig)
-    local DUMMY_ASSETS = {
-        Hat = "97472955121755",
-        Front = "102552048804307",
-        ShoulderLeft = "115468631813882",
-        ShoulderRight = "88203090104599",
-        Shirt = "97549107762722",
-        Pants = "90709447311242"
-    }
-    local CLASSIC_PEACH = BrickColor.new("Light orange")
     local rigHum = rig:FindFirstChildOfClass("Humanoid")
     if not rigHum then return end
-    rigHum.RigType = Enum.HumanoidRigType.R6
 
-    -- Quita solamente la apariencia previa del dummy para dejar un R6 cuadrado normal.
+    local peach = BrickColor.new("Light orange").Color
+    local dummyAssets = {
+        Hat = "97472955121755",
+        Front = "102552048804307",
+        LeftShoulder = "115468631813882",
+        RightShoulder = "88203090104599",
+    }
+
+    -- Limpia solamente los elementos cosméticos del dummy; el clon del jugador no se toca.
     for _, v in ipairs(rig:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
@@ -548,86 +546,73 @@ local function ApplyDummyAppearance(rig)
     end
 
     local bodyColors = Instance.new("BodyColors")
-    bodyColors.HeadColor3 = CLASSIC_PEACH.Color
-    bodyColors.LeftArmColor3 = CLASSIC_PEACH.Color
-    bodyColors.RightArmColor3 = CLASSIC_PEACH.Color
-    bodyColors.LeftLegColor3 = CLASSIC_PEACH.Color
-    bodyColors.RightLegColor3 = CLASSIC_PEACH.Color
-    bodyColors.TorsoColor3 = CLASSIC_PEACH.Color
+    bodyColors.HeadColor3 = peach
+    bodyColors.LeftArmColor3 = peach
+    bodyColors.LeftLegColor3 = peach
+    bodyColors.RightArmColor3 = peach
+    bodyColors.RightLegColor3 = peach
+    bodyColors.TorsoColor3 = peach
     bodyColors.Parent = rig
 
-    for _, partName in ipairs({"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}) do
-        local part = rig:FindFirstChild(partName)
-        if part and part:IsA("BasePart") then
-            part.Color = CLASSIC_PEACH.Color
+    for _, part in ipairs(rig:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.Color = peach
         end
     end
 
-    local function getAssetItem(assetId, className)
-        local ok, objects = pcall(function()
+    local shirt = Instance.new("Shirt")
+    shirt.ShirtTemplate = "rbxassetid://97549107762722"
+    shirt.Parent = rig
+
+    local pants = Instance.new("Pants")
+    pants.PantsTemplate = "rbxassetid://90709447311242"
+    pants.Parent = rig
+
+    local function getAccessory(assetId)
+        local success, loadedAssets = pcall(function()
             return game:GetObjects("rbxassetid://" .. assetId)
         end)
-        if not ok then return nil end
-        for _, object in ipairs(objects) do
-            if object:IsA(className) then return object end
-            local item = object:FindFirstChildWhichIsA(className, true)
-            if item then return item end
+        if not success or not loadedAssets then return nil end
+
+        local accessory
+        for _, loaded in ipairs(loadedAssets) do
+            local source = loaded:IsA("Accessory") and loaded or loaded:FindFirstChildWhichIsA("Accessory", true)
+            if source then accessory = source:Clone() end
+            loaded:Destroy()
+            if accessory then break end
         end
-        return nil
+        return accessory
     end
 
-    local function addAccessory(assetId)
-        local source = getAssetItem(assetId, "Accessory")
-        if not source then return end
-        local accessory = source:Clone()
+    local function addAccessory(assetId, scaleToOneAndHalf)
+        local accessory = getAccessory(assetId)
+        if not accessory then
+            warn("No se pudo cargar el accesorio del dummy: " .. assetId)
+            return
+        end
+
         local added = pcall(function() rigHum:AddAccessory(accessory) end)
         local handle = accessory:FindFirstChild("Handle")
         if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
             manualAttachAccessory(accessory, rig)
         end
 
-        -- Se conserva el ajuste existente de la cabeza y el sombrero; el sombrero queda a x1.5.
-        if handle then
-            local isHeadAcc = false
-            local weld = handle:FindFirstChild("AccessoryWeld")
-            if weld and weld.Part1 and weld.Part1.Name == "Head" then
-                isHeadAcc = true
-            else
-                local att = findHandleAttachment(handle)
-                if att and (att.Name == "HatAttachment" or att.Name == "HairAttachment" or att.Name == "FaceFrontAttachment" or att.Name == "FaceCenterAttachment") then
-                    isHeadAcc = true
-                end
+        -- Conserva el ajuste pedido para el sombrero, sin alterar la cabeza del dummy.
+        if scaleToOneAndHalf and handle then
+            if handle:IsA("MeshPart") then
+                handle.Size = handle.Size * 1.5
             end
-            if isHeadAcc then
-                if handle:IsA("MeshPart") then
-                    handle.Size = handle.Size * 1.5
-                end
-                local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-                if mesh then
-                    mesh.Scale = mesh.Scale * 1.5
-                end
-                local att = handle:FindFirstChildOfClass("Attachment")
-                if att then
-                    att.Position = att.Position * 1.5
-                    if weld then
-                        weld.C0 = att.CFrame * CFrame.new(0, handle.Size.Y * 0.2, 0)
-                    end
-                end
-            end
+            local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+            if mesh then mesh.Scale = mesh.Scale * 1.5 end
         end
     end
 
-    addAccessory(DUMMY_ASSETS.Hat)
-    addAccessory(DUMMY_ASSETS.Front)
-    addAccessory(DUMMY_ASSETS.ShoulderLeft)
-    addAccessory(DUMMY_ASSETS.ShoulderRight)
+    addAccessory(dummyAssets.Hat, true)
+    addAccessory(dummyAssets.Front, false)
+    addAccessory(dummyAssets.LeftShoulder, false)
+    addAccessory(dummyAssets.RightShoulder, false)
 
-    local shirt = getAssetItem(DUMMY_ASSETS.Shirt, "Shirt")
-    if shirt then shirt:Clone().Parent = rig end
-    local pants = getAssetItem(DUMMY_ASSETS.Pants, "Pants")
-    if pants then pants:Clone().Parent = rig end
-
-    -- Se conserva la modificación previa de cabeza exactamente dentro de la apariencia del dummy.
+    -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
     if head then
         head.Transparency = 1
@@ -801,11 +786,7 @@ end
 
 Asset.Parent = workspace
 local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
--- La apariencia del dummy no puede interrumpir la cinemática ni la actualización
--- posterior del avatar del clon si Roblox no entrega alguno de sus assets.
-if CRigs and CRigs:FindFirstChild("GOD") then
-    pcall(ApplyDummyAppearance, CRigs.GOD)
-end
+if CRigs.GOD then ApplyDummyAppearance(CRigs.GOD) end
 
 local snd = Instance.new("Sound", workspace)
 snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
@@ -817,7 +798,7 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
-task.delay(8.5, function() 
+task.delay(9.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
@@ -830,8 +811,8 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    -- 1 segundo adicional de oscuridad (antes era 2, ahora es 3)
-    task.delay(3, function()
+    -- El inicio ocurre 1 s después, pero el corte/final permanece en el mismo instante.
+    task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
         tw.Completed:Connect(function() sGui:Destroy() end)
