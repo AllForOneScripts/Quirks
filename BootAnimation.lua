@@ -1,3 +1,8 @@
+--[[
+                ESTA ES UNA VERSIÓN DEMO
+                        v: 1.7
+]]
+
 if getgenv()._BootAnimRunning then
     return
 end
