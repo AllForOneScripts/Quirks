@@ -1,6 +1,5 @@
 --[[
-                ESTA ES UNA VERSIÓN DEMO
-                        v: 1.7
+ESTA ES UNA VERSIÓN DEMO
 ]]
 
 if getgenv()._BootAnimRunning then
@@ -530,94 +529,69 @@ local function manualAttachAccessory(accessory, character)
     return true
 end
 
+-- AQUI SE ENCUENTRA LA MODIFICACION --
 local function ApplyJaidenAppearance(rig)
-    local targetUsername = "Jaiden_X33"
-    local successId, userId = pcall(function() return Players:GetUserIdFromNameAsync(targetUsername) end)
-    
-    if not successId or not userId then return end
-    
-    local sModel, appearanceModel = pcall(function()
-        return Players:GetCharacterAppearanceAsync(userId)
-    end)
-    
-    if not sModel or not appearanceModel then return end
-    
     local rigHum = rig:FindFirstChildOfClass("Humanoid")
     if rigHum then rigHum.RigType = Enum.HumanoidRigType.R6 end
     
+    -- Limpiar modelo base (sin mesh r15, sin ropa anterior, sin ropa extra)
     for _, v in ipairs(rig:GetChildren()) do
-        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") then
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
         end
     end
     
-    for _, item in ipairs(appearanceModel:GetChildren()) do
-        if item:IsA("Accessory") then
-            local clone = item:Clone()
-            local added = pcall(function() rigHum:AddAccessory(clone) end)
-            local handle = clone:FindFirstChild("Handle")
-            
-            if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
-                manualAttachAccessory(clone, rig)
-            end
-            
-            if handle then
-                local isHeadAcc = false
-                local weld = handle:FindFirstChild("AccessoryWeld")
-                if weld and weld.Part1 and weld.Part1.Name == "Head" then
-                    isHeadAcc = true
-                else
-                    local att = findHandleAttachment(handle)
-                    if att and (att.Name == "HatAttachment" or att.Name == "HairAttachment" or att.Name == "FaceFrontAttachment" or att.Name == "FaceCenterAttachment") then
-                        isHeadAcc = true
-                    end
-                end
-
-                if isHeadAcc then
-                    if handle:IsA("MeshPart") then
-                        handle.Size = handle.Size * 1.5
-                    end
-                    local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-                    if mesh then
-                        mesh.Scale = mesh.Scale * 1.5
-                    end
-                    local att = handle:FindFirstChildOfClass("Attachment")
-                    if att then
-                        att.Position = att.Position * 1.5
-                        if weld then
-                            weld.C0 = att.CFrame * CFrame.new(0, handle.Size.Y * 0.2, 0)
-                        end
-                    end
-                end
-            end
-            
-        elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") then
-            item:Clone().Parent = rig
-            
-        elseif item.Name == "R6" and item:IsA("Folder") then
-            for _, r6Item in ipairs(item:GetChildren()) do
-                if r6Item:IsA("CharacterMesh") then
-                    r6Item:Clone().Parent = rig
-                end
-            end
-            
-        elseif item:IsA("CharacterMesh") then
-            item:Clone().Parent = rig
-        end
-    end
-    
-    appearanceModel:Destroy()
-
+    -- Hacer la cabeza cuadrada normal tipo R6
     local head = rig:FindFirstChild("Head")
     if head then
-        head.Transparency = 1
+        head.Transparency = 0
         for _, v in ipairs(head:GetChildren()) do
-            if v:IsA("Decal") or v:IsA("SpecialMesh") or v:IsA("DataModelMesh") then
+            if v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Decal") then
                 v:Destroy()
+            end
+        end
+        
+        -- Añadir la cara por defecto
+        local defaultFace = Instance.new("Decal")
+        defaultFace.Name = "face"
+        defaultFace.Face = Enum.NormalId.Front
+        defaultFace.Texture = "rbxasset://textures/face.png"
+        defaultFace.Parent = head
+    end
+
+    -- IDs de los assets que solicitaste
+    local assetIds = {
+        97472955121755,  -- Sombrero
+        102552048804307, -- Frontal
+        115468631813882, -- Hombro 1
+        88203090104599,  -- Hombro 2
+        97549107762722,  -- Camisa
+        90709447311242   -- Pantalón
+    }
+
+    -- Cargar los accesorios y ropa y equiparlos
+    for _, id in ipairs(assetIds) do
+        local success, assets = pcall(function()
+            return game:GetObjects("rbxassetid://" .. id)
+        end)
+        
+        if success and assets then
+            for _, item in ipairs(assets) do
+                if item:IsA("Accessory") then
+                    local handle = item:FindFirstChild("Handle")
+                    local added = pcall(function() rigHum:AddAccessory(item) end)
+                    
+                    if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
+                        manualAttachAccessory(item, rig)
+                    end
+                elseif item:IsA("Shirt") or item:IsA("Pants") then
+                    item.Parent = rig
+                end
             end
         end
     end
 end
+-- FIN DE LA MODIFICACION --
 
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
