@@ -1,7 +1,3 @@
---[[
-ESTA ES UNA VERSIÓN DEMO
-]]
-
 if getgenv()._BootAnimRunning then
     return
 end
@@ -805,7 +801,11 @@ end
 
 Asset.Parent = workspace
 local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
-if CRigs.GOD then ApplyDummyAppearance(CRigs.GOD) end
+-- La apariencia del dummy no puede interrumpir la cinemática ni la actualización
+-- posterior del avatar del clon si Roblox no entrega alguno de sus assets.
+if CRigs and CRigs:FindFirstChild("GOD") then
+    pcall(ApplyDummyAppearance, CRigs.GOD)
+end
 
 local snd = Instance.new("Sound", workspace)
 snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
