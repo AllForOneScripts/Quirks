@@ -214,8 +214,9 @@ local function SpawnAFODimension(centerCF)
     local BG_TEXTURE_ID = "rbxassetid://72194288856630"  
     local SMOKE_TEXTURE_ID = "rbxassetid://13490928216"
 
-    -- Siempre Fucsia brillante
-    local AFO_FUCHSIA = Color3.fromRGB(255, 0, 255)
+    -- Colores modificados
+    local PURE_FUCHSIA = Color3.fromRGB(255, 0, 255) 
+    local AFO_FUCHSIA = Color3.fromRGB(136, 21, 88)
     local AFO_BRIGHT_PURPLE = Color3.fromRGB(170, 0, 255)
     local AFO_DEEP_PURPLE = Color3.fromRGB(45, 5, 30)
     local AFO_BLACK = Color3.fromRGB(5, 5, 5)
@@ -274,16 +275,16 @@ local function SpawnAFODimension(centerCF)
         surfGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         surfGui.Parent = wall
         
-        -- Bordecito transparente (Mayor cobertura de textura)
+        -- Bordecito transparente modificado (Fucsia puro y cubre mucho más)
         local neonGlow = Instance.new("ImageLabel")
         neonGlow.Name = "NeonGlow"
         neonGlow.BackgroundTransparency = 1
         neonGlow.Image = NEON_TEXTURE_ID
-        neonGlow.ImageColor3 = AFO_FUCHSIA
-        neonGlow.ImageTransparency = 0.4 
+        neonGlow.ImageColor3 = PURE_FUCHSIA
+        neonGlow.ImageTransparency = 0.6 
         neonGlow.AnchorPoint = Vector2.new(0.5, 0.5)
         neonGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
-        neonGlow.Size = UDim2.new(2.5, 0, 2.5, 0)
+        neonGlow.Size = UDim2.new(3.1, 0, 3.1, 0) -- Escala base enormemente incrementada
         neonGlow.ZIndex = 2
         neonGlow.Parent = surfGui
         
@@ -291,10 +292,10 @@ local function SpawnAFODimension(centerCF)
         neonMain.Name = "NeonMain"
         neonMain.BackgroundTransparency = 1
         neonMain.Image = NEON_TEXTURE_ID
-        neonMain.ImageColor3 = AFO_FUCHSIA
+        neonMain.ImageColor3 = PURE_FUCHSIA
         neonMain.AnchorPoint = Vector2.new(0.5, 0.5)
         neonMain.Position = UDim2.new(0.5, 0, 0.5, 0)
-        neonMain.Size = UDim2.new(2.2, 0, 2.2, 0)
+        neonMain.Size = UDim2.new(3, 0, 3, 0) -- Escala base enormemente incrementada
         neonMain.ZIndex = 3
         neonMain.Parent = surfGui
 
@@ -446,21 +447,22 @@ local function SpawnAFODimension(centerCF)
             end
         end
 
-        -- Actualización del Neon y la luz expansiva con mayor cobertura visual
+        -- Actualización del Neon y la luz expansiva (Empieza mucho más grande)
         for _, wall in ipairs(dimensionFolder:GetChildren()) do
             local gui = wall:FindFirstChild("NeonGui")
             if gui then
                 local main = gui:FindFirstChild("NeonMain")
                 local glow = gui:FindFirstChild("NeonGlow")
                 
-                local currentScale = 2.2 + (alpha * 8)
+                -- Se expande partiendo desde la base x3
+                local currentScale = 3 + (alpha * 10)
                 if main then
                     main.Rotation = main.Rotation + (dt * 150)
                     main.Size = UDim2.new(currentScale, 0, currentScale, 0)
                 end
                 if glow then
                     glow.Rotation = glow.Rotation + (dt * 150)
-                    glow.Size = UDim2.new(currentScale + 0.3, 0, currentScale + 0.3, 0)
+                    glow.Size = UDim2.new(currentScale + 0.1, 0, currentScale + 0.1, 0)
                 end
             end
 
@@ -529,13 +531,21 @@ local function manualAttachAccessory(accessory, character)
     return true
 end
 
+-- AQUI SE ENCUENTRA LA MODIFICACION DEL ASPECTO --
 local function ApplyJaidenAppearance(rig)
     local rigHum = rig:FindFirstChildOfClass("Humanoid")
     if rigHum then rigHum.RigType = Enum.HumanoidRigType.R6 end
+    
+    -- Limpiar modelo base (sin ropa anterior, accesorios, meshes de r15, etc)
+    for _, v in ipairs(rig:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
+            v:Destroy()
+        end
+    end
 
-    -- Color de piel: Durazno clásico
+    -- Color de piel (Durazno clásico / Pastel Brown / Light Peach)
     local peachColor = Color3.fromRGB(255, 204, 153)
-    local bodyColors = rig:FindFirstChildOfClass("BodyColors") or Instance.new("BodyColors")
+    local bodyColors = Instance.new("BodyColors")
     bodyColors.HeadColor3 = peachColor
     bodyColors.TorsoColor3 = peachColor
     bodyColors.LeftArmColor3 = peachColor
@@ -544,20 +554,25 @@ local function ApplyJaidenAppearance(rig)
     bodyColors.RightLegColor3 = peachColor
     bodyColors.Parent = rig
 
-    for _, part in ipairs(rig:GetChildren()) do
-        if part:IsA("BasePart") then
+    for _, partName in ipairs({"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}) do
+        local part = rig:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
             part.Color = peachColor
         end
     end
-
-    -- Limpiar ropa y accesorios previos sin tocar propiedades nativas de la cabeza ni escalas
-    for _, v in ipairs(rig:GetChildren()) do
-        if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("CharacterMesh") then
-            v:Destroy()
+    
+    -- Restauración de tu lógica de la cabeza invisible
+    local head = rig:FindFirstChild("Head")
+    if head then
+        head.Transparency = 1 
+        for _, v in ipairs(head:GetChildren()) do
+            if v:IsA("SpecialMesh") or v:IsA("DataModelMesh") or v:IsA("Decal") then
+                v:Destroy()
+            end
         end
     end
 
-    -- IDs solicitados
+    -- IDs de los assets que solicitaste
     local assetIds = {
         97472955121755,  -- Sombrero
         102552048804307, -- Frontal
@@ -567,6 +582,7 @@ local function ApplyJaidenAppearance(rig)
         90709447311242   -- Pantalón
     }
 
+    -- Cargar los accesorios y ropa y equiparlos
     for _, id in ipairs(assetIds) do
         local success, assets = pcall(function()
             return game:GetObjects("rbxassetid://" .. id)
@@ -575,11 +591,44 @@ local function ApplyJaidenAppearance(rig)
         if success and assets then
             for _, item in ipairs(assets) do
                 if item:IsA("Accessory") then
-                    local handle = item:FindFirstChild("Handle")
-                    local added = pcall(function() rigHum:AddAccessory(item) end)
+                    local clone = item:Clone()
+                    local handle = clone:FindFirstChild("Handle")
+                    local added = pcall(function() rigHum:AddAccessory(clone) end)
                     
                     if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
-                        manualAttachAccessory(item, rig)
+                        manualAttachAccessory(clone, rig)
+                    end
+
+                    -- Restauración y modificación de tu lógica del sombrero (x2)
+                    if handle then
+                        local isHeadAcc = false
+                        local weld = handle:FindFirstChild("AccessoryWeld")
+                        if weld and weld.Part1 and weld.Part1.Name == "Head" then
+                            isHeadAcc = true
+                        else
+                            local att = findHandleAttachment(handle)
+                            if att and (att.Name == "HatAttachment" or att.Name == "HairAttachment" or att.Name == "FaceFrontAttachment" or att.Name == "FaceCenterAttachment") then
+                                isHeadAcc = true
+                            end
+                        end
+
+                        if isHeadAcc then
+                            local scaleMult = 2 -- Sombrero escalado x2
+                            if handle:IsA("MeshPart") then
+                                handle.Size = handle.Size * scaleMult
+                            end
+                            local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+                            if mesh then
+                                mesh.Scale = mesh.Scale * scaleMult
+                            end
+                            local att = handle:FindFirstChildOfClass("Attachment")
+                            if att then
+                                att.Position = att.Position * scaleMult
+                                if weld then
+                                    weld.C0 = att.CFrame * CFrame.new(0, handle.Size.Y * 0.2, 0)
+                                end
+                            end
+                        end
                     end
                 elseif item:IsA("Shirt") or item:IsA("Pants") then
                     item.Parent = rig
@@ -588,6 +637,7 @@ local function ApplyJaidenAppearance(rig)
         end
     end
 end
+-- FIN DE LA MODIFICACION --
 
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
@@ -866,7 +916,7 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- BUG FIX: Sistema de Raycast y Teleport iterativo para retornar strictly al suelo sin botes antinaturales
+-- BUG FIX: Sistema de Raycast y Teleport iterativo para retornar estrictamente al suelo sin botes antinaturales
 root.Anchored = false
 
 local rayParams = RaycastParams.new()
