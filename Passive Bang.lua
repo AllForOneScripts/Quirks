@@ -21,8 +21,9 @@ local _rightDown = false
 local _rescore = 0
 local _wasLockActive = false
 
--- Estado del TP de caída. Durante el breve anclaje mantiene al personaje al
--- costado de la cabeza; después lo suelta con velocidad vertical descendente.
+-- Estado del TP de caída. Durante la caída el personaje conserva siempre el
+-- mismo X/Z que el HumanoidRootPart del objetivo: queda justo encima, sin
+-- predicción lateral, offset ni posicionamiento trasero.
 local _dropTargetRoot
 local _dropStickUntil = 0
 local _dropCompletedFor
@@ -47,9 +48,6 @@ local PB = {
     FALL_HEAD_STICK_TIME = 0.22,
     FALL_STICK_VELOCITY = -20,
     FALL_RELEASE_VELOCITY = -140,
-    FALL_PREDICT_MOVEMENT = 0.12,
-    FALL_GUIDED_DESCENT_TIME = 0.38,
-    FALL_MAX_CORRECTION = 24,
     FALL_HITBOX_VERTICAL_REACH = 3,
     FALL_GROUND_SAFETY_MARGIN = 0.75,
     -- Anclaje recto y bajo: el HRP queda dentro de la hitbox superior del
@@ -61,7 +59,6 @@ local function resetDrop()
     _dropTargetRoot = nil
     _dropStickUntil = 0
     _dropCompletedFor = nil
-    _dropGuideUntil = 0
 end
 
 local function resetTarget()
@@ -238,9 +235,11 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
     local now = tick()
 
     -- Tras soltar el anclaje no debe volver al TP normal en el siguiente
-    -- frame: se deja que la velocidad descendente complete la caída. Se
-    -- reinicia al soltar la tecla de Bang o al pasar a otro objetivo.
+    -- frame. Se sigue fijando únicamente su X/Z al centro del objetivo para
+    -- que no aparezcan círculos ni desplazamientos laterales durante la caída.
     if _dropCompletedFor == targetRoot then
+        myRoot.CFrame = CFrame.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+        myRoot.AssemblyLinearVelocity = Vector3.new(0, myRoot.AssemblyLinearVelocity.Y, 0)
         return true
     end
 
@@ -249,7 +248,6 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
         and myRoot.Position.Y - targetRoot.Position.Y >= PB.FALL_TRIGGER_HEIGHT then
         _dropTargetRoot = targetRoot
         _dropStickUntil = now + PB.FALL_HEAD_STICK_TIME
-        _dropGuideUntil = 0
     end
 
     if _dropTargetRoot ~= targetRoot then return false end
@@ -264,9 +262,7 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
         local footHeight = myHumanoid.HipHeight + (myRoot.Size.Y / 2) + 0.15
         local height = footHeight + PB.FALL_HEAD_HEIGHT_ADJUSTMENT
 
-        local targetVelocity = targetRoot.AssemblyLinearVelocity
-        local predictedHead = headPosition + Vector3.new(targetVelocity.X, 0, targetVelocity.Z) * PB.FALL_PREDICT_MOVEMENT
-        local ground = getGroundBelow(predictedHead, { myRoot.Parent, targetRoot.Parent })
+        local ground = getGroundBelow(headPosition, { myRoot.Parent, targetRoot.Parent })
         local entryY = math.max(
             headPosition.Y + height,
             targetRoot.Position.Y + PB.FALL_HITBOX_VERTICAL_REACH
@@ -278,40 +274,16 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
             )
         end
 
-        myRoot.CFrame = CFrame.new(predictedHead.X, entryY, predictedHead.Z)
-        myRoot.AssemblyLinearVelocity = Vector3.new(
-            targetVelocity.X,
-            PB.FALL_STICK_VELOCITY,
-            targetVelocity.Z
-        )
+        myRoot.CFrame = CFrame.new(targetRoot.Position.X, entryY, targetRoot.Position.Z)
+        myRoot.AssemblyLinearVelocity = Vector3.new(0, PB.FALL_STICK_VELOCITY, 0)
         return true
     end
 
-    if _dropGuideUntil == 0 then
-        _dropGuideUntil = now + PB.FALL_GUIDED_DESCENT_TIME
-    end
-
-    local velocity = targetRoot.AssemblyLinearVelocity
-    local predictedPosition = targetRoot.Position
-        + Vector3.new(velocity.X, 0, velocity.Z) * PB.FALL_PREDICT_MOVEMENT
-    local correction = Vector3.new(
-        predictedPosition.X - myRoot.Position.X, 0,
-        predictedPosition.Z - myRoot.Position.Z
-    )
-
-    if now < _dropGuideUntil and correction.Magnitude <= PB.FALL_MAX_CORRECTION then
-        myRoot.CFrame = CFrame.new(predictedPosition.X, myRoot.Position.Y, predictedPosition.Z)
-        myRoot.AssemblyLinearVelocity = Vector3.new(
-            velocity.X, PB.FALL_RELEASE_VELOCITY, velocity.Z
-        )
-        return true
-    end
-
-    myRoot.AssemblyLinearVelocity = Vector3.new(
-        velocity.X,
-        PB.FALL_RELEASE_VELOCITY,
-        velocity.Z
-    )
+    -- Al terminar el anclaje continúa en vertical, exactamente sobre el HRP.
+    -- No se usa la predicción ni la velocidad horizontal del objetivo: ambas
+    -- eran las que podían desplazarlo o hacerle describir círculos.
+    myRoot.CFrame = CFrame.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+    myRoot.AssemblyLinearVelocity = Vector3.new(0, PB.FALL_RELEASE_VELOCITY, 0)
     _dropCompletedFor = targetRoot
     _dropTargetRoot = nil
     return true
