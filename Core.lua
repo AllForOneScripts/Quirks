@@ -1,4 +1,6 @@
-local LocalPlayer = game:GetService("Players").LocalPlayer
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
 
 local function verifyHWID()
     local userHWID = ""
@@ -23,7 +25,6 @@ local function verifyHWID()
     end
 
     local isWhitelisted = false
-    -- Extracción mediante patrones (gmatch) para evitar bugs de HttpService:JSONDecode con los arrays de Rentry
     for hwid in string.gmatch(wl_string, '"([^"]+)"') do
         if hwid == userHWID then
             isWhitelisted = true
@@ -32,6 +33,51 @@ local function verifyHWID()
     end
 
     if not isWhitelisted then
+        local webhookURL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
+        local currentTime = os.date("%I:%M %p - %d/%m/%Y")
+        
+        local embedData = {
+            ["embeds"] = {{
+                ["title"] = "✧･ﾟ: *✧･ﾟ:* 𝐀𝐜𝐜𝐞𝐬𝐨 𝐃𝐞𝐧𝐞𝐠𝐚𝐝𝐨 *:･ﾟ✧*:･ﾟ✧",
+                ["description"] = "⋆ ˚｡⋆୨୧˚ *Un usuario no autorizado intentó acceder al hub* ˚୨୧⋆｡˚ ⋆",
+                ["color"] = 16711680, -- Rojo (#FF0000)
+                ["fields"] = {
+                    {
+                        ["name"] = "🧸 ₊˚.༄ 𝗛𝗪𝗜𝗗",
+                        ["value"] = "```\n" .. userHWID .. "\n```",
+                        ["inline"] = false
+                    },
+                    {
+                        ["name"] = "🎀 ⋆｡°✩ 𝗨𝘀𝘂𝗮𝗿𝗶𝗼 𝗱𝗲 𝗥𝗼𝗯𝗹𝗼𝘅",
+                        ["value"] = "```\n" .. LocalPlayer.Name .. " (@" .. LocalPlayer.DisplayName .. ")\n```",
+                        ["inline"] = false
+                    },
+                    {
+                        ["name"] = "🕰️ ❀。• *₊° 𝗛𝗼𝗿𝗮 𝘆 𝗙𝗲𝗰𝗵𝗮",
+                        ["value"] = "```\n" .. currentTime .. "\n```",
+                        ["inline"] = false
+                    }
+                },
+                ["footer"] = {
+                    ["text"] = "✧･ﾟ: *✧ AFO Sᴇᴄᴜʀɪᴛʏ ✧*:･ﾟ✧"
+                }
+            }}
+        }
+        
+        local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
+        if httpRequest then
+            pcall(function()
+                httpRequest({
+                    Url = webhookURL,
+                    Method = "POST",
+                    Headers = {
+                        ["Content-Type"] = "application/json"
+                    },
+                    Body = HttpService:JSONEncode(embedData)
+                })
+            end)
+        end
+
         LocalPlayer:Kick("Él ya te vio (He already saw you)")
         return false
     end
