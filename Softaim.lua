@@ -2,7 +2,6 @@
 local M = {}
 
 local SOFTAIM = {
-    -- Se añadió MouseButton1 (Click Izquierdo) para que active el efecto de inmediato.
     KEYS = { 
         Enum.KeyCode.One, 
         Enum.KeyCode.Two, 
@@ -10,7 +9,6 @@ local SOFTAIM = {
         Enum.KeyCode.Four, 
         Enum.UserInputType.MouseButton1 
     },
-    MAX_DIST = 150,
     LOCK_DURATION = 0.75,
 }
 
@@ -18,13 +16,58 @@ local _enabled = false
 local _inputConn, _endConn, _heartbeatConn
 local _targetHRP, _active, _lockTime = nil, false, 0
 local _heldKeys = {}
+local _activeTrigger = "None" -- Identificador de distancia: "Click" o "Number"
+local _lastCamY = nil
+local _currentHighlight = nil
 local _Keys, _lplr, _Players, _RunService, _UIS, _camera
 
+-- ==============================
+-- Funciones Visuales (Marca)
+-- ==============================
+local function removeHighlight()
+    if _currentHighlight then
+        _currentHighlight:Destroy()
+        _currentHighlight = nil
+    end
+end
+
+local function applyHighlight(targetChar)
+    if not targetChar then return end
+    if _currentHighlight and _currentHighlight.Parent == targetChar then return end
+    removeHighlight()
+    
+    _currentHighlight = Instance.new("Highlight")
+    _currentHighlight.Name = "SoftAimHighlight"
+    _currentHighlight.FillTransparency = 1 -- Sin relleno
+    _currentHighlight.OutlineColor = Color3.new(1, 1, 1) -- Borde blanco
+    _currentHighlight.OutlineTransparency = 0.4 -- Muy sutil
+    _currentHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    _currentHighlight.Parent = targetChar
+end
+
+-- ==============================
+-- Lógica Principal
+-- ==============================
 local function clearSoftAim()
     _active = false
     _lockTime = 0
     _targetHRP = nil
     _heldKeys = {}
+    _activeTrigger = "None"
+    _lastCamY = nil
+    removeHighlight()
+end
+
+local function updateTriggerType()
+    if _heldKeys[Enum.UserInputType.MouseButton1] then
+        _activeTrigger = "Click"
+    else
+        local numHeld = false
+        for _, k in ipairs({Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four}) do
+            if _heldKeys[k] then numHeld = true; break end
+        end
+        _activeTrigger = numHeld and "Number" or "None"
+    end
 end
 
 local function findTarget(myHRP)
@@ -36,6 +79,9 @@ local function findTarget(myHRP)
     local bestPriority, bestPriorityScore = nil, math.huge
     local bestNormal, bestNormalScore = nil, math.huge
 
+    -- Definimos la distancia dependiendo de la tecla que activó el sistema
+    local maxDist = (_activeTrigger == "Click") and 6 or 35
+
     for _, player in ipairs(_Players:GetPlayers()) do
         if player ~= _lplr then
             local char = player.Character
@@ -44,16 +90,14 @@ local function findTarget(myHRP)
 
             if root and hum and hum.Health > 0 then
                 local dir = root.Position - myPos
-                local dist = dir.Magnitude
+                local dist = dir.Magnitude -- Distancia esférica natural
 
-                if dist <= SOFTAIM.MAX_DIST then
+                if dist <= maxDist then
                     local dirUnit = dir.Unit
                     local lookDot = myLook:Dot(dirUnit)
                     local velDot = myVel:Dot(dirUnit)
 
-                    -- Verificación de prioridad (Cuerpo en línea fija y moviéndonos hacia él)
-                    -- lookDot > 0.85 significa que lo estás mirando casi de frente.
-                    -- velDot > 0.5 significa que hay inercia física hacia su dirección.
+                    -- Verificación de prioridad (Frontal e Inercia)
                     if lookDot > 0.85 and velDot > 0.5 then
                         if dist < bestPriorityScore then
                             bestPriorityScore = dist
@@ -61,7 +105,7 @@ local function findTarget(myHRP)
                         end
                     end
 
-                    -- Búsqueda normal (El más cercano al puntero/centro de la pantalla)
+                    -- Búsqueda normal (Cercanía a la pantalla)
                     local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
                     if onScreen then
                         local nScore = Vector2.new(mouse.X - screenPos.X, mouse.Y - screenPos.Y).Magnitude
@@ -75,7 +119,6 @@ local function findTarget(myHRP)
         end
     end
 
-    -- Si hay un objetivo de prioridad, lo asume instantáneamente. Si no, usa el normal.
     return bestPriority or bestNormal
 end
 
@@ -109,7 +152,7 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
     _RunService, _UIS, _camera = RunServiceRef, UserInputService, camera
     _enabled = true
 
-    _heartbeatConn = _RunService.Heartbeat:Connect(function()
+    _heartbeatConn = _RunService.Heartbeat:Connect(function(dt)
         if not _enabled then return end
 
         if anyKeyHeld() then
@@ -126,26 +169,52 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
 
         if not _targetHRP or not _targetHRP.Parent then 
             _targetHRP = findTarget(root) 
+            _lastCamY = nil -- Resetear para calibrar el nuevo salto
         end
         
-        if not _targetHRP then return end
+        if not _targetHRP then 
+            removeHighlight()
+            return 
+        end
 
         local targetChar = _targetHRP.Parent
+        applyHighlight(targetChar)
+
         local aimPart = (targetChar and targetChar:FindFirstChild("UpperTorso")) or _targetHRP
         local targetPos = aimPart.Position
-
-        -- Ultra Apuntar: Fuerza al cuerpo a mirar EXACTAMENTE al objetivo (CFrame.lookAt puro)
         local rootPos = root.Position
-        local lookTargetBody = Vector3.new(targetPos.X, rootPos.Y, targetPos.Z)
-        
-        if (lookTargetBody - rootPos).Magnitude > 0.1 then
-            local velocity = root.AssemblyLinearVelocity
-            root.CFrame = CFrame.lookAt(rootPos, lookTargetBody)
-            root.AssemblyLinearVelocity = velocity -- Conserva el momentum
-        end
 
-        -- Ultra Apuntar: Fuerza a la vista (Cámara) a centrarse en el objetivo instantáneamente
-        _camera.CFrame = CFrame.lookAt(_camera.CFrame.Position, targetPos)
+        -- Medida de movimiento: Evita que la cámara se rompa si están cruzando coordenadas X/Z
+        local hzDist = Vector2.new(targetPos.X - rootPos.X, targetPos.Z - rootPos.Z).Magnitude
+
+        if hzDist > 1.5 then -- Threshold (Margen mínimo de movimiento)
+            
+            -- =======================================
+            -- 1. Movimiento del Cuerpo (Rotación suave)
+            -- =======================================
+            local lookTargetBody = Vector3.new(targetPos.X, rootPos.Y, targetPos.Z)
+            local velocity = root.AssemblyLinearVelocity
+            
+            local targetBodyCFrame = CFrame.lookAt(rootPos, lookTargetBody)
+            -- Interpolar para suavizar el giro en lugar de forzarlo instantáneamente
+            root.CFrame = root.CFrame:Lerp(targetBodyCFrame, math.clamp(dt * 18, 0, 1))
+            root.AssemblyLinearVelocity = velocity -- Conserva el momentum
+            
+            -- =======================================
+            -- 2. Movimiento de Cámara (Anti-Mareos)
+            -- =======================================
+            local camPos = _camera.CFrame.Position
+            
+            -- ANTI-SALTITOS: El eje Y se actualiza muy lento para evitar que la cámara brinque
+            if not _lastCamY then _lastCamY = targetPos.Y end
+            _lastCamY = _lastCamY + (targetPos.Y - _lastCamY) * math.clamp(dt * 3.5, 0, 1)
+
+            local camLookPos = Vector3.new(targetPos.X, _lastCamY, targetPos.Z)
+            local desiredCamCFrame = CFrame.lookAt(camPos, camLookPos)
+            
+            -- Suaviza la cámara evitando giros ultra robóticos
+            _camera.CFrame = _camera.CFrame:Lerp(desiredCamCFrame, math.clamp(dt * 12, 0, 1))
+        end
     end)
 
     _inputConn = _UIS.InputBegan:Connect(function(input, gpe)
@@ -162,6 +231,7 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
         local matchedKey = getMatchedKey(input)
         if matchedKey then
             _heldKeys[matchedKey] = true
+            updateTriggerType() -- Determinar origen
             _active = true
             _lockTime = tick() + SOFTAIM.LOCK_DURATION
         end
@@ -171,6 +241,7 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
         local matchedKey = getMatchedKey(input)
         if matchedKey then
             _heldKeys[matchedKey] = false
+            updateTriggerType()
         end
     end)
 end
