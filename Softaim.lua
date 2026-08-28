@@ -16,7 +16,7 @@ local _enabled = false
 local _inputConn, _endConn, _heartbeatConn
 local _targetHRP, _active, _lockTime = nil, false, 0
 local _heldKeys = {}
-local _activeTrigger = "None" -- Identificador de distancia: "Click" o "Number"
+local _activeTrigger = "None"
 local _lastCamY = nil
 local _currentHighlight = nil
 local _Keys, _lplr, _Players, _RunService, _UIS, _camera
@@ -38,9 +38,9 @@ local function applyHighlight(targetChar)
     
     _currentHighlight = Instance.new("Highlight")
     _currentHighlight.Name = "SoftAimHighlight"
-    _currentHighlight.FillTransparency = 1 -- Sin relleno
-    _currentHighlight.OutlineColor = Color3.new(1, 1, 1) -- Borde blanco
-    _currentHighlight.OutlineTransparency = 0.4 -- Muy sutil
+    _currentHighlight.FillTransparency = 1
+    _currentHighlight.OutlineColor = Color3.new(1, 1, 1)
+    _currentHighlight.OutlineTransparency = 0.4
     _currentHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     _currentHighlight.Parent = targetChar
 end
@@ -79,7 +79,6 @@ local function findTarget(myHRP)
     local bestPriority, bestPriorityScore = nil, math.huge
     local bestNormal, bestNormalScore = nil, math.huge
 
-    -- Definimos la distancia dependiendo de la tecla que activó el sistema
     local maxDist = (_activeTrigger == "Click") and 6 or 35
 
     for _, player in ipairs(_Players:GetPlayers()) do
@@ -88,16 +87,16 @@ local function findTarget(myHRP)
             local root = char and char:FindFirstChild("HumanoidRootPart")
             local hum = char and char:FindFirstChildOfClass("Humanoid")
 
+            -- Evita buscar cadáveres desde el inicio
             if root and hum and hum.Health > 0 then
                 local dir = root.Position - myPos
-                local dist = dir.Magnitude -- Distancia esférica natural
+                local dist = dir.Magnitude
 
                 if dist <= maxDist then
                     local dirUnit = dir.Unit
                     local lookDot = myLook:Dot(dirUnit)
                     local velDot = myVel:Dot(dirUnit)
 
-                    -- Verificación de prioridad (Frontal e Inercia)
                     if lookDot > 0.85 and velDot > 0.5 then
                         if dist < bestPriorityScore then
                             bestPriorityScore = dist
@@ -105,7 +104,6 @@ local function findTarget(myHRP)
                         end
                     end
 
-                    -- Búsqueda normal (Cercanía a la pantalla)
                     local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
                     if onScreen then
                         local nScore = Vector2.new(mouse.X - screenPos.X, mouse.Y - screenPos.Y).Magnitude
@@ -167,9 +165,18 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
 
+        -- VALIDACIÓN ANTI-CADÁVERES: Si el objetivo actual muere, lo soltamos inmediatamente
+        if _targetHRP and _targetHRP.Parent then
+            local targetHum = _targetHRP.Parent:FindFirstChildOfClass("Humanoid")
+            if not targetHum or targetHum.Health <= 0 then
+                _targetHRP = nil
+                removeHighlight()
+            end
+        end
+
         if not _targetHRP or not _targetHRP.Parent then 
             _targetHRP = findTarget(root) 
-            _lastCamY = nil -- Resetear para calibrar el nuevo salto
+            _lastCamY = nil 
         end
         
         if not _targetHRP then 
@@ -184,35 +191,25 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
         local targetPos = aimPart.Position
         local rootPos = root.Position
 
-        -- Medida de movimiento: Evita que la cámara se rompa si están cruzando coordenadas X/Z
         local hzDist = Vector2.new(targetPos.X - rootPos.X, targetPos.Z - rootPos.Z).Magnitude
 
-        if hzDist > 1.5 then -- Threshold (Margen mínimo de movimiento)
+        if hzDist > 1.5 then 
             
-            -- =======================================
-            -- 1. Movimiento del Cuerpo (Rotación suave)
-            -- =======================================
+            -- Movimiento del Cuerpo
             local lookTargetBody = Vector3.new(targetPos.X, rootPos.Y, targetPos.Z)
             local velocity = root.AssemblyLinearVelocity
-            
             local targetBodyCFrame = CFrame.lookAt(rootPos, lookTargetBody)
-            -- Interpolar para suavizar el giro en lugar de forzarlo instantáneamente
             root.CFrame = root.CFrame:Lerp(targetBodyCFrame, math.clamp(dt * 18, 0, 1))
-            root.AssemblyLinearVelocity = velocity -- Conserva el momentum
+            root.AssemblyLinearVelocity = velocity 
             
-            -- =======================================
-            -- 2. Movimiento de Cámara (Anti-Mareos)
-            -- =======================================
+            -- Movimiento de Cámara
             local camPos = _camera.CFrame.Position
-            
-            -- ANTI-SALTITOS: El eje Y se actualiza muy lento para evitar que la cámara brinque
             if not _lastCamY then _lastCamY = targetPos.Y end
             _lastCamY = _lastCamY + (targetPos.Y - _lastCamY) * math.clamp(dt * 3.5, 0, 1)
 
             local camLookPos = Vector3.new(targetPos.X, _lastCamY, targetPos.Z)
             local desiredCamCFrame = CFrame.lookAt(camPos, camLookPos)
             
-            -- Suaviza la cámara evitando giros ultra robóticos
             _camera.CFrame = _camera.CFrame:Lerp(desiredCamCFrame, math.clamp(dt * 12, 0, 1))
         end
     end)
@@ -231,7 +228,7 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
         local matchedKey = getMatchedKey(input)
         if matchedKey then
             _heldKeys[matchedKey] = true
-            updateTriggerType() -- Determinar origen
+            updateTriggerType()
             _active = true
             _lockTime = tick() + SOFTAIM.LOCK_DURATION
         end
