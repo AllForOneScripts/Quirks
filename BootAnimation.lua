@@ -662,103 +662,90 @@ local function ApplyDummyAppearance(rig)
     end
 end
 
--- Construye un "snapshot" completo antes de modificar el clon. Así evitamos que
--- una actualización tardía del avatar deje al clon con una mezcla de dos looks.
-local appearanceUpdateSerial = 0
 local function UpdateCloneAppearance()
-    if not cloneChar or not cloneChar.Parent or not char or not char.Parent then return end
+    if not cloneChar or not char then return end
 
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
-
-    appearanceUpdateSerial = appearanceUpdateSerial + 1
-    local updateSerial = appearanceUpdateSerial
-    local cosmeticSnapshot = {}
-
-    for _, item in ipairs(char:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Hat") or item:IsA("Shirt") or item:IsA("Pants")
-            or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            local ok, copy = pcall(function() return item:Clone() end)
-            if ok and copy then table.insert(cosmeticSnapshot, copy) end
+    for _, v in ipairs(cloneChar:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
+            v:Destroy()
         end
     end
 
     local cHead = cloneChar:FindFirstChild("Head")
     local sHead = char:FindFirstChild("Head")
-    local headSnapshot = {}
-    if sHead then
-        for _, item in ipairs(sHead:GetChildren()) do
-            if item:IsA("Decal") or item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
-                local ok, copy = pcall(function() return item:Clone() end)
-                if ok and copy then table.insert(headSnapshot, copy) end
-            end
-        end
-    end
 
-    if updateSerial ~= appearanceUpdateSerial or not cloneChar.Parent then return end
-
-    -- Elimina el estado anterior antes de instalar el snapshot, incluidas caras
-    -- y mallas heredadas del primer clon del personaje.
-    for _, item in ipairs(cloneChar:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Hat") or item:IsA("Shirt") or item:IsA("Pants")
-            or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            item:Destroy()
-        end
-    end
     if cHead then
-        for _, item in ipairs(cHead:GetChildren()) do
-            if item:IsA("Decal") or item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
-                item:Destroy()
+        for _, child in ipairs(cHead:GetChildren()) do
+            if child:IsA("DataModelMesh") or child:IsA("SpecialMesh") or child:IsA("Decal") then
+                child:Destroy()
             end
         end
-    end
 
-    local loadedFace = false
-    local hasCustomMesh = false
-    for _, item in ipairs(headSnapshot) do
-        if item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
-            hasCustomMesh = true
-        elseif item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
-            loadedFace = true
-        end
-    end
-
-    -- R6 necesita su malla de cabeza normal sólo si el avatar no aporta una propia.
-    if cHead and not hasCustomMesh then
         local defaultMesh = Instance.new("SpecialMesh")
         defaultMesh.MeshType = Enum.MeshType.Head
         defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
         defaultMesh.Parent = cHead
     end
-    if cHead then
-        for _, item in ipairs(headSnapshot) do item.Parent = cHead end
-    end
 
-    for _, item in ipairs(cosmeticSnapshot) do
-        if item:IsA("Accessory") or item:IsA("Hat") then
-            local handle = item:FindFirstChild("Handle")
-            if handle and handle:IsA("BasePart") then
-                for _, part in ipairs(item:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.LocalTransparencyModifier = 0
-                        part.Transparency = 0
-                        part.Anchored = false
-                        part.CanCollide = false
-                        part.Massless = true
-                    elseif part:IsA("Weld") or part:IsA("WeldConstraint") or part.Name == "AccessoryWeld" then
-                        part:Destroy()
+    local loadedFace = false
+
+    -- Copia y monta cada accesorio en el momento del segundo flash. AddAccessory
+    -- recibe el accesorio ya saneado y el anclaje manual conserva el respaldo de
+    -- la versión estable para paquetes que no generan AccessoryWeld.
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Accessory") then
+            local cloneItem = item:Clone()
+            local handle = cloneItem:FindFirstChild("Handle")
+
+            if handle then
+                handle.LocalTransparencyModifier = 0
+                handle.Transparency = 0
+
+                for _, weld in ipairs(handle:GetChildren()) do
+                    if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld.Name == "AccessoryWeld" then
+                        weld:Destroy()
                     end
                 end
             end
 
-            local added = pcall(function() cloneHum:AddAccessory(item) end)
+            local added = pcall(function()
+                cloneHum:AddAccessory(cloneItem)
+            end)
+
             if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
-                -- AddAccessory puede fallar silenciosamente con ciertos paquetes;
-                -- el montaje manual es el respaldo determinista para esos casos.
-                manualAttachAccessory(item, cloneChar)
+                manualAttachAccessory(cloneItem, cloneChar)
             end
-        else
-            item.Parent = cloneChar
+        elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
+            item:Clone().Parent = cloneChar
+        end
+    end
+
+    if sHead and cHead then
+        local hasCustomMesh = false
+        for _, item in ipairs(sHead:GetChildren()) do
+            if item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
+                hasCustomMesh = true
+                break
+            end
+        end
+
+        if hasCustomMesh then
+            for _, oldMesh in ipairs(cHead:GetChildren()) do
+                if oldMesh:IsA("DataModelMesh") or oldMesh:IsA("SpecialMesh") then
+                    oldMesh:Destroy()
+                end
+            end
+        end
+
+        for _, item in ipairs(sHead:GetChildren()) do
+            if item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
+                loadedFace = true
+                item:Clone().Parent = cHead
+            elseif item:IsA("DataModelMesh") or item:IsA("SpecialMesh") then
+                item:Clone().Parent = cHead
+            end
         end
     end
 
@@ -924,6 +911,16 @@ local finalCloneCF = cloneRoot.CFrame
 local finalPos = finalCloneCF.Position
 local finalRot = finalCloneCF - finalCloneCF.Position
 
+-- La altura final debe salir del modelo que acabamos de animar, no de la
+-- hitbox del HumanoidRootPart. El borde inferior de su bounding box incluye
+-- las piernas en la pose exacta del despeje.
+local rootToCloneFeet = hum.HipHeight + (root.Size.Y / 2)
+pcall(function()
+    local cloneBoundsCF, cloneBoundsSize = cloneChar:GetBoundingBox()
+    local cloneBottomY = cloneBoundsCF.Position.Y - (cloneBoundsSize.Y / 2)
+    rootToCloneFeet = math.max(0, cloneRoot.Position.Y - cloneBottomY)
+end)
+
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
 getgenv()._StopCinematic = true 
@@ -968,8 +965,7 @@ if rayResult then
     actualGroundY = rayResult.Position.Y
 end
 
-local rootOffset = (hum.HipHeight + (root.Size.Y / 2))
-local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootOffset, finalPos.Z) * finalRot
+local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootToCloneFeet, finalPos.Z) * finalRot
 
 -- Posicionamiento inicial estricto.
 root.CFrame = finalTargetCF
