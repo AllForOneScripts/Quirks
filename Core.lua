@@ -126,11 +126,13 @@ getgenv()._AFO_HUB_LOADED = true
 
 local BOOT_START_TIME = tick()
 
-task.spawn(function()
-    pcall(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/main/BootAnimation.lua"))()
+if not getgenv()._AFO_IS_REJOIN then
+    task.spawn(function()
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/main/BootAnimation.lua"))()
+        end)
     end)
-end)
+end
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 2: SERVICIOS Y UTILIDADES GENÉRICAS
@@ -181,9 +183,11 @@ local function QueueSelf()
         return true
     end
 
+    -- Se añade _AFO_IS_REJOIN para omitir el bootanimation en el siguiente entorno
     local queuedSource = string.format([[
 getgenv()._AFO_HUB_LOADED = nil
 getgenv()._AFO_RELOAD_QUEUED = nil
+getgenv()._AFO_IS_REJOIN = true
 loadstring(game:HttpGet(%q))(%q)
 ]], SELF_URL, EXECUTOR_DEFAULT_AVATAR or "")
 
@@ -200,6 +204,14 @@ end
 -- Disponible para módulos que hagan TeleportService: deben invocarla justo
 -- antes de iniciar el teleport para conservar la carga del hub.
 getgenv().AFOQueueSelf = QueueSelf
+
+-- Hook para garantizar que cualquier método de teleport (como un rejoin por kick
+-- o el comando de infinite yield) ponga en cola el hub.
+pcall(function()
+    lplr.OnTeleport:Connect(function()
+        QueueSelf()
+    end)
+end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 4: SISTEMA DE IDIOMA
@@ -1117,10 +1129,13 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    local totalAnimTime = 11.9
-    local elapsed = tick() - BOOT_START_TIME
-    if elapsed < totalAnimTime then
-        task.wait(totalAnimTime - elapsed)
+    -- Se elimina la obligación de esperar si es un Rejoin
+    if not getgenv()._AFO_IS_REJOIN then
+        local totalAnimTime = 11.9
+        local elapsed = tick() - BOOT_START_TIME
+        if elapsed < totalAnimTime then
+            task.wait(totalAnimTime - elapsed)
+        end
     end
 
     local function isGrounded()
