@@ -9,6 +9,10 @@ local SOFTAIM = {
     MAX_DIST = 80,
     ROTATION_SMOOTH = 0.8,
     LOCK_DURATION = 0.75,
+    
+    -- Configuración para el SoftAim de ataques básicos (M1)
+    M1_MAX_DIST = 12, -- Distancia máxima en studs para que se active pecho a pecho
+    M1_DURATION = 0.15, -- Duración súper breve (fracción de segundo)
 }
 
 local _enabled = false
@@ -26,7 +30,7 @@ local function clearSoftAim()
     _active = false
     _lockTime = 0
     _targetHRP = nil
-    _heldKeys = {}
+    -- _heldKeys = {} -- ELIMINADO para no perder la tecla que se está manteniendo presionada
     clearHighlight()
 end
 
@@ -38,8 +42,6 @@ local function ensureHighlight()
     _highlight.FillTransparency = 0.85
 end
 
--- No carga otra copia de Lock. Solo recupera la instancia ya expuesta por el
--- lector, por lo que ambos módulos observan exactamente el mismo objetivo.
 local function getLockApi()
     if type(_lockModuleRef) == "table" then return _lockModuleRef end
     local fromReader = rawget(getgenv(), "AFO_LOCK_API")
@@ -58,10 +60,11 @@ local function lockHasValidTarget()
         return false
     end
 
-    local okActive, isActive = pcall(lock.IsLockActive)
+    -- Se pasa 'lock' como segundo argumento para mantener el contexto (self)
+    local okActive, isActive = pcall(lock.IsLockActive, lock)
     if not okActive or isActive ~= true then return false end
 
-    local okTarget, target = pcall(lock.GetTarget)
+    local okTarget, target = pcall(lock.GetTarget, lock)
     if not okTarget or not target then return false end
 
     local char = target.Character
@@ -69,6 +72,7 @@ local function lockHasValidTarget()
     return hum ~= nil and hum.Health > 0
 end
 
+-- Busca el objetivo regular basado en distancia + posición del mouse
 local function findNearestTarget(myHRP)
     local mouse = _UIS:GetMouseLocation()
     local best, bestScore = nil, math.huge
@@ -92,6 +96,25 @@ local function findNearestTarget(myHRP)
     return best
 end
 
+-- Busca estrictamente al objetivo físicamente más cercano para ataques cuerpo a cuerpo
+local function findMeleeTarget(myHRP)
+    local best, bestDist = nil, SOFTAIM.M1_MAX_DIST
+    for _, player in ipairs(_Players:GetPlayers()) do
+        if player ~= _lplr then
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if root and hum and hum.Health > 0 then
+                local distance = (root.Position - myHRP.Position).Magnitude
+                if distance <= bestDist then
+                    best, bestDist = root, distance
+                end
+            end
+        end
+    end
+    return best
+end
+
 local function anyKeyHeld()
     for _, key in ipairs(SOFTAIM.KEYS) do
         if _heldKeys[key] then return true end
@@ -102,6 +125,7 @@ end
 function M.Stop()
     _enabled = false
     clearSoftAim()
+    _heldKeys = {} -- Vaciamos las teclas solo cuando el módulo se detiene por completo
     if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
     if _endConn then _endConn:Disconnect(); _endConn = nil end
     if _heartbeatConn then _heartbeatConn:Disconnect(); _heartbeatConn = nil end
@@ -122,8 +146,6 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
     _heartbeatConn = _RunService.Heartbeat:Connect(function()
         if not _enabled then return end
 
-        -- Esta condición se evalúa primero en cada frame. SoftAim no conserva
-        -- target, teclas ni Highlight y tampoco rota mientras Lock esté activo.
         if lockHasValidTarget() then
             clearSoftAim()
             return
@@ -133,18 +155,24 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
             _active = true
             _lockTime = tick() + SOFTAIM.LOCK_DURATION
         end
+        
         if not _active then clearHighlight(); return end
         if tick() >= _lockTime then clearSoftAim(); return end
 
         local char = _lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
-        if not _targetHRP or not _targetHRP.Parent then _targetHRP = findNearestTarget(root) end
+        
+        -- Si no hay target, usamos el normal (asumimos que si fue por M1, el target ya se asignó en InputBegan)
+        if not _targetHRP or not _targetHRP.Parent then 
+            _targetHRP = findNearestTarget(root) 
+        end
         if not _targetHRP then clearHighlight(); return end
 
         local targetChar = _targetHRP.Parent
         local aimPart = (targetChar and targetChar:FindFirstChild("UpperTorso")) or _targetHRP
         local lookTarget = Vector3.new(aimPart.Position.X, root.Position.Y, aimPart.Position.Z)
+        
         if (lookTarget - root.Position).Magnitude > 0.1 then
             local _, currentYaw = root.CFrame:ToEulerAnglesYXZ()
             local _, targetYaw = CFrame.lookAt(root.Position, lookTarget):ToEulerAnglesYXZ()
@@ -159,8 +187,19 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
     end)
 
     _inputConn = _UIS.InputBegan:Connect(function(input, gpe)
-        if gpe or not _enabled then return end
-        -- También bloquea la creación de estado nuevo mientras Lock manda.
+        if not _enabled then return end
+
+        local isSoftAimKey = false
+        for _, key in ipairs(SOFTAIM.KEYS) do
+            if input.KeyCode == key then
+                isSoftAimKey = true
+                break
+            end
+        end
+
+        -- Bloqueamos interacciones de UI, EXCEPTO para nuestras teclas designadas
+        if gpe and not isSoftAimKey then return end
+
         if lockHasValidTarget() then clearSoftAim(); return end
 
         if input.KeyCode == Enum.KeyCode.Q
@@ -170,12 +209,26 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
             clearSoftAim()
             return
         end
-        for _, key in ipairs(SOFTAIM.KEYS) do
-            if input.KeyCode == key then
-                _heldKeys[key] = true
-                _active = true
-                _lockTime = tick() + SOFTAIM.LOCK_DURATION
-                break
+
+        -- Manejo de teclas regulares (1, 2, 3, 4)
+        if isSoftAimKey then
+            _heldKeys[input.KeyCode] = true
+            _active = true
+            _lockTime = tick() + SOFTAIM.LOCK_DURATION
+            return
+        end
+
+        -- Manejo del Click Izquierdo (M1) para Melee
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local char = _lplr.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local meleeTarget = findMeleeTarget(root)
+                if meleeTarget then
+                    _targetHRP = meleeTarget
+                    _active = true
+                    _lockTime = tick() + SOFTAIM.M1_DURATION
+                end
             end
         end
     end)
