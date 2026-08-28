@@ -25,14 +25,13 @@ local function verifyHWID()
     end
 
     local isWhitelisted = false
-    for hwid in string.gmatch(wl_string, '"([^"]+)"') do
-        if hwid == userHWID then
-            isWhitelisted = true
-            break
-        end
+    -- Búsqueda de coincidencia exacta en el texto plano de Rentry
+    if string.find(wl_string, userHWID, 1, true) then
+        isWhitelisted = true
     end
 
     if not isWhitelisted then
+        -- Construcción y envío del Webhook con decoraciones aesthetic
         local webhookURL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
         local currentTime = os.date("%I:%M %p - %d/%m/%Y")
         
