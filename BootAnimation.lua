@@ -23,7 +23,6 @@ flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
 local flashFrame = Instance.new("Frame", flashGui)
--- Pantallazo inicial negro
 flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
 flashGui.Parent = pGui
@@ -47,9 +46,6 @@ hum.AutoRotate = false
 local originalRootPos = root.Position
 local originalGroundY = originalRootPos.Y
 
--- Reinicia el estado visual que normalmente queda limpio al soltar un lock:
--- articulaciones sin Transform residual, cámara de vuelta al Humanoid y un
--- frame con AutoRotate desactivado para evitar que el HRP quede "tieso".
 local function ResetCinematicBodyAndCamera()
     if not char or not char.Parent or not hum or not hum.Parent or not root or not root.Parent then return end
 
@@ -59,7 +55,6 @@ local function ResetCinematicBodyAndCamera()
         end
     end
 
-    -- Mantiene la orientación horizontal final, pero elimina cualquier pitch/roll residual.
     local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
     local stableCF = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
     root.CFrame = stableCF
@@ -223,9 +218,6 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
----------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
------------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
----------------------------------------------------------------------------------------------------------------------------------------------------------------
 local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
@@ -273,7 +265,6 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-        -- Background con 50% de oscuridad
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -291,7 +282,6 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(scrollingBackgrounds, bgDown)
 
-        -- GUI para permitir el giro continuo y el zoom de las lineas neon
         local surfGui = Instance.new("SurfaceGui")
         surfGui.Name = "NeonGui"
         surfGui.Face = data.innerFace
@@ -299,7 +289,6 @@ local function SpawnAFODimension(centerCF)
         surfGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         surfGui.Parent = wall
         
-        -- Bordecito transparente
         local neonGlow = Instance.new("ImageLabel")
         neonGlow.Name = "NeonGlow"
         neonGlow.BackgroundTransparency = 1
@@ -323,7 +312,6 @@ local function SpawnAFODimension(centerCF)
         neonMain.ZIndex = 3
         neonMain.Parent = surfGui
 
-        -- Luz central en la cara sur (Back)
         if data.name == "Back" then
             local lightGui = Instance.new("SurfaceGui")
             lightGui.Name = "SouthLightGui"
@@ -357,7 +345,6 @@ local function SpawnAFODimension(centerCF)
     bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
     bottomPole.Parent = dimensionFolder
 
-    -- Humo morado brillante y suave
     local function createSinisterSmoke(polePart, emitDirection)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
@@ -367,19 +354,18 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 35)})
         smokeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1), 
-            NumberSequenceKeypoint.new(0.3, 0.7), -- Suave
+            NumberSequenceKeypoint.new(0.3, 0.7), 
             NumberSequenceKeypoint.new(1, 1)
         })
         smokeEmitter.Lifetime = NumberRange.new(5, 7)
         smokeEmitter.Rate = 20 
-        smokeEmitter.Speed = NumberRange.new(2, 4) -- Deslizándose suavemente
+        smokeEmitter.Speed = NumberRange.new(2, 4) 
         smokeEmitter.EmissionDirection = emitDirection
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
         smokeEmitter.Parent = polePart
     end
 
-    -- Techo hacia abajo, Suelo hacia arriba
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
@@ -471,14 +457,12 @@ local function SpawnAFODimension(centerCF)
             end
         end
 
-        -- Actualización del Neon y la luz expansiva
         for _, wall in ipairs(dimensionFolder:GetChildren()) do
             local gui = wall:FindFirstChild("NeonGui")
             if gui then
                 local main = gui:FindFirstChild("NeonMain")
                 local glow = gui:FindFirstChild("NeonGlow")
                 
-                -- Zoom y rotación continua rápida
                 local currentScale = 1 + (alpha * 6)
                 if main then
                     main.Rotation = main.Rotation + (dt * 150)
@@ -490,13 +474,12 @@ local function SpawnAFODimension(centerCF)
                 end
             end
 
-            -- Expansión de la luz Sur
             if wall.Name == "Back" then
                 local sGui = wall:FindFirstChild("SouthLightGui")
                 if sGui then
                     local lightImg = sGui:FindFirstChild("ExpandingLight")
                     if lightImg then
-                        local lightScale = alpha * 18 -- Se expande hasta salir de la caja
+                        local lightScale = alpha * 18 
                         lightImg.Size = UDim2.new(lightScale, 0, lightScale, 0)
                     end
                 end
@@ -504,9 +487,6 @@ local function SpawnAFODimension(centerCF)
         end
     end)
 end
----------------------------------------------------------------------------------------------------------------------------------------------------------------
------------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
------------------------------------------------------------------------------FIN-------------------------------------------------------------------------------
 
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
@@ -567,7 +547,6 @@ local function ApplyDummyAppearance(rig)
         RightShoulder = "88203090104599",
     }
 
-    -- Limpia solamente los elementos cosméticos del dummy; el clon del jugador no se toca.
     for _, v in ipairs(rig:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
@@ -589,22 +568,14 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
-    local function loadClothing(assetId)
-        local success, loadedAssets = pcall(function()
-            return game:GetObjects("rbxassetid://" .. assetId)
-        end)
-        if success and loadedAssets then
-            for _, loaded in ipairs(loadedAssets) do
-                if loaded:IsA("Shirt") or loaded:IsA("Pants") then
-                    loaded:Clone().Parent = rig
-                end
-                loaded:Destroy()
-            end
-        end
-    end
+    -- Carga de Ropa 100% Funcional (Versión Boot.lua)[cite: 1]
+    local shirt = Instance.new("Shirt")
+    shirt.ShirtTemplate = "rbxassetid://97549107762722"
+    shirt.Parent = rig
 
-    loadClothing("97549107762722")
-    loadClothing("4577042673")
+    local pants = Instance.new("Pants")
+    pants.PantsTemplate = "rbxassetid://90709447311242"
+    pants.Parent = rig
 
     local function getAccessory(assetId)
         local success, loadedAssets = pcall(function()
@@ -622,10 +593,9 @@ local function ApplyDummyAppearance(rig)
         return accessory
     end
 
-    local function addAccessory(assetId, scaleFactor)
+    local function addAccessory(assetId, scaleToOneAndHalf)
         local accessory = getAccessory(assetId)
         if not accessory then
-            warn("No se pudo cargar el accesorio del dummy: " .. assetId)
             return
         end
 
@@ -635,22 +605,20 @@ local function ApplyDummyAppearance(rig)
             manualAttachAccessory(accessory, rig)
         end
 
-        if scaleFactor and handle then
+        if scaleToOneAndHalf and handle then
             if handle:IsA("MeshPart") then
-                handle.Size = handle.Size * scaleFactor
+                handle.Size = handle.Size * 1.5
             end
             local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-            if mesh then mesh.Scale = mesh.Scale * scaleFactor end
+            if mesh then mesh.Scale = mesh.Scale * 1.5 end
         end
     end
 
-    -- El sombrero conserva su escala actual (1.5x); los demás objetos se muestran al 1.1x (10% más grandes).
-    addAccessory(dummyAssets.Hat, 1.5)
-    addAccessory(dummyAssets.Front, 1.1)
-    addAccessory(dummyAssets.LeftShoulder, 1.1)
-    addAccessory(dummyAssets.RightShoulder, 1.1)
+    addAccessory(dummyAssets.Hat, true)
+    addAccessory(dummyAssets.Front, false)
+    addAccessory(dummyAssets.LeftShoulder, false)
+    addAccessory(dummyAssets.RightShoulder, false)
 
-    -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
     if head then
         head.Transparency = 1
@@ -836,7 +804,6 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
--- Segundo flash negro: adelantarlo 0.5 s (antes: 9.0 s).
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
@@ -850,7 +817,6 @@ task.delay(8.5, function()
     
     UpdateCloneAppearance()
     
-    -- El inicio ocurre 1 s después, pero el corte/final permanece en el mismo instante.
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
@@ -873,7 +839,6 @@ SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
--- Fundido suave al final del flash negro
 local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
 fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
@@ -929,18 +894,11 @@ if sky and sky.Parent then sky:Destroy() end
 if oldSky then oldSky.Parent = Lighting end
 RestoreHighlights()
 
-for _, motor in ipairs(char:GetDescendants()) do
-    if motor:IsA("Motor6D") then
-        motor.Transform = CFrame.new()
-    end
-end
-
 summonActive = false
 if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- BUG FIX: Sistema de Raycast y Teleport iterativo para retornar estrictamente al suelo sin botes antinaturales
 root.Anchored = false
 
 local rayParams = RaycastParams.new()
@@ -957,26 +915,45 @@ end
 local rootOffset = (hum.HipHeight + (root.Size.Y / 2))
 local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootOffset, finalPos.Z) * finalRot
 
--- Una sola alineación con el suelo. El raycast calcula únicamente la Y;
--- X/Z y la rotación final se preservan para no desplazar al jugador.
+-- Posicionamiento inicial estricto
 root.CFrame = finalTargetCF
-root.AssemblyLinearVelocity = Vector3.new(0, -45, 0)
+root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
-RunService.Heartbeat:Wait()
 
-local landBV = Instance.new("BodyVelocity")
-landBV.Velocity = Vector3.zero
-landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-landBV.Parent = root
-hum.PlatformStand = true
+-- SISTEMA DE BLOQUEO DE 2 SEGUNDOS EN Y
+local isPinned = true
+local startHealth = hum.Health
 
-task.defer(function()
-    pcall(function() landBV:Destroy() end)
-    if hum and hum.Parent then
-        hum.PlatformStand = false
-        hum:ChangeState(Enum.HumanoidStateType.Landed)
+local damageConn
+damageConn = hum.HealthChanged:Connect(function(newHealth)
+    if newHealth < startHealth then
+        isPinned = false
     end
+    startHealth = newHealth
 end)
+
+local pinTime = 0
+local pinConn
+pinConn = RunService.Heartbeat:Connect(function(dt)
+    if not root or not root.Parent then
+        isPinned = false
+    end
+    
+    pinTime = pinTime + dt
+    
+    if not isPinned or pinTime >= 2 then
+        if pinConn then pinConn:Disconnect() end
+        if damageConn then damageConn:Disconnect() end
+        return
+    end
+    
+    -- Clava la coordenada Y estricta, pero permite moverse y rotar en X/Z
+    root.CFrame = CFrame.new(root.Position.X, finalTargetCF.Y, root.Position.Z) * (root.CFrame - root.CFrame.Position)
+    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
+end)
+
+hum.PlatformStand = false
+hum:ChangeState(Enum.HumanoidStateType.Landed)
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
