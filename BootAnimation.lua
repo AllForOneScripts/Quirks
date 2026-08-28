@@ -589,13 +589,32 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
-    local shirt = Instance.new("Shirt")
-    shirt.ShirtTemplate = "rbxassetid://97549107762722"
-    shirt.Parent = rig
+    -- Algunos IDs de ropa apuntan a una plantilla directamente y otros a un
+    -- objeto Shirt/Pants. Se cubren ambos casos para que la ropa no quede vacía.
+    local function applyClothing(className, propertyName, assetId)
+        local clothing = Instance.new(className)
+        clothing[propertyName] = "rbxassetid://" .. assetId
 
-    local pants = Instance.new("Pants")
-    pants.PantsTemplate = "rbxassetid://4577042673"
-    pants.Parent = rig
+        local success, loadedAssets = pcall(function()
+            return game:GetObjects("rbxassetid://" .. assetId)
+        end)
+        if success and loadedAssets then
+            for _, loaded in ipairs(loadedAssets) do
+                local source = loaded:IsA(className) and loaded or loaded:FindFirstChildWhichIsA(className, true)
+                if source then
+                    clothing:Destroy()
+                    clothing = source:Clone()
+                end
+                loaded:Destroy()
+                if clothing.Parent or source then break end
+            end
+        end
+
+        clothing.Parent = rig
+    end
+
+    applyClothing("Shirt", "ShirtTemplate", "97549107762722")
+    applyClothing("Pants", "PantsTemplate", "4577042673")
 
     local function getAccessory(assetId)
         local success, loadedAssets = pcall(function()
@@ -613,7 +632,7 @@ local function ApplyDummyAppearance(rig)
         return accessory
     end
 
-    local function addAccessory(assetId, scaleToOneAndHalf)
+    local function addAccessory(assetId, scaleMultiplier)
         local accessory = getAccessory(assetId)
         if not accessory then
             warn("No se pudo cargar el accesorio del dummy: " .. assetId)
@@ -626,22 +645,25 @@ local function ApplyDummyAppearance(rig)
             manualAttachAccessory(accessory, rig)
         end
 
-        -- Conserva el ajuste pedido para el sombrero, sin alterar la cabeza del dummy.
-        if scaleToOneAndHalf and handle then
+        if handle and scaleMultiplier and scaleMultiplier ~= 1 then
             if handle:IsA("MeshPart") then
-                handle.Size = handle.Size * 1.5
+                handle.Size = handle.Size * scaleMultiplier
+            else
+                local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+                if mesh then
+                    mesh.Scale = mesh.Scale * scaleMultiplier
+                else
+                    handle.Size = handle.Size * scaleMultiplier
+                end
             end
-            local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-            if mesh then mesh.Scale = mesh.Scale * 1.5 end
         end
     end
 
-    -- El sombrero conserva su escala actual (1.5x); los demás objetos
-    -- también se muestran al 150%, como se solicitó.
-    addAccessory(dummyAssets.Hat, true)
-    addAccessory(dummyAssets.Front, true)
-    addAccessory(dummyAssets.LeftShoulder, true)
-    addAccessory(dummyAssets.RightShoulder, true)
+    -- El sombrero queda en su tamaño normal. Los demás objetos aumentan 10%.
+    addAccessory(dummyAssets.Hat, 1)
+    addAccessory(dummyAssets.Front, 1.1)
+    addAccessory(dummyAssets.LeftShoulder, 1.1)
+    addAccessory(dummyAssets.RightShoulder, 1.1)
 
     -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
