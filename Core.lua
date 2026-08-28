@@ -3,7 +3,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local function verifyHWID()
-    -- 1. Obtener y limpiar el HWID local
+    -- 1. Obtener HWID local
     local userHWID = ""
     local ok, result = pcall(function() return gethwid() end)
     if ok and type(result) == "string" and result ~= "" then 
@@ -14,29 +14,37 @@ local function verifyHWID()
             userHWID = result2
         end
     end
-    
-    -- Eliminar cualquier espacio o salto de línea invisible del HWID local
-    userHWID = userHWID:gsub("%s+", "")
 
-    -- 2. Obtener lista cruda de Rentry con Cache Buster (Evita que Roblox lea datos viejos)
-    local wl_url = "https://rentry.co/AFO_/raw?nocache=" .. tostring(tick())
-    local success, wl_string = pcall(function()
-        return game:HttpGet(wl_url)
+    -- 2. Cargar y ejecutar la tabla desde WeAreDevs
+    local wl_url = "https://obj.wearedevs.net/s/6a90f10cdb27ecca7d7f15bd.lua"
+    local success, hwidTable = pcall(function()
+        return loadstring(game:HttpGet(wl_url))()
     end)
 
-    if not success or type(wl_string) ~= "string" then
-        LocalPlayer:Kick("Error de conexión al verificar HWID.")
+    -- Verificamos que la solicitud haya sido exitosa y que haya devuelto una tabla
+    if not success or type(hwidTable) ~= "table" then
+        LocalPlayer:Kick("Error de conexión o formato al verificar HWID.")
         return false
     end
 
-    -- 3. Búsqueda directa y tolerante a fallos
+    -- 3. Verificar HWID en la tabla devuelta
     local isWhitelisted = false
-    if userHWID ~= "" and string.find(wl_string, userHWID, 1, true) then
-        isWhitelisted = true
+    for _, hwid in ipairs(hwidTable) do
+        -- Convertimos a string y limpiamos espacios por precaución
+        hwid = tostring(hwid):gsub("%s+", "") 
+        if hwid ~= "" and hwid == userHWID then
+            isWhitelisted = true
+            break
+        end
     end
 
-    -- 4. Ejecución del Webhook y Kick si no está en la lista
+    -- 4. Acciones si el HWID no coincide
     if not isWhitelisted then
+        -- Copia el HWID real al portapapeles
+        pcall(function() setclipboard(userHWID) end)
+        print("Tu HWID real es: " .. userHWID)
+
+        -- Preparar Webhook
         local webhookURL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
         local currentTime = os.date("%I:%M %p - %d/%m/%Y")
         
@@ -68,6 +76,7 @@ local function verifyHWID()
             }}
         }
         
+        -- Enviar Webhook
         local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
         if httpRequest then
             pcall(function()
@@ -82,6 +91,7 @@ local function verifyHWID()
             end)
         end
 
+        -- Kickear con el mensaje requerido
         LocalPlayer:Kick("Él ya te vio (He already saw you)")
         return false
     end
@@ -89,9 +99,13 @@ local function verifyHWID()
     return true
 end
 
+-- Ejecutar la verificación
 if not verifyHWID() then
     return 
 end
+
+-- A partir de aquí, el código de tu hub continúa normalmente si el usuario está admitido.
+print("Acceso concedido.")
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 1: PROTECCIÓN Y PRIMER HILO (BOOT ANIMATION)
