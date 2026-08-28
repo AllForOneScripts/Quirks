@@ -47,6 +47,35 @@ hum.AutoRotate = false
 local originalRootPos = root.Position
 local originalGroundY = originalRootPos.Y
 
+-- Reinicia el estado visual que normalmente queda limpio al soltar un lock:
+-- articulaciones sin Transform residual, cámara de vuelta al Humanoid y un
+-- frame con AutoRotate desactivado para evitar que el HRP quede "tieso".
+local function ResetCinematicBodyAndCamera()
+    if not char or not char.Parent or not hum or not hum.Parent or not root or not root.Parent then return end
+
+    for _, motor in ipairs(char:GetDescendants()) do
+        if motor:IsA("Motor6D") then
+            motor.Transform = CFrame.new()
+        end
+    end
+
+    -- Mantiene la orientación horizontal final, pero elimina cualquier pitch/roll residual.
+    local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
+    local stableCF = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
+    root.CFrame = stableCF
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    hum.AutoRotate = false
+    cam.CameraSubject = hum
+    cam.CameraType = Enum.CameraType.Custom
+    RunService.RenderStepped:Wait()
+
+    cam.CameraSubject = hum
+    cam.CameraType = Enum.CameraType.Custom
+    hum.AutoRotate = oldAutoRotate
+    hum:ChangeState(Enum.HumanoidStateType.Running)
+end
+
 pcall(function() char.Archivable = true end)
 local cloneChar = char:Clone()
 pcall(function() char.Archivable = false end)
@@ -995,8 +1024,7 @@ fovTween:Play()
 camTween.Completed:Wait()
 
 RunService:UnbindFromRenderStep(overrideId)
-cam.CameraSubject = hum
-cam.CameraType = Enum.CameraType.Custom
+ResetCinematicBodyAndCamera()
 
 task.spawn(function()
     task.wait(0.5)
