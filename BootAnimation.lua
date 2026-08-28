@@ -1,4 +1,4 @@
-\if getgenv()._BootAnimRunning then
+if getgenv()._BootAnimRunning then
     return
 end
 getgenv()._BootAnimRunning = true
