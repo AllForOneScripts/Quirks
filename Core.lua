@@ -3,6 +3,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local function verifyHWID()
+    -- 1. Obtener HWID local
     local userHWID = ""
     local ok, result = pcall(function() return gethwid() end)
     if ok and type(result) == "string" and result ~= "" then 
@@ -14,6 +15,7 @@ local function verifyHWID()
         end
     end
 
+    -- 2. Obtener lista cruda de Rentry
     local wl_url = "https://rentry.co/AFO_/raw"
     local success, wl_string = pcall(function()
         return game:HttpGet(wl_url)
@@ -24,26 +26,35 @@ local function verifyHWID()
         return false
     end
 
+    -- 3. Verificar HWID en la lista (leyendo línea por línea)
     local isWhitelisted = false
-    -- Búsqueda de coincidencia exacta en el texto plano de Rentry
-    if string.find(wl_string, userHWID, 1, true) then
-        isWhitelisted = true
+    for _, hwid in ipairs(string.split(wl_string, "\n")) do
+        hwid = hwid:gsub("%s+", "") -- Limpia espacios y retornos de carro invisibles (\r)
+        if hwid ~= "" and hwid == userHWID then
+            isWhitelisted = true
+            break
+        end
     end
 
+    -- 4. Acciones si el HWID no coincide
     if not isWhitelisted then
-        -- Construcción y envío del Webhook con decoraciones aesthetic
+        -- Copia el HWID real al portapapeles para que lo pegues correctamente en Rentry
+        pcall(function() setclipboard(userHWID) end)
+        print("Tu HWID real es: " .. userHWID)
+
+        -- Preparar Webhook
         local webhookURL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
         local currentTime = os.date("%I:%M %p - %d/%m/%Y")
         
         local embedData = {
             ["embeds"] = {{
                 ["title"] = "✧･ﾟ: *✧･ﾟ:* 𝐀𝐜𝐜𝐞𝐬𝐨 𝐃𝐞𝐧𝐞𝐠𝐚𝐝𝐨 *:･ﾟ✧*:･ﾟ✧",
-                ["description"] = "⋆ ˚｡⋆୨୧˚ *Un usuario no autorizado intentó acceder al hub* ˚୨୧⋆｡˚ ⋆",
-                ["color"] = 16711680, -- Rojo (#FF0000)
+                ["description"] = "⋆ ˚｡⋆୨୧˚ *Un usuario no autorizado intentó acceder* ˚୨୧⋆｡˚ ⋆",
+                ["color"] = 16711680, -- Rojo
                 ["fields"] = {
                     {
                         ["name"] = "🧸 ₊˚.༄ 𝗛𝗪𝗜𝗗",
-                        ["value"] = "```\n" .. userHWID .. "\n```",
+                        ["value"] = "```\n" .. (userHWID ~= "" and userHWID or "Desconocido") .. "\n```",
                         ["inline"] = false
                     },
                     {
@@ -63,6 +74,7 @@ local function verifyHWID()
             }}
         }
         
+        -- Enviar Webhook
         local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
         if httpRequest then
             pcall(function()
@@ -77,6 +89,7 @@ local function verifyHWID()
             end)
         end
 
+        -- Kickear con el mensaje requerido
         LocalPlayer:Kick("Él ya te vio (He already saw you)")
         return false
     end
@@ -84,9 +97,13 @@ local function verifyHWID()
     return true
 end
 
+-- Ejecutar la verificación
 if not verifyHWID() then
     return 
 end
+
+-- A partir de aquí, el código de tu hub continúa normalmente si el usuario está admitido.
+print("Acceso concedido.")
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 1: PROTECCIÓN Y PRIMER HILO (BOOT ANIMATION)
