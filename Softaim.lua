@@ -1,118 +1,82 @@
--- SoftAim_lock_reader.lua
--- Si existe, usa el Lock inyectado con SetLockModule(). Si no, obtiene la
--- misma instancia compartida por el lector: getgenv().AFO_LOCK_API.
-
+-- SoftAim.lua
 local M = {}
 
 local SOFTAIM = {
-    KEYS = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four },
-    MAX_DIST = 80,
-    ROTATION_SMOOTH = 0.8,
+    -- Se añadió MouseButton1 (Click Izquierdo) para que active el efecto de inmediato.
+    KEYS = { 
+        Enum.KeyCode.One, 
+        Enum.KeyCode.Two, 
+        Enum.KeyCode.Three, 
+        Enum.KeyCode.Four, 
+        Enum.UserInputType.MouseButton1 
+    },
+    MAX_DIST = 150,
     LOCK_DURATION = 0.75,
-    
-    -- Configuración para el SoftAim de ataques básicos (M1)
-    M1_MAX_DIST = 12, -- Distancia máxima en studs para que se active pecho a pecho
-    M1_DURATION = 0.15, -- Duración súper breve (fracción de segundo)
 }
 
 local _enabled = false
 local _inputConn, _endConn, _heartbeatConn
-local _targetHRP, _active, _lockTime, _highlight = nil, false, 0, nil
+local _targetHRP, _active, _lockTime = nil, false, 0
 local _heldKeys = {}
 local _Keys, _lplr, _Players, _RunService, _UIS, _camera
-local _lockModuleRef
-
-local function clearHighlight()
-    if _highlight then _highlight.Parent = nil end
-end
 
 local function clearSoftAim()
     _active = false
     _lockTime = 0
     _targetHRP = nil
-    -- _heldKeys = {} -- ELIMINADO para no perder la tecla que se está manteniendo presionada
-    clearHighlight()
+    _heldKeys = {}
 end
 
-local function ensureHighlight()
-    if _highlight then return end
-    _highlight = Instance.new("Highlight")
-    _highlight.FillColor = Color3.fromRGB(255, 0, 0)
-    _highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    _highlight.FillTransparency = 0.85
-end
-
-local function getLockApi()
-    if type(_lockModuleRef) == "table" then return _lockModuleRef end
-    local fromReader = rawget(getgenv(), "AFO_LOCK_API")
-    if type(fromReader) == "table" then
-        _lockModuleRef = fromReader
-        return fromReader
-    end
-    return nil
-end
-
-local function lockHasValidTarget()
-    local lock = getLockApi()
-    if not lock
-        or type(lock.IsLockActive) ~= "function"
-        or type(lock.GetTarget) ~= "function" then
-        return false
-    end
-
-    -- Se pasa 'lock' como segundo argumento para mantener el contexto (self)
-    local okActive, isActive = pcall(lock.IsLockActive, lock)
-    if not okActive or isActive ~= true then return false end
-
-    local okTarget, target = pcall(lock.GetTarget, lock)
-    if not okTarget or not target then return false end
-
-    local char = target.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    return hum ~= nil and hum.Health > 0
-end
-
--- Busca el objetivo regular basado en distancia + posición del mouse
-local function findNearestTarget(myHRP)
+local function findTarget(myHRP)
+    local myPos = myHRP.Position
+    local myLook = myHRP.CFrame.LookVector
+    local myVel = myHRP.AssemblyLinearVelocity
     local mouse = _UIS:GetMouseLocation()
-    local best, bestScore = nil, math.huge
-    for _, player in ipairs(_Players:GetPlayers()) do
-        if player ~= _lplr then
-            local char = player.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if root and hum and hum.Health > 0 then
-                local distance = (root.Position - myHRP.Position).Magnitude
-                if distance <= SOFTAIM.MAX_DIST then
-                    local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
-                    local score = onScreen
-                        and Vector2.new(mouse.X - screenPos.X, mouse.Y - screenPos.Y).Magnitude
-                        or 10000 + distance
-                    if score < bestScore then best, bestScore = root, score end
-                end
-            end
-        end
-    end
-    return best
-end
 
--- Busca estrictamente al objetivo físicamente más cercano para ataques cuerpo a cuerpo
-local function findMeleeTarget(myHRP)
-    local best, bestDist = nil, SOFTAIM.M1_MAX_DIST
+    local bestPriority, bestPriorityScore = nil, math.huge
+    local bestNormal, bestNormalScore = nil, math.huge
+
     for _, player in ipairs(_Players:GetPlayers()) do
         if player ~= _lplr then
             local char = player.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             local hum = char and char:FindFirstChildOfClass("Humanoid")
+
             if root and hum and hum.Health > 0 then
-                local distance = (root.Position - myHRP.Position).Magnitude
-                if distance <= bestDist then
-                    best, bestDist = root, distance
+                local dir = root.Position - myPos
+                local dist = dir.Magnitude
+
+                if dist <= SOFTAIM.MAX_DIST then
+                    local dirUnit = dir.Unit
+                    local lookDot = myLook:Dot(dirUnit)
+                    local velDot = myVel:Dot(dirUnit)
+
+                    -- Verificación de prioridad (Cuerpo en línea fija y moviéndonos hacia él)
+                    -- lookDot > 0.85 significa que lo estás mirando casi de frente.
+                    -- velDot > 0.5 significa que hay inercia física hacia su dirección.
+                    if lookDot > 0.85 and velDot > 0.5 then
+                        if dist < bestPriorityScore then
+                            bestPriorityScore = dist
+                            bestPriority = root
+                        end
+                    end
+
+                    -- Búsqueda normal (El más cercano al puntero/centro de la pantalla)
+                    local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
+                    if onScreen then
+                        local nScore = Vector2.new(mouse.X - screenPos.X, mouse.Y - screenPos.Y).Magnitude
+                        if nScore < bestNormalScore then
+                            bestNormalScore = nScore
+                            bestNormal = root
+                        end
+                    end
                 end
             end
         end
     end
-    return best
+
+    -- Si hay un objetivo de prioridad, lo asume instantáneamente. Si no, usa el normal.
+    return bestPriority or bestNormal
 end
 
 local function anyKeyHeld()
@@ -122,18 +86,21 @@ local function anyKeyHeld()
     return false
 end
 
+local function getMatchedKey(input)
+    for _, key in ipairs(SOFTAIM.KEYS) do
+        if input.KeyCode == key or input.UserInputType == key then
+            return key
+        end
+    end
+    return nil
+end
+
 function M.Stop()
     _enabled = false
     clearSoftAim()
-    _heldKeys = {} -- Vaciamos las teclas solo cuando el módulo se detiene por completo
     if _inputConn then _inputConn:Disconnect(); _inputConn = nil end
     if _endConn then _endConn:Disconnect(); _endConn = nil end
     if _heartbeatConn then _heartbeatConn:Disconnect(); _heartbeatConn = nil end
-end
-
-function M.SetLockModule(lockModule)
-    _lockModuleRef = type(lockModule) == "table" and lockModule or nil
-    if lockHasValidTarget() then clearSoftAim() end
 end
 
 function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera)
@@ -141,66 +108,48 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
     _Keys, _lplr, _Players = Keys or {}, lplr, PlayersRef
     _RunService, _UIS, _camera = RunServiceRef, UserInputService, camera
     _enabled = true
-    ensureHighlight()
 
     _heartbeatConn = _RunService.Heartbeat:Connect(function()
         if not _enabled then return end
-
-        if lockHasValidTarget() then
-            clearSoftAim()
-            return
-        end
 
         if anyKeyHeld() then
             _active = true
             _lockTime = tick() + SOFTAIM.LOCK_DURATION
         end
         
-        if not _active then clearHighlight(); return end
+        if not _active then return end
         if tick() >= _lockTime then clearSoftAim(); return end
 
         local char = _lplr.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
-        
-        -- Si no hay target, usamos el normal (asumimos que si fue por M1, el target ya se asignó en InputBegan)
+
         if not _targetHRP or not _targetHRP.Parent then 
-            _targetHRP = findNearestTarget(root) 
+            _targetHRP = findTarget(root) 
         end
-        if not _targetHRP then clearHighlight(); return end
+        
+        if not _targetHRP then return end
 
         local targetChar = _targetHRP.Parent
         local aimPart = (targetChar and targetChar:FindFirstChild("UpperTorso")) or _targetHRP
-        local lookTarget = Vector3.new(aimPart.Position.X, root.Position.Y, aimPart.Position.Z)
+        local targetPos = aimPart.Position
+
+        -- Ultra Apuntar: Fuerza al cuerpo a mirar EXACTAMENTE al objetivo (CFrame.lookAt puro)
+        local rootPos = root.Position
+        local lookTargetBody = Vector3.new(targetPos.X, rootPos.Y, targetPos.Z)
         
-        if (lookTarget - root.Position).Magnitude > 0.1 then
-            local _, currentYaw = root.CFrame:ToEulerAnglesYXZ()
-            local _, targetYaw = CFrame.lookAt(root.Position, lookTarget):ToEulerAnglesYXZ()
-            local difference = targetYaw - currentYaw
-            if difference > math.pi then difference -= 2 * math.pi end
-            if difference < -math.pi then difference += 2 * math.pi end
+        if (lookTargetBody - rootPos).Magnitude > 0.1 then
             local velocity = root.AssemblyLinearVelocity
-            root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, currentYaw + difference * SOFTAIM.ROTATION_SMOOTH, 0)
-            root.AssemblyLinearVelocity = velocity
+            root.CFrame = CFrame.lookAt(rootPos, lookTargetBody)
+            root.AssemblyLinearVelocity = velocity -- Conserva el momentum
         end
-        _highlight.Parent = targetChar
+
+        -- Ultra Apuntar: Fuerza a la vista (Cámara) a centrarse en el objetivo instantáneamente
+        _camera.CFrame = CFrame.lookAt(_camera.CFrame.Position, targetPos)
     end)
 
     _inputConn = _UIS.InputBegan:Connect(function(input, gpe)
-        if not _enabled then return end
-
-        local isSoftAimKey = false
-        for _, key in ipairs(SOFTAIM.KEYS) do
-            if input.KeyCode == key then
-                isSoftAimKey = true
-                break
-            end
-        end
-
-        -- Bloqueamos interacciones de UI, EXCEPTO para nuestras teclas designadas
-        if gpe and not isSoftAimKey then return end
-
-        if lockHasValidTarget() then clearSoftAim(); return end
+        if gpe or not _enabled then return end
 
         if input.KeyCode == Enum.KeyCode.Q
             or input.KeyCode == _Keys.EmoteSteal
@@ -209,33 +158,19 @@ function M.Setup(Keys, lplr, PlayersRef, RunServiceRef, UserInputService, camera
             clearSoftAim()
             return
         end
-
-        -- Manejo de teclas regulares (1, 2, 3, 4)
-        if isSoftAimKey then
-            _heldKeys[input.KeyCode] = true
+        
+        local matchedKey = getMatchedKey(input)
+        if matchedKey then
+            _heldKeys[matchedKey] = true
             _active = true
             _lockTime = tick() + SOFTAIM.LOCK_DURATION
-            return
-        end
-
-        -- Manejo del Click Izquierdo (M1) para Melee
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local char = _lplr.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if root then
-                local meleeTarget = findMeleeTarget(root)
-                if meleeTarget then
-                    _targetHRP = meleeTarget
-                    _active = true
-                    _lockTime = tick() + SOFTAIM.M1_DURATION
-                end
-            end
         end
     end)
 
     _endConn = _UIS.InputEnded:Connect(function(input)
-        for _, key in ipairs(SOFTAIM.KEYS) do
-            if input.KeyCode == key then _heldKeys[key] = false; break end
+        local matchedKey = getMatchedKey(input)
+        if matchedKey then
+            _heldKeys[matchedKey] = false
         end
     end)
 end
