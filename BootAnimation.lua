@@ -47,35 +47,6 @@ hum.AutoRotate = false
 local originalRootPos = root.Position
 local originalGroundY = originalRootPos.Y
 
--- Reinicia el estado visual que normalmente queda limpio al soltar un lock:
--- articulaciones sin Transform residual, cámara de vuelta al Humanoid y un
--- frame con AutoRotate desactivado para evitar que el HRP quede "tieso".
-local function ResetCinematicBodyAndCamera()
-    if not char or not char.Parent or not hum or not hum.Parent or not root or not root.Parent then return end
-
-    for _, motor in ipairs(char:GetDescendants()) do
-        if motor:IsA("Motor6D") then
-            motor.Transform = CFrame.new()
-        end
-    end
-
-    -- Mantiene la orientación horizontal final, pero elimina cualquier pitch/roll residual.
-    local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
-    local stableCF = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
-    root.CFrame = stableCF
-    root.AssemblyAngularVelocity = Vector3.zero
-
-    hum.AutoRotate = false
-    cam.CameraSubject = hum
-    cam.CameraType = Enum.CameraType.Custom
-    RunService.RenderStepped:Wait()
-
-    cam.CameraSubject = hum
-    cam.CameraType = Enum.CameraType.Custom
-    hum.AutoRotate = oldAutoRotate
-    hum:ChangeState(Enum.HumanoidStateType.Running)
-end
-
 pcall(function() char.Archivable = true end)
 local cloneChar = char:Clone()
 pcall(function() char.Archivable = false end)
@@ -589,22 +560,13 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
-    local function loadClothing(assetId)
-        local success, loadedAssets = pcall(function()
-            return game:GetObjects("rbxassetid://" .. assetId)
-        end)
-        if success and loadedAssets then
-            for _, loaded in ipairs(loadedAssets) do
-                if loaded:IsA("Shirt") or loaded:IsA("Pants") then
-                    loaded:Clone().Parent = rig
-                end
-                loaded:Destroy()
-            end
-        end
-    end
+    local shirt = Instance.new("Shirt")
+    shirt.ShirtTemplate = "rbxassetid://97549107762722"
+    shirt.Parent = rig
 
-    loadClothing("97549107762722")
-    loadClothing("4577042673")
+    local pants = Instance.new("Pants")
+    pants.PantsTemplate = "rbxassetid://90709447311242"
+    pants.Parent = rig
 
     local function getAccessory(assetId)
         local success, loadedAssets = pcall(function()
@@ -622,7 +584,7 @@ local function ApplyDummyAppearance(rig)
         return accessory
     end
 
-    local function addAccessory(assetId, scaleFactor)
+    local function addAccessory(assetId, scaleToOneAndHalf)
         local accessory = getAccessory(assetId)
         if not accessory then
             warn("No se pudo cargar el accesorio del dummy: " .. assetId)
@@ -635,20 +597,21 @@ local function ApplyDummyAppearance(rig)
             manualAttachAccessory(accessory, rig)
         end
 
-        if scaleFactor and handle then
+    -- Los accesorios del dummy pueden escalarse sin alterar su montaje.
+    if scaleToOneAndHalf and handle then
             if handle:IsA("MeshPart") then
-                handle.Size = handle.Size * scaleFactor
+                handle.Size = handle.Size * 1.5
             end
             local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-            if mesh then mesh.Scale = mesh.Scale * scaleFactor end
+            if mesh then mesh.Scale = mesh.Scale * 1.5 end
         end
     end
 
-    -- El sombrero conserva su escala actual (1.5x); los demás objetos se muestran al 1.1x (10% más grandes).
-    addAccessory(dummyAssets.Hat, 1.5)
-    addAccessory(dummyAssets.Front, 1.1)
-    addAccessory(dummyAssets.LeftShoulder, 1.1)
-    addAccessory(dummyAssets.RightShoulder, 1.1)
+    -- El sombrero queda intacto; los demás accesorios reciben +50% de escala.
+    addAccessory(dummyAssets.Hat, false)
+    addAccessory(dummyAssets.Front, true)
+    addAccessory(dummyAssets.LeftShoulder, true)
+    addAccessory(dummyAssets.RightShoulder, true)
 
     -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
@@ -664,9 +627,10 @@ end
 
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
-
+    
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
+
     for _, v in ipairs(cloneChar:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
@@ -675,14 +639,14 @@ local function UpdateCloneAppearance()
 
     local cHead = cloneChar:FindFirstChild("Head")
     local sHead = char:FindFirstChild("Head")
-
+    
     if cHead then
         for _, child in ipairs(cHead:GetChildren()) do
             if child:IsA("DataModelMesh") or child:IsA("SpecialMesh") or child:IsA("Decal") then
                 child:Destroy()
             end
         end
-
+        
         local defaultMesh = Instance.new("SpecialMesh")
         defaultMesh.MeshType = Enum.MeshType.Head
         defaultMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
@@ -691,37 +655,35 @@ local function UpdateCloneAppearance()
 
     local loadedFace = false
 
-    -- Copia y monta cada accesorio en el momento del segundo flash. AddAccessory
-    -- recibe el accesorio ya saneado y el anclaje manual conserva el respaldo de
-    -- la versión estable para paquetes que no generan AccessoryWeld.
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Accessory") then
             local cloneItem = item:Clone()
             local handle = cloneItem:FindFirstChild("Handle")
-
+            
             if handle then
                 handle.LocalTransparencyModifier = 0
                 handle.Transparency = 0
-
+                
                 for _, weld in ipairs(handle:GetChildren()) do
                     if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld.Name == "AccessoryWeld" then
                         weld:Destroy()
                     end
                 end
             end
-
-            local added = pcall(function()
-                cloneHum:AddAccessory(cloneItem)
+            
+            local added = pcall(function() 
+                cloneHum:AddAccessory(cloneItem) 
             end)
-
+            
             if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
                 manualAttachAccessory(cloneItem, cloneChar)
             end
+            
         elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
         end
     end
-
+    
     if sHead and cHead then
         local hasCustomMesh = false
         for _, item in ipairs(sHead:GetChildren()) do
@@ -730,7 +692,7 @@ local function UpdateCloneAppearance()
                 break
             end
         end
-
+        
         if hasCustomMesh then
             for _, oldMesh in ipairs(cHead:GetChildren()) do
                 if oldMesh:IsA("DataModelMesh") or oldMesh:IsA("SpecialMesh") then
@@ -738,7 +700,7 @@ local function UpdateCloneAppearance()
                 end
             end
         end
-
+        
         for _, item in ipairs(sHead:GetChildren()) do
             if item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
                 loadedFace = true
@@ -837,8 +799,7 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
--- Segundo flash negro: adelantarlo 0.5 s (antes: 9.0 s).
-task.delay(8.5, function() 
+task.delay(9.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
@@ -911,16 +872,6 @@ local finalCloneCF = cloneRoot.CFrame
 local finalPos = finalCloneCF.Position
 local finalRot = finalCloneCF - finalCloneCF.Position
 
--- La altura final debe salir del modelo que acabamos de animar, no de la
--- hitbox del HumanoidRootPart. El borde inferior de su bounding box incluye
--- las piernas en la pose exacta del despeje.
-local rootToCloneFeet = hum.HipHeight + (root.Size.Y / 2)
-pcall(function()
-    local cloneBoundsCF, cloneBoundsSize = cloneChar:GetBoundingBox()
-    local cloneBottomY = cloneBoundsCF.Position.Y - (cloneBoundsSize.Y / 2)
-    rootToCloneFeet = math.max(0, cloneRoot.Position.Y - cloneBottomY)
-end)
-
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
 getgenv()._StopCinematic = true 
@@ -951,7 +902,7 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
--- Raycast y posicionamiento final: ignora el personaje, el clon y el efecto visual.
+-- BUG FIX: Sistema de Raycast y Teleport iterativo para retornar estrictamente al suelo sin botes antinaturales
 root.Anchored = false
 
 local rayParams = RaycastParams.new()
@@ -965,47 +916,34 @@ if rayResult then
     actualGroundY = rayResult.Position.Y
 end
 
-local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootToCloneFeet, finalPos.Z) * finalRot
+local rootOffset = (hum.HipHeight + (root.Size.Y / 2))
+local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootOffset, finalPos.Z) * finalRot
 
--- Posicionamiento inicial estricto.
-root.CFrame = finalTargetCF
-root.AssemblyLinearVelocity = Vector3.zero
-root.AssemblyAngularVelocity = Vector3.zero
+local teleportAttempts = 0
+local maxAttempts = 15
 
--- Mantiene la Y durante dos segundos, salvo que el jugador reciba daño.
-local isPinned = true
-local startHealth = hum.Health
+repeat
+    root.CFrame = finalTargetCF
+    -- Empuje adicional para forzar el registro de contacto físico con el suelo
+    root.AssemblyLinearVelocity = Vector3.new(0, -100, 0)
+    root.AssemblyAngularVelocity = Vector3.zero
+    task.wait(0.05)
+    teleportAttempts = teleportAttempts + 1
+until (hum.FloorMaterial ~= Enum.Material.Air) or (teleportAttempts > maxAttempts)
 
-local damageConn
-damageConn = hum.HealthChanged:Connect(function(newHealth)
-    if newHealth < startHealth then
-        isPinned = false
+local landBV = Instance.new("BodyVelocity")
+landBV.Velocity = Vector3.zero
+landBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+landBV.Parent = root
+hum.PlatformStand = true
+
+task.defer(function()
+    pcall(function() landBV:Destroy() end)
+    if hum and hum.Parent then
+        hum.PlatformStand = false
+        hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
-    startHealth = newHealth
 end)
-
-local pinTime = 0
-local pinConn
-pinConn = RunService.Heartbeat:Connect(function(dt)
-    if not root or not root.Parent then
-        isPinned = false
-    end
-
-    pinTime = pinTime + dt
-
-    if not isPinned or pinTime >= 2 then
-        if pinConn then pinConn:Disconnect() end
-        if damageConn then damageConn:Disconnect() end
-        return
-    end
-
-    -- Fija la Y del objetivo y conserva movimiento/rotación en X/Z.
-    root.CFrame = CFrame.new(root.Position.X, finalTargetCF.Y, root.Position.Z) * (root.CFrame - root.CFrame.Position)
-    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
-end)
-
-hum.PlatformStand = false
-hum:ChangeState(Enum.HumanoidStateType.Landed)
 
 for part, data in pairs(originalParts) do
     if part and part.Parent then
@@ -1060,7 +998,8 @@ fovTween:Play()
 camTween.Completed:Wait()
 
 RunService:UnbindFromRenderStep(overrideId)
-ResetCinematicBodyAndCamera()
+cam.CameraSubject = hum
+cam.CameraType = Enum.CameraType.Custom
 
 task.spawn(function()
     task.wait(0.5)
