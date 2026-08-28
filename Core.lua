@@ -1,3 +1,48 @@
+local LocalPlayer = game:GetService("Players").LocalPlayer
+
+local function verifyHWID()
+    local userHWID = ""
+    local ok, result = pcall(function() return gethwid() end)
+    if ok and type(result) == "string" and result ~= "" then 
+        userHWID = result
+    else
+        local ok2, result2 = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
+        if ok2 and type(result2) == "string" and result2 ~= "" then
+            userHWID = result2
+        end
+    end
+
+    local wl_url = "https://rentry.co/AFO_/raw"
+    local success, wl_string = pcall(function()
+        return game:HttpGet(wl_url)
+    end)
+
+    if not success or type(wl_string) ~= "string" then
+        LocalPlayer:Kick("Error de conexión al verificar HWID.")
+        return false
+    end
+
+    local isWhitelisted = false
+    -- Extracción mediante patrones (gmatch) para evitar bugs de HttpService:JSONDecode con los arrays de Rentry
+    for hwid in string.gmatch(wl_string, '"([^"]+)"') do
+        if hwid == userHWID then
+            isWhitelisted = true
+            break
+        end
+    end
+
+    if not isWhitelisted then
+        LocalPlayer:Kick("Él ya te vio (He already saw you)")
+        return false
+    end
+
+    return true
+end
+
+if not verifyHWID() then
+    return 
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 1: PROTECCIÓN Y PRIMER HILO (BOOT ANIMATION)
 -- ═══════════════════════════════════════════════════════════════════════════
