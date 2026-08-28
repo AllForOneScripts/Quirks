@@ -565,7 +565,7 @@ local function ApplyDummyAppearance(rig)
     shirt.Parent = rig
 
     local pants = Instance.new("Pants")
-    pants.PantsTemplate = "rbxassetid://90709447311242"
+    pants.PantsTemplate = "rbxassetid://4577042673"
     pants.Parent = rig
 
     local function getAccessory(assetId)
@@ -607,10 +607,12 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
+    -- El sombrero conserva su escala actual (1.5x); los demás objetos
+    -- también se muestran al 150%, como se solicitó.
     addAccessory(dummyAssets.Hat, true)
-    addAccessory(dummyAssets.Front, false)
-    addAccessory(dummyAssets.LeftShoulder, false)
-    addAccessory(dummyAssets.RightShoulder, false)
+    addAccessory(dummyAssets.Front, true)
+    addAccessory(dummyAssets.LeftShoulder, true)
+    addAccessory(dummyAssets.RightShoulder, true)
 
     -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
@@ -798,7 +800,8 @@ sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.Skybox
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
-task.delay(9.5, function() 
+-- Segundo flash negro: adelantarlo 0.5 s (antes: 9.0 s).
+task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
@@ -918,17 +921,12 @@ end
 local rootOffset = (hum.HipHeight + (root.Size.Y / 2))
 local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootOffset, finalPos.Z) * finalRot
 
-local teleportAttempts = 0
-local maxAttempts = 15
-
-repeat
-    root.CFrame = finalTargetCF
-    -- Empuje adicional para forzar el registro de contacto físico con el suelo
-    root.AssemblyLinearVelocity = Vector3.new(0, -100, 0)
-    root.AssemblyAngularVelocity = Vector3.zero
-    task.wait(0.05)
-    teleportAttempts = teleportAttempts + 1
-until (hum.FloorMaterial ~= Enum.Material.Air) or (teleportAttempts > maxAttempts)
+-- Una sola alineación con el suelo. El raycast calcula únicamente la Y;
+-- X/Z y la rotación final se preservan para no desplazar al jugador.
+root.CFrame = finalTargetCF
+root.AssemblyLinearVelocity = Vector3.new(0, -45, 0)
+root.AssemblyAngularVelocity = Vector3.zero
+RunService.Heartbeat:Wait()
 
 local landBV = Instance.new("BodyVelocity")
 landBV.Velocity = Vector3.zero
