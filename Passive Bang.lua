@@ -1,30 +1,23 @@
--- PassiveBang_lock_reader.lua
--- Requiere que el lector de Lock se haya ejecutado primero y haya creado:
--- getgenv().AFO_LOCK_API
-
 local M = {}
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
-local _lplr
-local _camera = workspace.CurrentCamera
+local _lplr = nil
+local _keys = nil
 local _conns = {}
-local _bangKey = Enum.KeyCode.Quote
-local _lockModuleRef
-local _holding = false
-local _targetHRP
-local _targetPlayer
-local _leftDown = false
-local _rightDown = false
-local _rescore = 0
 
--- Estado del TP de caída. Durante el breve anclaje mantiene al personaje al
--- costado de la cabeza; después lo suelta con velocidad vertical descendente.
-local _dropTargetRoot
-local _dropStickUntil = 0
-local _dropCompletedFor
+local camera = workspace.CurrentCamera
+local holding = false
+local targetHRP = nil
+local targetPlayer = nil
+local leftDown = false
+local rightDown = false
+local rescore = 0
+
+local dropTargetRoot
+local dropStickUntil = 0
+local dropCompletedFor
 
 local PB = {
     MAX_3D_DIST = 150,
@@ -41,31 +34,28 @@ local PB = {
     RESCORE_INTERVAL = 12,
     CAMERA_SMOOTH = 1,
 
-    -- TP de caída, inspirado en PegarALaCabeza de Gravattack.
     FALL_TRIGGER_HEIGHT = 20,
     FALL_HEAD_STICK_TIME = 0.22,
     FALL_STICK_VELOCITY = -20,
     FALL_RELEASE_VELOCITY = -140,
-    -- Anclaje recto y bajo: el HRP queda dentro de la hitbox superior del
-    -- objetivo, sin desplazarlo a un lado ni situarlo sobre su cabeza.
     FALL_HEAD_HEIGHT_ADJUSTMENT = -3.5,
 }
 
 local function resetDrop()
-    _dropTargetRoot = nil
-    _dropStickUntil = 0
-    _dropCompletedFor = nil
+    dropTargetRoot = nil
+    dropStickUntil = 0
+    dropCompletedFor = nil
 end
 
 local function resetTarget()
-    _targetHRP = nil
-    _targetPlayer = nil
-    _rescore = PB.RESCORE_INTERVAL
+    targetHRP = nil
+    targetPlayer = nil
+    rescore = PB.RESCORE_INTERVAL
     resetDrop()
 end
 
 local function updateCharacter()
-    _holding = false
+    holding = false
     resetTarget()
 end
 
@@ -83,12 +73,12 @@ local function scoreCandidate(player, myRoot, mouseX, mouseY)
     if not root then return nil end
 
     local distance = (root.Position - myRoot.Position).Magnitude
-    local isCurrent = root == _targetHRP
+    local isCurrent = root == targetHRP
     if distance > (isCurrent and PB.MAX_ENGAGED_DIST or PB.MAX_3D_DIST) then return nil end
 
     local proximity = PB.W_PROXIMITY * (1 - math.clamp(distance / PB.MAX_3D_DIST, 0, 1))
     local mouseScore = 0
-    local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
+    local screenPos, onScreen = camera:WorldToViewportPoint(root.Position)
     if onScreen then
         local screenDistance = Vector2.new(mouseX - screenPos.X, mouseY - screenPos.Y).Magnitude
         if screenDistance <= PB.MAX_SCREEN_DIST_MOUSE then
@@ -112,67 +102,6 @@ local function selectPassiveTarget(myRoot)
     return bestRoot, bestPlayer
 end
 
--- Lector de la API: primero respeta un módulo inyectado por el Hub y, si no
--- existe, toma la API que deja el script Lock API Reader en getgenv().
-local function getLockApi()
-    if type(_lockModuleRef) == "table" then return _lockModuleRef end
-    local fromReader = rawget(getgenv(), "AFO_LOCK_API")
-    if type(fromReader) == "table" then
-        _lockModuleRef = fromReader
-        return fromReader
-    end
-    return nil
-end
-
--- Lock.lua expone GetStatus() (el Reader solo garantiza ese método), no
--- necesariamente IsLockActive() ni GetTarget(). Se aceptan ambas variantes
--- para seguir siendo compatible con versiones antiguas del módulo.
-local function getLockTarget()
-    local lock = getLockApi()
-    if not lock or type(lock.GetStatus) ~= "function" then return nil end
-
-    local okStatus, status = pcall(lock.GetStatus)
-    if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
-        return nil
-    end
-
-    local target
-    if type(lock.GetTarget) == "function" then
-        local okTarget, result = pcall(lock.GetTarget)
-        if okTarget then target = result end
-    end
-
-    -- Las distintas revisiones de Lock.lua pueden devolver el Player, el
-    -- Character, el HRP o solamente targetName dentro de GetStatus().
-    target = target or status.targetPlayer or status.targetCharacter or status.targetRoot
-        or status.player or status.target
-    if typeof(target) == "Instance" then
-        if target:IsA("Player") then
-            local root = getLiveRoot(target)
-            if root then return target, root end
-        elseif target:IsA("Model") then
-            local player = Players:GetPlayerFromCharacter(target)
-            local root = target:FindFirstChild("HumanoidRootPart")
-            if player and root then return player, root end
-        elseif target:IsA("BasePart") then
-            local player = Players:GetPlayerFromCharacter(target.Parent)
-            if player then return player, target end
-        end
-    end
-
-    local targetName = status.targetName
-    if type(targetName) == "string" then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Name == targetName or player.DisplayName == targetName then
-                local root = getLiveRoot(player)
-                if root then return player, root end
-            end
-        end
-    end
-
-    return nil
-end
-
 local function getPredictedPosition(targetRoot)
     local velocity = targetRoot.AssemblyLinearVelocity
     local predicted = targetRoot.Position + velocity * (PB.PING_PREDICT_BASE + PB.PING_PREDICT_EXTRA)
@@ -192,169 +121,145 @@ local function faceTarget(myRoot, targetPosition)
 end
 
 local function aimCamera(targetPosition)
-    _camera = workspace.CurrentCamera or _camera
-    if not _camera then return end
-    local origin = _camera.CFrame.Position
+    camera = workspace.CurrentCamera or camera
+    if not camera then return end
+    local origin = camera.CFrame.Position
     if (targetPosition - origin).Magnitude > 0.01 then
-        _camera.CFrame = _camera.CFrame:Lerp(CFrame.lookAt(origin, targetPosition), PB.CAMERA_SMOOTH)
+        camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(origin, targetPosition), PB.CAMERA_SMOOTH)
     end
 end
 
-local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
+local function doFallingTeleport(myRoot, myHumanoid, tRoot)
     local now = tick()
+    if dropCompletedFor == tRoot then return true end
 
-    -- Tras soltar el anclaje no debe volver al TP normal en el siguiente
-    -- frame: se deja que la velocidad descendente complete la caída. Se
-    -- reinicia al soltar la tecla de Bang o al pasar a otro objetivo.
-    if _dropCompletedFor == targetRoot then
-        return true
+    if dropTargetRoot ~= tRoot and dropCompletedFor ~= tRoot
+        and myRoot.Position.Y - tRoot.Position.Y >= PB.FALL_TRIGGER_HEIGHT then
+        dropTargetRoot = tRoot
+        dropStickUntil = now + PB.FALL_HEAD_STICK_TIME
     end
 
-    -- Se inicia solo si el jugador está 20+ studs por encima del objetivo.
-    if _dropTargetRoot ~= targetRoot and _dropCompletedFor ~= targetRoot
-        and myRoot.Position.Y - targetRoot.Position.Y >= PB.FALL_TRIGGER_HEIGHT then
-        _dropTargetRoot = targetRoot
-        _dropStickUntil = now + PB.FALL_HEAD_STICK_TIME
-    end
-
-    if _dropTargetRoot ~= targetRoot then return false end
-    if not targetRoot.Parent then
+    if dropTargetRoot ~= tRoot then return false end
+    if not tRoot.Parent then
         resetDrop()
         return false
     end
 
-    if now < _dropStickUntil then
-        local head = targetRoot.Parent:FindFirstChild("Head")
-        local headPosition = head and head.Position or (targetRoot.Position + Vector3.new(0, targetRoot.Size.Y, 0))
+    if now < dropStickUntil then
+        local head = tRoot.Parent:FindFirstChild("Head")
+        local headPosition = head and head.Position or (tRoot.Position + Vector3.new(0, tRoot.Size.Y, 0))
         local footHeight = myHumanoid.HipHeight + (myRoot.Size.Y / 2) + 0.15
         local height = footHeight + PB.FALL_HEAD_HEIGHT_ADJUSTMENT
 
         myRoot.CFrame = CFrame.new(headPosition + Vector3.new(0, height, 0))
         myRoot.AssemblyLinearVelocity = Vector3.new(
-            targetRoot.AssemblyLinearVelocity.X,
+            tRoot.AssemblyLinearVelocity.X,
             PB.FALL_STICK_VELOCITY,
-            targetRoot.AssemblyLinearVelocity.Z
+            tRoot.AssemblyLinearVelocity.Z
         )
         return true
     end
 
     myRoot.AssemblyLinearVelocity = Vector3.new(
-        targetRoot.AssemblyLinearVelocity.X,
+        tRoot.AssemblyLinearVelocity.X,
         PB.FALL_RELEASE_VELOCITY,
-        targetRoot.AssemblyLinearVelocity.Z
+        tRoot.AssemblyLinearVelocity.Z
     )
-    _dropCompletedFor = targetRoot
-    _dropTargetRoot = nil
+    dropCompletedFor = tRoot
+    dropTargetRoot = nil
     return true
 end
 
-function M.Start(lplr)
-    _lplr = lplr or Players.LocalPlayer
-    if #_conns > 0 then M.Stop() end
+function M.Start(Keys, lplr)
+    _keys = Keys
+    _lplr = lplr
+    M.Stop() 
+
+    camera = workspace.CurrentCamera
 
     table.insert(_conns, _lplr.CharacterAdded:Connect(updateCharacter))
     updateCharacter()
 
     table.insert(_conns, UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = true end
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = true end
-        if input.KeyCode == _bangKey then
-            _holding = true
-            _rescore = PB.RESCORE_INTERVAL
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then leftDown = true end
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then rightDown = true end
+        if input.KeyCode == _keys.PassiveBang then
+            holding = true
+            rescore = PB.RESCORE_INTERVAL
         end
     end))
 
     table.insert(_conns, UserInputService.InputEnded:Connect(function(input)
-        if input.KeyCode == _bangKey then
-            _holding = false
+        if input.KeyCode == _keys.PassiveBang then
+            holding = false
             resetTarget()
         end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = false end
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = false end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then leftDown = false end
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then rightDown = false end
     end))
 
     table.insert(_conns, RunService.RenderStepped:Connect(function()
-        if not _holding then return end
+        if not holding then return end
 
         local myChar = _lplr.Character
         local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
         local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
         if not myRoot or not myHumanoid then return end
 
-        -- Un Lock válido reemplaza por completo el escaneo pasivo.
-        local lockedPlayer, lockedRoot = getLockTarget()
-        local isLocked = lockedPlayer ~= nil
-        if isLocked then
-            _targetPlayer, _targetHRP = lockedPlayer, lockedRoot
-            _rescore = PB.RESCORE_INTERVAL
-        else
-            _rescore += 1
-            if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
-                _rescore = 0
-                local newRoot, newPlayer = selectPassiveTarget(myRoot)
-                if newRoot then _targetHRP, _targetPlayer = newRoot, newPlayer else resetTarget() end
+        rescore += 1
+        if rescore >= PB.RESCORE_INTERVAL or not targetHRP then
+            rescore = 0
+            local newRoot, newPlayer = selectPassiveTarget(myRoot)
+            if newRoot then 
+                targetHRP, targetPlayer = newRoot, newPlayer 
+            else 
+                resetTarget() 
             end
         end
 
-        local validRoot = _targetPlayer and getLiveRoot(_targetPlayer)
+        local validRoot = targetPlayer and getLiveRoot(targetPlayer)
         if not validRoot then resetTarget(); return end
-        _targetHRP = validRoot
+        targetHRP = validRoot
 
-        local predicted, velocity, lead = getPredictedPosition(_targetHRP)
+        local predicted, velocity, lead = getPredictedPosition(targetHRP)
 
         local fly = rawget(getgenv(), "_AFO_FLY_MODULE")
         if fly and type(fly.Bypass) == "function" then
             pcall(fly.Bypass, 0.1, "passivebang")
         end
 
-        local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP)
+        local doingFallTP = doFallingTeleport(myRoot, myHumanoid, targetHRP)
         if not doingFallTP then
-            local behind = _targetHRP.CFrame.LookVector * -2.8
+            local behind = targetHRP.CFrame.LookVector * -2.8
             local vertical = velocity.Y < -10 and -2 or 0
             local targetPosition = predicted + behind + lead
-            targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
-            if isLocked then targetPosition += Vector3.new(0, 2.5, 0) end
+            targetPosition = Vector3.new(targetPosition.X, targetHRP.Position.Y + vertical, targetPosition.Z)
+            
             myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
         end
 
         faceTarget(myRoot, predicted)
+        aimCamera(predicted)
 
-        -- La cámara solo se modifica durante un TP pasivo. Un Lock activo
-        -- conserva completamente la cámara, incluso mientras Bang está pulsado.
-        if not isLocked then
-            aimCamera(predicted)
-        end
-
-        if _leftDown and _rightDown then
+        if leftDown and rightDown then
             resetTarget()
-            _leftDown, _rightDown = false, false
+            leftDown, rightDown = false, false
         end
     end))
 end
 
 function M.Stop()
-    for _, connection in ipairs(_conns) do pcall(function() connection:Disconnect() end) end
+    for _, conn in ipairs(_conns) do
+        if conn then conn:Disconnect() end
+    end
     table.clear(_conns)
-    _holding = false
-    _leftDown, _rightDown = false, false
+    holding = false
     resetTarget()
 end
 
-function M.SetLockModule(module)
-    _lockModuleRef = type(module) == "table" and module or nil
-end
-
-function M.SetKeybind(keyCode)
-    _bangKey = keyCode
-    _holding = false
-    resetTarget()
-end
-
-function M.GetTeleportTarget()
-    if not _holding then return nil end
-    local lockedPlayer = getLockTarget()
-    return { player = _targetPlayer, hrp = _targetHRP, isLockedByModule = lockedPlayer ~= nil }
+function M.SetKey(kc)
+    if _keys then _keys.PassiveBang = kc end
 end
 
 return M
