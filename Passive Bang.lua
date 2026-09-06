@@ -1,9 +1,3 @@
--- PassiveBang_lock_reader.lua
--- Requiere que el lector de Lock se haya ejecutado primero y haya creado:
--- getgenv().AFO_LOCK_API
-
-local M = {}
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -11,18 +5,14 @@ local UserInputService = game:GetService("UserInputService")
 local _lplr = Players.LocalPlayer
 local _camera = workspace.CurrentCamera
 local _conns = {}
--- La tecla por defecto es la comilla simple ('). Puedes cambiarla a Enum.KeyCode.Q, Enum.KeyCode.V, etc.
-local _bangKey = Enum.KeyCode.Quote 
-local _lockModuleRef
+local _bangKey = Enum.KeyCode.Quote
 local _holding = false
 local _targetHRP
 local _targetPlayer
 local _leftDown = false
 local _rightDown = false
 local _rescore = 0
-local _wasLockActive = false
 
--- Estado del TP de caída.
 local _dropTargetRoot
 local _dropStickUntil = 0
 local _dropCompletedFor
@@ -41,7 +31,6 @@ local PB = {
     VEL_THRESHOLD = 8,
     RESCORE_INTERVAL = 12,
     CAMERA_SMOOTH = 1,
-
     FALL_TRIGGER_HEIGHT = 20,
     FALL_HEAD_STICK_TIME = 0.22,
     FALL_STICK_VELOCITY = -20,
@@ -110,75 +99,6 @@ local function selectPassiveTarget(myRoot)
         end
     end
     return bestRoot, bestPlayer
-end
-
-local function getLockApi()
-    if type(_lockModuleRef) == "table" then return _lockModuleRef end
-    local fromReader = rawget(getgenv(), "AFO_LOCK_API")
-    if type(fromReader) == "table" then
-        _lockModuleRef = fromReader
-        return fromReader
-    end
-    return nil
-end
-
-local function getLockTarget()
-    local lock = getLockApi()
-    if not lock or type(lock.GetStatus) ~= "function" then return nil, nil, false end
-
-    local okStatus, status = pcall(lock.GetStatus)
-    if not okStatus or type(status) ~= "table" or status.lockActive ~= true then
-        return nil, nil, false
-    end
-
-    local target
-    if type(lock.GetTarget) == "function" then
-        local okTarget, result = pcall(lock.GetTarget)
-        if okTarget then target = result end
-    end
-
-    local function resolvePlayer(candidate)
-        if typeof(candidate) == "Instance" then
-            if candidate:IsA("Player") then
-                local root = getLiveRoot(candidate)
-                if root then return candidate, root end
-            elseif candidate:IsA("Model") then
-                local player = Players:GetPlayerFromCharacter(candidate)
-                local root = getLiveRoot(player)
-                if player and root then return player, root end
-            elseif candidate:IsA("BasePart") then
-                local model = candidate:FindFirstAncestorOfClass("Model")
-                local player = model and Players:GetPlayerFromCharacter(model)
-                local root = getLiveRoot(player)
-                if player and root then return player, root end
-            end
-        elseif type(candidate) == "table" then
-            return resolvePlayer(candidate.player or candidate.targetPlayer
-                or candidate.character or candidate.targetCharacter
-                or candidate.root or candidate.targetRoot or candidate.target)
-        end
-        return nil
-    end
-
-    for _, candidate in pairs({
-        target, status.targetPlayer, status.targetCharacter, status.targetRoot,
-        status.player, status.target,
-    }) do
-        local player, root = resolvePlayer(candidate)
-        if player and root then return player, root, true end
-    end
-
-    if type(status.targetName) == "string" then
-        local targetName = status.targetName:gsub("^@", ""):lower()
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Name:lower() == targetName or player.DisplayName:lower() == targetName then
-                local root = getLiveRoot(player)
-                if root then return player, root, true end
-            end
-        end
-    end
-
-    return nil, nil, true
 end
 
 local function getPredictedPosition(targetRoot)
@@ -267,145 +187,79 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
     return true
 end
 
-function M.Start(lplr)
-    _lplr = lplr or Players.LocalPlayer
-    if #_conns > 0 then M.Stop() end
-
-    table.insert(_conns, _lplr.CharacterAdded:Connect(updateCharacter))
-    updateCharacter()
-
-    table.insert(_conns, UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = true end
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = true end
-        if input.KeyCode == _bangKey then
-            _holding = true
-            _rescore = PB.RESCORE_INTERVAL
-        end
-    end))
-
-    table.insert(_conns, UserInputService.InputEnded:Connect(function(input)
-        if input.KeyCode == _bangKey then
-            _holding = false
-            resetTarget()
-        end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = false end
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = false end
-    end))
-
-    table.insert(_conns, RunService.RenderStepped:Connect(function()
-        if not _holding then return end
-
-        local myChar = _lplr.Character
-        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
-        if not myRoot or not myHumanoid then return end
-
-        local lockedPlayer, lockedRoot = getLockTarget()
-        local isLocked = lockedPlayer ~= nil and lockedRoot ~= nil
-        if isLocked ~= _wasLockActive then
-            resetDrop()
-            _wasLockActive = isLocked
-        end
-        if isLocked then
-            if _targetHRP ~= lockedRoot then
-                resetDrop()
-            end
-            _targetPlayer, _targetHRP = lockedPlayer, lockedRoot
-            _rescore = PB.RESCORE_INTERVAL
-        else
-            _rescore += 1
-            if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
-                _rescore = 0
-                local newRoot, newPlayer = selectPassiveTarget(myRoot)
-                if newRoot then _targetHRP, _targetPlayer = newRoot, newPlayer else resetTarget() end
-            end
-        end
-
-        local validRoot = _targetPlayer and getLiveRoot(_targetPlayer)
-        if not validRoot then resetTarget(); return end
-        _targetHRP = validRoot
-
-        local predicted, velocity, lead = getPredictedPosition(_targetHRP)
-
-        local fly = rawget(getgenv(), "_AFO_FLY_MODULE")
-        if fly and type(fly.Bypass) == "function" then
-            pcall(fly.Bypass, 0.1, "passivebang")
-        end
-
-        local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP)
-        if not doingFallTP then
-            local behind = _targetHRP.CFrame.LookVector * -2.8
-            local vertical = velocity.Y < -10 and -2 or 0
-            local targetPosition = predicted + behind + lead
-            targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
-            if isLocked then targetPosition += Vector3.new(0, 2.5, 0) end
-            myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
-        end
-
-        faceTarget(myRoot, predicted)
-
-        if not isLocked then
-            aimCamera(predicted)
-        end
-
-        if not isLocked and _leftDown and _rightDown then
-            resetTarget()
-            _leftDown, _rightDown = false, false
-        end
-    end))
-end
-
-function M.Stop()
-    for _, connection in ipairs(_conns) do pcall(function() connection:Disconnect() end) end
-    table.clear(_conns)
-    _holding = false
-    _leftDown, _rightDown = false, false
-    _wasLockActive = false
-    resetTarget()
-end
-
-function M.SetLockModule(module)
-    _lockModuleRef = type(module) == "table" and module or nil
-end
-
-function M.SetKeybind(keyCode)
-    _bangKey = keyCode
-    _holding = false
-    resetTarget()
-end
-
-function M.GetTeleportTarget()
-    if not _holding then return nil end
-    local lockedPlayer, lockedRoot = getLockTarget()
-    if lockedPlayer and lockedRoot then
-        return {
-            player = lockedPlayer,
-            hrp = lockedRoot,
-            isLockedByModule = true,
-        }
+if getgenv()._PassiveBangConnections then
+    for _, connection in ipairs(getgenv()._PassiveBangConnections) do
+        pcall(function() connection:Disconnect() end)
     end
-    return {
-        player = _targetPlayer,
-        hrp = _targetHRP,
-        isLockedByModule = false,
-    }
 end
+getgenv()._PassiveBangConnections = _conns
 
----------------------------------------------------------
--- [MODIFICACIÓN] Inicialización automática del script --
----------------------------------------------------------
+table.insert(_conns, _lplr.CharacterAdded:Connect(updateCharacter))
+updateCharacter()
 
--- Llama a la función para arrancar el sistema
-M.Start()
+table.insert(_conns, UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = true end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = true end
+    if input.KeyCode == _bangKey then
+        _holding = true
+        _rescore = PB.RESCORE_INTERVAL
+    end
+end))
 
--- Envía una notificación para confirmar que el script realmente se ejecutó
-pcall(function()
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "PassiveBang",
-        Text = "Ejecutado. Mantén la tecla de comilla simple (') para activar.",
-        Duration = 5
-    })
-end)
+table.insert(_conns, UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == _bangKey then
+        _holding = false
+        resetTarget()
+    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then _leftDown = false end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then _rightDown = false end
+end))
 
-return M
+table.insert(_conns, RunService.RenderStepped:Connect(function()
+    if not _holding then return end
+
+    local myChar = _lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myRoot or not myHumanoid then return end
+
+    _rescore += 1
+    if _rescore >= PB.RESCORE_INTERVAL or not _targetHRP then
+        _rescore = 0
+        local newRoot, newPlayer = selectPassiveTarget(myRoot)
+        if newRoot then 
+            _targetHRP, _targetPlayer = newRoot, newPlayer 
+        else 
+            resetTarget() 
+        end
+    end
+
+    local validRoot = _targetPlayer and getLiveRoot(_targetPlayer)
+    if not validRoot then resetTarget(); return end
+    _targetHRP = validRoot
+
+    local predicted, velocity, lead = getPredictedPosition(_targetHRP)
+
+    local fly = rawget(getgenv(), "_AFO_FLY_MODULE")
+    if fly and type(fly.Bypass) == "function" then
+        pcall(fly.Bypass, 0.1, "passivebang")
+    end
+
+    local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP)
+    if not doingFallTP then
+        local behind = _targetHRP.CFrame.LookVector * -2.8
+        local vertical = velocity.Y < -10 and -2 or 0
+        local targetPosition = predicted + behind + lead
+        targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
+        myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
+    end
+
+    faceTarget(myRoot, predicted)
+    aimCamera(predicted)
+
+    if _leftDown and _rightDown then
+        resetTarget()
+        _leftDown, _rightDown = false, false
+    end
+end))
