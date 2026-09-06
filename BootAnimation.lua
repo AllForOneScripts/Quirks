@@ -23,7 +23,7 @@ flashGui.ResetOnSpawn = false
 flashGui.DisplayOrder = 9999
 
 local flashFrame = Instance.new("Frame", flashGui)
-
+-- Pantallazo inicial negro
 flashFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 flashFrame.Size = UDim2.new(1, 0, 1, 0)
 flashGui.Parent = pGui
@@ -47,9 +47,9 @@ hum.AutoRotate = false
 local originalRootPos = root.Position
 local originalGroundY = originalRootPos.Y
 
-
-
-
+-- Reinicia el estado visual que normalmente queda limpio al soltar un lock:
+-- articulaciones sin Transform residual, cámara de vuelta al Humanoid y un
+-- frame con AutoRotate desactivado para evitar que el HRP quede "tieso".
 local function ResetCinematicBodyAndCamera()
     if not char or not char.Parent or not hum or not hum.Parent or not root or not root.Parent then return end
 
@@ -59,7 +59,7 @@ local function ResetCinematicBodyAndCamera()
         end
     end
 
-
+    -- Mantiene la orientación horizontal final, pero elimina cualquier pitch/roll residual.
     local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
     local stableCF = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
     root.CFrame = stableCF
@@ -223,9 +223,9 @@ local function GetCustomResource(fileName, url)
     return getcustomasset(fileName)
 end
 
-
-
-
+---------------------------------------------------------------------------INICIO------------------------------------------------------------------------------
+-----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
 local function SpawnAFODimension(centerCF)
     local dimensionFolder = Instance.new("Folder")
     dimensionFolder.Name = "AFO_Dimension_Effect"
@@ -273,7 +273,7 @@ local function SpawnAFODimension(centerCF)
         wall.CastShadow = false 
         wall.Parent = dimensionFolder
 
-
+        -- Background con 50% de oscuridad
         local bgUp = Instance.new("Texture")
         bgUp.Name = "BgUp"
         bgUp.Texture = BG_TEXTURE_ID
@@ -291,7 +291,7 @@ local function SpawnAFODimension(centerCF)
         bgDown.Parent = wall
         table.insert(scrollingBackgrounds, bgDown)
 
-
+        -- GUI para permitir el giro continuo y el zoom de las lineas neon
         local surfGui = Instance.new("SurfaceGui")
         surfGui.Name = "NeonGui"
         surfGui.Face = data.innerFace
@@ -299,7 +299,7 @@ local function SpawnAFODimension(centerCF)
         surfGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         surfGui.Parent = wall
         
-
+        -- Bordecito transparente
         local neonGlow = Instance.new("ImageLabel")
         neonGlow.Name = "NeonGlow"
         neonGlow.BackgroundTransparency = 1
@@ -323,7 +323,7 @@ local function SpawnAFODimension(centerCF)
         neonMain.ZIndex = 3
         neonMain.Parent = surfGui
 
-
+        -- Luz central en la cara sur (Back)
         if data.name == "Back" then
             local lightGui = Instance.new("SurfaceGui")
             lightGui.Name = "SouthLightGui"
@@ -357,7 +357,7 @@ local function SpawnAFODimension(centerCF)
     bottomPole.CFrame = centerCF * CFrame.new(0, -half, 0)
     bottomPole.Parent = dimensionFolder
 
-
+    -- Humo morado brillante y suave
     local function createSinisterSmoke(polePart, emitDirection)
         local smokeEmitter = Instance.new("ParticleEmitter")
         smokeEmitter.Texture = SMOKE_TEXTURE_ID
@@ -367,19 +367,19 @@ local function SpawnAFODimension(centerCF)
         smokeEmitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 10), NumberSequenceKeypoint.new(1, 35)})
         smokeEmitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1), 
-            NumberSequenceKeypoint.new(0.3, 0.7),
+            NumberSequenceKeypoint.new(0.3, 0.7), -- Suave
             NumberSequenceKeypoint.new(1, 1)
         })
         smokeEmitter.Lifetime = NumberRange.new(5, 7)
         smokeEmitter.Rate = 20 
-        smokeEmitter.Speed = NumberRange.new(2, 4)
+        smokeEmitter.Speed = NumberRange.new(2, 4) -- Deslizándose suavemente
         smokeEmitter.EmissionDirection = emitDirection
         smokeEmitter.Rotation = NumberRange.new(0, 360)
         smokeEmitter.RotSpeed = NumberRange.new(-5, 5)
         smokeEmitter.Parent = polePart
     end
 
-
+    -- Techo hacia abajo, Suelo hacia arriba
     createSinisterSmoke(topPole, Enum.NormalId.Bottom)
     createSinisterSmoke(bottomPole, Enum.NormalId.Top)
 
@@ -471,14 +471,14 @@ local function SpawnAFODimension(centerCF)
             end
         end
 
-
+        -- Actualización del Neon y la luz expansiva
         for _, wall in ipairs(dimensionFolder:GetChildren()) do
             local gui = wall:FindFirstChild("NeonGui")
             if gui then
                 local main = gui:FindFirstChild("NeonMain")
                 local glow = gui:FindFirstChild("NeonGlow")
                 
-
+                -- Zoom y rotación continua rápida
                 local currentScale = 1 + (alpha * 6)
                 if main then
                     main.Rotation = main.Rotation + (dt * 150)
@@ -490,198 +490,23 @@ local function SpawnAFODimension(centerCF)
                 end
             end
 
-
+            -- Expansión de la luz Sur
             if wall.Name == "Back" then
                 local sGui = wall:FindFirstChild("SouthLightGui")
                 if sGui then
                     local lightImg = sGui:FindFirstChild("ExpandingLight")
                     if lightImg then
-                        local lightScale = alpha * 18
+                        local lightScale = alpha * 18 -- Se expande hasta salir de la caja
                         lightImg.Size = UDim2.new(lightScale, 0, lightScale, 0)
                     end
                 end
             end
         end
     end)
-    return dimensionFolder
 end
-
-
-
-
-local function SpawnDiveTunnel(centerCF)
-    local tunnelFolder = Instance.new("Folder")
-    tunnelFolder.Name = "AFO_Dimension_Effect"
-    tunnelFolder.Parent = workspace
-
-    local tunnelWidth = 110
-    local tunnelHeight = 104
-    local tunnelLength = 300
-    local wallThickness = 2
-    local halfWidth = tunnelWidth / 2
-    local halfHeight = tunnelHeight / 2
-    local halfLength = tunnelLength / 2
-    local backgroundTexture = "rbxassetid://72194288856630"
-    local backgroundColor = Color3.fromRGB(45, 5, 30)
-    local neonColor = Color3.fromRGB(210, 35, 255)
-    local walls = {
-        {name = "Ceiling", offset = CFrame.new(0, halfHeight, 0), size = Vector3.new(tunnelWidth, wallThickness, tunnelLength), face = Enum.NormalId.Bottom},
-        {name = "Floor", offset = CFrame.new(0, -halfHeight, 0), size = Vector3.new(tunnelWidth, wallThickness, tunnelLength), face = Enum.NormalId.Top},
-        {name = "LeftWall", offset = CFrame.new(-halfWidth, 0, 0), size = Vector3.new(wallThickness, tunnelHeight, tunnelLength), face = Enum.NormalId.Right},
-        {name = "RightWall", offset = CFrame.new(halfWidth, 0, 0), size = Vector3.new(wallThickness, tunnelHeight, tunnelLength), face = Enum.NormalId.Left},
-        {name = "BackWall", offset = CFrame.new(0, 0, -halfLength), size = Vector3.new(tunnelWidth, tunnelHeight, wallThickness), face = Enum.NormalId.Front},
-        {name = "FrontWall", offset = CFrame.new(0, 0, halfLength), size = Vector3.new(tunnelWidth, tunnelHeight, wallThickness), face = Enum.NormalId.Back}
-    }
-    local scrollingTextures = {}
-
-    for _, wallData in ipairs(walls) do
-        local wall = Instance.new("Part")
-        wall.Name = wallData.name
-        wall.Size = wallData.size
-        wall.CFrame = centerCF * wallData.offset
-        wall.Anchored = true
-        wall.CanCollide = false
-        wall.CanTouch = false
-        wall.CanQuery = false
-        wall.CastShadow = false
-        wall.Material = Enum.Material.SmoothPlastic
-        wall.Color = Color3.fromRGB(5, 1, 8)
-        wall.Parent = tunnelFolder
-
-        local texture = Instance.new("Texture")
-        texture.Name = "ScrollingBackground"
-        texture.Texture = backgroundTexture
-        texture.Face = wallData.face
-        texture.Color3 = backgroundColor
-        texture.Transparency = 0.12
-        texture.StudsPerTileU = 28
-        texture.StudsPerTileV = 28
-        texture.Parent = wall
-        table.insert(scrollingTextures, texture)
-    end
-
-    local smokeAnchor = Instance.new("Part")
-    smokeAnchor.Name = "CylinderSmokeAnchor"
-    smokeAnchor.Size = Vector3.new(1, 1, 1)
-    smokeAnchor.CFrame = centerCF
-    smokeAnchor.Transparency = 1
-    smokeAnchor.Anchored = true
-    smokeAnchor.CanCollide = false
-    smokeAnchor.CanTouch = false
-    smokeAnchor.CanQuery = false
-    smokeAnchor.Parent = tunnelFolder
-
-    local smokeTexture = "rbxassetid://13490928216"
-    local smokeRadius = math.sqrt((halfWidth * halfWidth) + (halfHeight * halfHeight)) + 1
-    local smokeRingCount = 4
-    local smokeEmittersPerRing = 14
-    for ring = 0, smokeRingCount - 1 do
-        local z = -halfLength + ((ring + 0.5) / smokeRingCount) * tunnelLength
-        for segment = 0, smokeEmittersPerRing - 1 do
-            local angle = (segment / smokeEmittersPerRing) * math.pi * 2
-            local sourcePosition = Vector3.new(math.cos(angle) * smokeRadius, math.sin(angle) * smokeRadius, z)
-            local inwardDirection = Vector3.new(-math.cos(angle), -math.sin(angle), 0)
-            local attachment = Instance.new("Attachment")
-            attachment.Name = "CylinderSmokeEmitter"
-            attachment.CFrame = CFrame.lookAt(sourcePosition, sourcePosition + inwardDirection)
-            attachment.Parent = smokeAnchor
-
-            local smoke = Instance.new("ParticleEmitter")
-            smoke.Texture = smokeTexture
-            smoke.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 0, 255)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(45, 5, 30))
-            })
-            smoke.LightEmission = 0.35
-            smoke.Rate = 2
-            smoke.Lifetime = NumberRange.new(2.5, 4.5)
-            smoke.Speed = NumberRange.new(22, 42)
-            smoke.SpreadAngle = Vector2.new(18, 18)
-            smoke.EmissionDirection = Enum.NormalId.Front
-            smoke.Rotation = NumberRange.new(0, 360)
-            smoke.RotSpeed = NumberRange.new(-12, 12)
-            smoke.Size = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 6),
-                NumberSequenceKeypoint.new(0.65, 17),
-                NumberSequenceKeypoint.new(1, 26)
-            })
-            smoke.Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 0.35),
-                NumberSequenceKeypoint.new(0.75, 0.65),
-                NumberSequenceKeypoint.new(1, 1)
-            })
-            smoke.Parent = attachment
-        end
-    end
-
-    local random = Random.new(71337)
-    local rushLines = {}
-    for index = 1, 72 do
-        local edge = random:NextInteger(1, 4)
-        local x, y
-        if edge == 1 then
-            x = -halfWidth + 1.5
-            y = random:NextNumber(-halfHeight + 3, halfHeight - 3)
-        elseif edge == 2 then
-            x = halfWidth - 1.5
-            y = random:NextNumber(-halfHeight + 3, halfHeight - 3)
-        elseif edge == 3 then
-            x = random:NextNumber(-halfWidth + 3, halfWidth - 3)
-            y = halfHeight - 1.5
-        else
-            x = random:NextNumber(-halfWidth + 3, halfWidth - 3)
-            y = -halfHeight + 1.5
-        end
-
-        local line = Instance.new("Part")
-        line.Name = "NeonRushLine"
-        line.Anchored = true
-        line.CanCollide = false
-        line.CanTouch = false
-        line.CanQuery = false
-        line.CastShadow = false
-        line.Material = Enum.Material.Neon
-        line.Color = neonColor
-        line.Parent = tunnelFolder
-        table.insert(rushLines, {
-            part = line,
-            x = x,
-            y = y,
-            phase = random:NextNumber(0, tunnelLength),
-            speed = random:NextNumber(145, 230),
-            width = random:NextNumber(0.08, 0.28)
-        })
-    end
-
-    local startedAt = os.clock()
-    local connection
-    connection = RunService.RenderStepped:Connect(function()
-        if not tunnelFolder.Parent then
-            connection:Disconnect()
-            return
-        end
-
-        local elapsed = os.clock() - startedAt
-        local backgroundOffset = elapsed * 34
-        for _, texture in ipairs(scrollingTextures) do
-            texture.OffsetStudsV = -backgroundOffset
-            texture.OffsetStudsU = backgroundOffset * 0.25
-        end
-
-        for _, lineData in ipairs(rushLines) do
-            local progress = ((lineData.phase + elapsed * lineData.speed) % tunnelLength) / tunnelLength
-            local z = halfLength - (progress * tunnelLength)
-            local perspective = 1 - (progress * 0.78)
-            local thickness = lineData.width * (2.9 - progress * 2.4)
-            local length = 41 - (progress * 38)
-            lineData.part.Size = Vector3.new(thickness, thickness, length)
-            lineData.part.CFrame = centerCF * CFrame.new(lineData.x * perspective, lineData.y * perspective, z)
-            lineData.part.Transparency = 0.1 + (progress * 0.45)
-        end
-    end)
-
-    return tunnelFolder
-end
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------EFECTO ESPECIAL-------------------------------------------------------------------------
+-----------------------------------------------------------------------------FIN-------------------------------------------------------------------------------
 
 local AnimAssetURL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/Summon.rbxmx"
 local AudioAssetURL = "https://github.com/ian49972/smth/raw/refs/heads/main/Cosmic.mp3"
@@ -742,7 +567,7 @@ local function ApplyDummyAppearance(rig)
         RightShoulder = "88203090104599",
     }
 
-
+    -- Limpia solamente los elementos cosméticos del dummy; el clon del jugador no se toca.
     for _, v in ipairs(rig:GetChildren()) do
         if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
             v:Destroy()
@@ -764,13 +589,22 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
-    local shirt = Instance.new("Shirt")
-    shirt.ShirtTemplate = "rbxassetid://97549107762722"
-    shirt.Parent = rig
+    local function loadClothing(assetId)
+        local success, loadedAssets = pcall(function()
+            return game:GetObjects("rbxassetid://" .. assetId)
+        end)
+        if success and loadedAssets then
+            for _, loaded in ipairs(loadedAssets) do
+                if loaded:IsA("Shirt") or loaded:IsA("Pants") then
+                    loaded:Clone().Parent = rig
+                end
+                loaded:Destroy()
+            end
+        end
+    end
 
-    local pants = Instance.new("Pants")
-    pants.PantsTemplate = "rbxassetid://90709447311242"
-    pants.Parent = rig
+    loadClothing("97549107762722")
+    loadClothing("4577042673")
 
     local function getAccessory(assetId)
         local success, loadedAssets = pcall(function()
@@ -810,13 +644,13 @@ local function ApplyDummyAppearance(rig)
         end
     end
 
-
-    addAccessory(dummyAssets.Hat, 4.5)
+    -- El sombrero conserva su escala actual (1.5x); los demás objetos se muestran al 1.1x (10% más grandes).
+    addAccessory(dummyAssets.Hat, 2.5)
     addAccessory(dummyAssets.Front, 1.5)
-    addAccessory(dummyAssets.LeftShoulder, 1.5)
-    addAccessory(dummyAssets.RightShoulder, 1.5)
+    addAccessory(dummyAssets.LeftShoulder, 1.2)
+    addAccessory(dummyAssets.RightShoulder, 1.2)
 
-
+    -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
     if head then
         head.Transparency = 1
@@ -830,19 +664,18 @@ end
 
 local function UpdateCloneAppearance()
     if not cloneChar or not char then return end
-    
+
     local cloneHum = cloneChar:FindFirstChildOfClass("Humanoid")
     if not cloneHum then return end
-
-    for _, item in ipairs(cloneChar:GetChildren()) do
-        if item:IsA("Accessory") or item:IsA("Hat") or item:IsA("Shirt") or item:IsA("Pants")
-            or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
-            item:Destroy()
+    for _, v in ipairs(cloneChar:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Hat") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") or v:IsA("BodyColors") or v:IsA("CharacterMesh") then
+            v:Destroy()
         end
     end
 
     local cHead = cloneChar:FindFirstChild("Head")
     local sHead = char:FindFirstChild("Head")
+
     if cHead then
         for _, child in ipairs(cHead:GetChildren()) do
             if child:IsA("DataModelMesh") or child:IsA("SpecialMesh") or child:IsA("Decal") then
@@ -858,15 +691,18 @@ local function UpdateCloneAppearance()
 
     local loadedFace = false
 
+    -- Copia y monta cada accesorio en el momento del segundo flash. AddAccessory
+    -- recibe el accesorio ya saneado y el anclaje manual conserva el respaldo de
+    -- la versión estable para paquetes que no generan AccessoryWeld.
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Accessory") then
             local cloneItem = item:Clone()
             local handle = cloneItem:FindFirstChild("Handle")
-            
+
             if handle then
                 handle.LocalTransparencyModifier = 0
                 handle.Transparency = 0
-                
+
                 for _, weld in ipairs(handle:GetChildren()) do
                     if weld:IsA("Weld") or weld:IsA("WeldConstraint") or weld.Name == "AccessoryWeld" then
                         weld:Destroy()
@@ -874,14 +710,13 @@ local function UpdateCloneAppearance()
                 end
             end
 
-            local added = pcall(function() 
-                cloneHum:AddAccessory(cloneItem) 
+            local added = pcall(function()
+                cloneHum:AddAccessory(cloneItem)
             end)
-            
+
             if not (added and handle and handle:FindFirstChild("AccessoryWeld")) then
                 manualAttachAccessory(cloneItem, cloneChar)
             end
-            
         elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") or item:IsA("BodyColors") or item:IsA("CharacterMesh") then
             item:Clone().Parent = cloneChar
         end
@@ -895,7 +730,7 @@ local function UpdateCloneAppearance()
                 break
             end
         end
-        
+
         if hasCustomMesh then
             for _, oldMesh in ipairs(cHead:GetChildren()) do
                 if oldMesh:IsA("DataModelMesh") or oldMesh:IsA("SpecialMesh") then
@@ -903,7 +738,7 @@ local function UpdateCloneAppearance()
                 end
             end
         end
-        
+
         for _, item in ipairs(sHead:GetChildren()) do
             if item:IsA("Decal") and (item.Name:lower() == "face" or item.Texture ~= "") then
                 loadedFace = true
@@ -988,50 +823,39 @@ if not s or not Asset then
     return
 end
 
-local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
-local sceneRig = CRigs and CRigs:FindFirstChild("SceneRig")
-local sceneRigCF = sceneRig and sceneRig:GetPivot() or CINEMATIC_CF
-if sceneRig then sceneRig:Destroy() end
 Asset.Parent = workspace
-local Dummy = CRigs and CRigs:FindFirstChild("GOD")
-local DummyAnimation = Anims and Anims:FindFirstChild("GOD")
-if Dummy then
-    Dummy.Name = "Dummy"
-    ApplyDummyAppearance(Dummy)
-end
+local CRigs, Anims = Asset:FindFirstChild("CosmicRigs"), Asset:FindFirstChild("Anims")
+if CRigs.GOD then ApplyDummyAppearance(CRigs.GOD) end
 
 local snd = Instance.new("Sound", workspace)
 snd.SoundId, snd.Volume = GetCustomResource("Cosmic.mp3", AudioAssetURL), 2
 
 local oldSky = Lighting:FindFirstChildOfClass("Sky")
 local sky = Instance.new("Sky")
-local secondFlashGui
 sky.SkyboxBk, sky.SkyboxDn, sky.SkyboxFt, sky.SkyboxLf, sky.SkyboxRt, sky.SkyboxUp = 
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508",
     "rbxassetid://7188341508", "rbxassetid://7188341508", "rbxassetid://7188341508"
 sky.Parent = Lighting
 
-
+-- Segundo flash negro: adelantarlo 0.5 s (antes: 9.0 s).
 task.delay(8.5, function() 
     if sky and sky.Parent then sky:Destroy() end
     if oldSky then oldSky.Parent = Lighting end
     
-    secondFlashGui = Instance.new("ScreenGui", pGui)
-    secondFlashGui.IgnoreGuiInset, secondFlashGui.ResetOnSpawn = true, false
+    local sGui = Instance.new("ScreenGui", pGui)
+    sGui.IgnoreGuiInset, sGui.ResetOnSpawn = true, false
     
-    local fade = Instance.new("Frame", secondFlashGui)
+    local fade = Instance.new("Frame", sGui)
     fade.BackgroundColor3, fade.Size = Color3.new(0,0,0), UDim2.new(1,0,1,0)
     fade.BackgroundTransparency = 0
     
     UpdateCloneAppearance()
     
-
+    -- El inicio ocurre 1 s después, pero el corte/final permanece en el mismo instante.
     task.delay(2, function()
         local tw = TweenService:Create(fade, TweenInfo.new(1), {BackgroundTransparency = 1})
         tw:Play()
-        tw.Completed:Connect(function()
-            if secondFlashGui and secondFlashGui.Parent then secondFlashGui:Destroy() end
-        end)
+        tw.Completed:Connect(function() sGui:Destroy() end)
     end)
 end)
 
@@ -1046,17 +870,18 @@ repeat RunService.RenderStepped:Wait() until preloadFinished or (os.clock() - st
 cam.CameraType = Enum.CameraType.Scriptable
 snd:Play()
 
-local dimensionEffect = SpawnDiveTunnel(sceneRigCF)
+SpawnAFODimension(CINEMATIC_CF)
 
 pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/AllForOneScripts/Quirks/refs/heads/main/SummonCam.lua"))() end)
 
-
+-- Fundido suave al final del flash negro
 local fadeOutTw = TweenService:Create(flashFrame, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 fadeOutTw:Play()
 fadeOutTw.Completed:Connect(function() flashGui:Destroy() end)
 
 local bgAnims = {}
-if Dummy and DummyAnimation then table.insert(bgAnims, PlayKeyframeSequence(Dummy, DummyAnimation)) end
+if CRigs.GOD and Anims.GOD then table.insert(bgAnims, PlayKeyframeSequence(CRigs.GOD, Anims.GOD)) end
+if CRigs.SceneRig and Anims.SceneRig then table.insert(bgAnims, PlayKeyframeSequence(CRigs.SceneRig, Anims.SceneRig)) end
 local pAnim1 = Anims.Player and PlayKeyframeSequence(cloneChar, Anims.Player)
 
 task.delay(8, function()
@@ -1086,13 +911,22 @@ local finalCloneCF = cloneRoot.CFrame
 local finalPos = finalCloneCF.Position
 local finalRot = finalCloneCF - finalCloneCF.Position
 
+-- La altura final debe salir del modelo que acabamos de animar, no de la
+-- hitbox del HumanoidRootPart. El borde inferior de su bounding box incluye
+-- las piernas en la pose exacta del despeje.
+local rootToCloneFeet = hum.HipHeight + (root.Size.Y / 2)
+pcall(function()
+    local cloneBoundsCF, cloneBoundsSize = cloneChar:GetBoundingBox()
+    local cloneBottomY = cloneBoundsCF.Position.Y - (cloneBoundsSize.Y / 2)
+    rootToCloneFeet = math.max(0, cloneRoot.Position.Y - cloneBottomY)
+end)
+
 if cameraWatchdog then cameraWatchdog:Disconnect() end
 pcall(function() RunService:UnbindFromRenderStep("FollowCinematic") end)
 getgenv()._StopCinematic = true 
 
 if snd then
     task.delay(5, function()
-        if not snd or not snd.Parent then return end
         local audioFade = TweenService:Create(snd, TweenInfo.new(4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Volume = 0})
         audioFade:Play()
         audioFade.Completed:Connect(function()
@@ -1117,7 +951,7 @@ if summonMaintainer then summonMaintainer:Disconnect() end
 if bootBV then bootBV:Destroy() end
 if bootBP then bootBP:Destroy() end
 
-
+-- Raycast y posicionamiento final: ignora el personaje, el clon y el efecto visual.
 root.Anchored = false
 
 local rayParams = RaycastParams.new()
@@ -1131,15 +965,14 @@ if rayResult then
     actualGroundY = rayResult.Position.Y
 end
 
-local rootOffset = (hum.HipHeight + (root.Size.Y / 2))
-local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootOffset, finalPos.Z) * finalRot
+local finalTargetCF = CFrame.new(finalPos.X, actualGroundY + rootToCloneFeet, finalPos.Z) * finalRot
 
-
+-- Posicionamiento inicial estricto.
 root.CFrame = finalTargetCF
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 
-
+-- Mantiene la Y durante dos segundos, salvo que el jugador reciba daño.
 local isPinned = true
 local startHealth = hum.Health
 
@@ -1166,7 +999,7 @@ pinConn = RunService.Heartbeat:Connect(function(dt)
         return
     end
 
-
+    -- Fija la Y del objetivo y conserva movimiento/rotación en X/Z.
     root.CFrame = CFrame.new(root.Position.X, finalTargetCF.Y, root.Position.Z) * (root.CFrame - root.CFrame.Position)
     root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z)
 end)
@@ -1229,21 +1062,6 @@ camTween.Completed:Wait()
 RunService:UnbindFromRenderStep(overrideId)
 ResetCinematicBodyAndCamera()
 
-local function CleanupCinematicArtifacts()
-    for _, animation in ipairs(bgAnims) do
-        animation:Stop()
-    end
-    if dimensionEffect and dimensionEffect.Parent then dimensionEffect:Destroy() end
-    if Asset and Asset.Parent then Asset:Destroy() end
-    if snd and snd.Parent then snd:Stop(); snd:Destroy() end
-    if sky and sky.Parent then sky:Destroy() end
-    if flashGui and flashGui.Parent then flashGui:Destroy() end
-    if secondFlashGui and secondFlashGui.Parent then secondFlashGui:Destroy() end
-    if camProxy then camProxy:Destroy() end
-    if fovProxy then fovProxy:Destroy() end
-    if animObj then animObj:Destroy() end
-end
-
 task.spawn(function()
     task.wait(0.5)
     
@@ -1259,6 +1077,5 @@ task.spawn(function()
         hum:ChangeState(Enum.HumanoidStateType.Landed)
     end
     
-    CleanupCinematicArtifacts()
     FreeCinematic()
 end)
