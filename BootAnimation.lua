@@ -647,8 +647,8 @@ local function ApplyDummyAppearance(rig)
     -- El sombrero conserva su escala actual (1.5x); los demás objetos se muestran al 1.1x (10% más grandes).
     addAccessory(dummyAssets.Hat, 1.5)
     addAccessory(dummyAssets.Front, 1.5)
-    addAccessory(dummyAssets.LeftShoulder, 1.2)
-    addAccessory(dummyAssets.RightShoulder, 1.2)
+    addAccessory(dummyAssets.LeftShoulder, 1.3)
+    addAccessory(dummyAssets.RightShoulder, 1.3)
 
     -- Se conserva tu modificación de cabeza existente.
     local head = rig:FindFirstChild("Head")
