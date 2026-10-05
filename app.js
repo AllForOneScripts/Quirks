@@ -96,9 +96,34 @@ async function initializeDatabase() {
   `);
 
   await db.query(`
+    DO $$
+    DECLARE
+      constraint_name TEXT;
+    BEGIN
+      FOR constraint_name IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+        WHERE rel.relname = 'chat_messages'
+          AND ns.nspname = 'public'
+          AND con.contype = 'c'
+      LOOP
+        EXECUTE format(
+          'ALTER TABLE public.chat_messages DROP CONSTRAINT %I',
+          constraint_name
+        );
+      END LOOP;
+    END
+    $$;
+  `);
+
+  await db.query(`
     UPDATE chat_messages
-    SET verification = 'no admin'
-    WHERE verification IS NULL;
+    SET verification = CASE
+      WHEN verification = 'admin' OR verification = '1' THEN '1'
+      ELSE '0'
+    END;
   `);
 
   await db.query(`
@@ -123,7 +148,7 @@ app.post("/messages", async (req, res) => {
   try {
     const message = req.body?.message;
     const apiKey = req.get("X-API-Key") || "";
-    const verification = isAdminKey(apiKey) ? "admin" : "no admin";
+    const v = isAdminKey(apiKey) ? "1" : "0";
 
     if (
       typeof message !== "string" ||
@@ -135,20 +160,20 @@ app.post("/messages", async (req, res) => {
       });
     }
 
-    const finalText = `${message.trim()} + ${verification}`;
-
     const result = await db.query(
       `INSERT INTO chat_messages (text, verification)
        VALUES ($1, $2)
-       RETURNING
-         id,
-         text,
-         verification,
-         created_at AS "createdAt"`,
-      [finalText, verification]
+       RETURNING id, text, verification`,
+      [message.trim(), v]
     );
 
-    return res.status(201).json(result.rows[0]);
+    const row = result.rows[0];
+
+    return res.status(201).json({
+      id: String(row.id),
+      text: row.text,
+      v: row.verification
+    });
   } catch (error) {
     console.error("Message error:", error);
 
@@ -168,11 +193,7 @@ app.get("/messages", async (req, res) => {
         : 0;
 
     const result = await db.query(
-      `SELECT
-         id,
-         text,
-         verification,
-         created_at AS "createdAt"
+      `SELECT id, text, verification
        FROM chat_messages
        WHERE id > $1
        ORDER BY id ASC
@@ -180,9 +201,13 @@ app.get("/messages", async (req, res) => {
       [after]
     );
 
-    return res.json({
-      messages: result.rows
-    });
+    const messages = result.rows.map((row) => ({
+      id: String(row.id),
+      text: row.text,
+      v: row.verification
+    }));
+
+    return res.json({ messages });
   } catch (error) {
     console.error("Read error:", error);
 
