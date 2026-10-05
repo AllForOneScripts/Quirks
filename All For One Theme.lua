@@ -1,52 +1,60 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME
---  Dirección de arte: energía oscura y viva. Nada de partículas sueltas
---  flotando (ya se quitaron a propósito) — el "movimiento" viene de la
---  propia energía del borde (rayos), un fondo que respira, y un brillo
---  morado que pulsa, como si el hub tuviera el quirk encerrado adentro.
+--  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (VERSIÓN CORREGIDA)
+--  Dirección de arte: Energía oscura inestable, múltiples quirks chocando.
+--  Indicador superior izquierdo cambiado directamente a rojo carmesí.
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 local Theme = {
-    -- Color de marca: botones activos, sliders, toggles, foco...
+    -- Color de marca original
     Accent = Color3.fromRGB(165, 20, 220),
-    -- Morado más vivo, reservado para brillos/sombra/rayos (no botones normales)
-    GlowColor = Color3.fromRGB(205, 55, 255),
-    -- Íconos (Lucide) en orquídea claro
+    -- Morado inestable para los quirks
+    GlowColor = Color3.fromRGB(180, 20, 255),
+    -- Rojo Carmesí puro de All For One
+    CrimsonGlow = Color3.fromRGB(220, 20, 60), 
+    
     IconColor = Color3.fromRGB(225, 130, 255),
     IconSize = 18,
-    -- Fondo Acrylic
+    
     AcrylicMain = Color3.fromRGB(12, 6, 18),
     AcrylicBorder = Color3.fromRGB(100, 10, 145),
-    -- Degradado morado / morado oscuro (ahora además se anima, ver BuildDesign)
+    
+    -- Degradado corrompido: Morado -> Sangre -> Negro
     AcrylicGradient = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 8, 115)),
-        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(18, 6, 30)),
-        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(45, 5, 80)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 3, 14)),
+        ColorSequenceKeypoint.new(0.3, Color3.fromRGB(15, 3, 20)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 5, 20)), -- Inyección carmesí
+        ColorSequenceKeypoint.new(0.7, Color3.fromRGB(30, 4, 45)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(5, 1, 8)),
     }),
-    AcrylicNoise = 0.55,
+    AcrylicNoise = 0.65,
     TitleBarLine = Color3.fromRGB(100, 10, 145),
+    
     -- Estructura
     Tab = Color3.fromRGB(24, 10, 34),
     Element = Color3.fromRGB(19, 8, 28),
     ElementBorder = Color3.fromRGB(80, 8, 120),
     InElementBorder = Color3.fromRGB(125, 15, 180),
     ElementTransparency = 0.85,
+    
     -- Controles
     ToggleSlider = Color3.fromRGB(38, 15, 58),
     ToggleToggled = Color3.fromRGB(165, 20, 220),
     SliderRail = Color3.fromRGB(38, 15, 58),
+    
     -- Dropdown
     DropdownFrame = Color3.fromRGB(16, 6, 23),
     DropdownHolder = Color3.fromRGB(6, 3, 10),
     DropdownBorder = Color3.fromRGB(80, 8, 120),
     DropdownOption = Color3.fromRGB(24, 10, 34),
     Keybind = Color3.fromRGB(24, 10, 34),
+    
     -- Inputs
     Input = Color3.fromRGB(16, 6, 23),
     InputFocused = Color3.fromRGB(6, 3, 10),
     InputIndicator = Color3.fromRGB(125, 15, 180),
+    
     -- Diálogos
     Dialog = Color3.fromRGB(16, 6, 23),
     DialogHolder = Color3.fromRGB(6, 3, 10),
@@ -56,14 +64,13 @@ local Theme = {
     DialogBorder = Color3.fromRGB(80, 8, 120),
     DialogInput = Color3.fromRGB(16, 6, 23),
     DialogInputLine = Color3.fromRGB(125, 15, 180),
+    
     -- Texto
     Text = Color3.fromRGB(244, 235, 250),
     SubText = Color3.fromRGB(185, 150, 215),
-    -- Hover
     Hover = Color3.fromRGB(48, 20, 68),
     HoverChange = 0.05,
-    -- Shine (partículas de borde) DESACTIVADO — se deja apagado, no borrado,
-    -- para no romper nada si el render de Fluent lo consulta igual.
+    
     ShineEnabled = false,
     Shine = {
         Speed = 0,
@@ -72,7 +79,8 @@ local Theme = {
     },
     StrokeShine = false,
     StrokeDark = Color3.fromRGB(60, 5, 95),
-    -- Botones con gradiente
+    
+    -- Botones
     ButtonGradient = {
         Background = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(52, 10, 85)),
@@ -80,7 +88,7 @@ local Theme = {
         }),
         Stroke = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 10, 145)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(165, 20, 220)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(220, 20, 60)),
             ColorSequenceKeypoint.new(1, Color3.fromRGB(100, 10, 145)),
         }),
     },
@@ -91,23 +99,20 @@ local Theme = {
 -- ═══════════════════════════════════════════════════════════════════════════
 Theme.Assets = {
     BannerId = "rbxassetid://135276561043104",
-    BannerImageTransparency = 0.72,
-    TintTransparency = 0.35,
-    -- Textura de "rayos" pedida para el borde de energía
+    BannerImageTransparency = 0.75,
+    TintTransparency = 0.25,
     LightningTexture = "rbxassetid://96766676523858",
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
 --  Theme.BuildDesign(Window)
---  TODO el diseño visual del hub vive aquí. El loader solo llama a esto
---  una vez, después de Fluent:CreateWindow(...).
 -- ═══════════════════════════════════════════════════════════════════════════
 Theme.BuildDesign = function(Window)
     local Root = Window.Root
     local acrylicFrame = Window.AcrylicPaint.Frame
 
     ---------------------------------------------------------------------
-    -- 1) Banner con overlay morado (sin logo, sin partículas)
+    -- 1) Banner y Tintado Oscuro
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -141,16 +146,14 @@ Theme.BuildDesign = function(Window)
 
     local tintGradient = Instance.new("UIGradient")
     tintGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AcrylicBorder),
+        ColorSequenceKeypoint.new(0, Theme.CrimsonGlow),
         ColorSequenceKeypoint.new(1, Theme.AcrylicMain),
     })
     tintGradient.Rotation = 90
     tintGradient.Parent = tint
-    -- (el logo de arriba se quitó a propósito: ya no hace falta)
 
     ---------------------------------------------------------------------
-    -- 2) Fondo: degradado morado / morado oscuro que se desliza
-    --    en vez de quedarse fijo como un color plano.
+    -- 2) Fondo Base Deslizante
     ---------------------------------------------------------------------
     local bgGradient = acrylicFrame:FindFirstChildOfClass("UIGradient")
     if not bgGradient then
@@ -161,12 +164,44 @@ Theme.BuildDesign = function(Window)
     end
     TweenService:Create(
         bgGradient,
-        TweenInfo.new(6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { Offset = Vector2.new(0.35, 0) }
+        TweenInfo.new(8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        { Offset = Vector2.new(0.4, 0) }
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Borde morado brillante que "respira" (crece y encoge el grosor)
+    -- 3) Sistema de Chispas Residuales (Energía Descontrolada)
+    ---------------------------------------------------------------------
+    local SparksLayer = Instance.new("Frame")
+    SparksLayer.Name = "AFO_Sparks"
+    SparksLayer.Size = UDim2.fromScale(1, 1)
+    SparksLayer.BackgroundTransparency = 1
+    SparksLayer.ZIndex = 3
+    SparksLayer.Parent = art
+
+    task.spawn(function()
+        while task.wait(math.random(1, 4) * 0.1) do
+            if not Root or not Root.Parent then break end
+            local spark = Instance.new("Frame")
+            spark.BackgroundColor3 = math.random() > 0.4 and Theme.CrimsonGlow or Theme.GlowColor
+            spark.BorderSizePixel = 0
+            spark.Size = UDim2.new(0, math.random(10, 60), 0, math.random(1, 3))
+            spark.Position = UDim2.new(math.random(), 0, math.random(), 0)
+            spark.Rotation = math.random(-25, 25)
+            spark.BackgroundTransparency = 0.2
+            spark.Parent = SparksLayer
+
+            TweenService:Create(spark, TweenInfo.new(math.random(3, 7) * 0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, math.random(120, 350), 0, 0),
+                BackgroundTransparency = 1,
+                Position = spark.Position + UDim2.new(math.random(-15, 15)/100, 0, math.random(-15, 15)/100, 0)
+            }):Play()
+
+            game:GetService("Debris"):AddItem(spark, 1)
+        end
+    end)
+
+    ---------------------------------------------------------------------
+    -- 4) Estructuras UI Visuales (Shadow y Stroke)
     ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke")
     if not stroke then
@@ -174,17 +209,8 @@ Theme.BuildDesign = function(Window)
         stroke.Parent = Root
     end
     stroke.Color = Theme.GlowColor
-    stroke.Thickness = 2
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    TweenService:Create(
-        stroke,
-        TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { Thickness = 4 }
-    ):Play()
 
-    ---------------------------------------------------------------------
-    -- 4) Sombra morada del hub (UIShadow nativo — sin depender de imágenes)
-    ---------------------------------------------------------------------
     local shadow = Root:FindFirstChildOfClass("UIShadow")
     if not shadow then
         shadow = Instance.new("UIShadow")
@@ -192,25 +218,34 @@ Theme.BuildDesign = function(Window)
     end
     shadow.Color = Theme.GlowColor
     shadow.BlurRadius = UDim.new(0, 45)
-    shadow.Spread = 4
     shadow.Offset = UDim2.new(0, 0, 0, 0)
-    shadow.Transparency = 0.35
     shadow.ZIndex = -1
-    -- La sombra "respira" en sincronía con el borde: sensación de energía viva.
-    TweenService:Create(
-        shadow,
-        TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { Transparency = 0.55 }
-    ):Play()
 
     ---------------------------------------------------------------------
-    -- 5) Bordes de "rayo" con la textura pedida, recorriendo el marco
+    -- 5) Inestabilidad (Ruido Perlin) para Latidos Caóticos
+    ---------------------------------------------------------------------
+    local timeX = 0
+    RunService.RenderStepped:Connect(function(dt)
+        timeX = timeX + (dt * 3.5)
+        local noise = math.noise(timeX, 0, 0)
+        
+        if stroke then
+            stroke.Thickness = 2 + math.abs(noise * 3)
+        end
+        if shadow then
+            shadow.Transparency = 0.35 + math.abs(noise * 0.25)
+            shadow.Spread = 3 + (noise * 3)
+        end
+    end)
+
+    ---------------------------------------------------------------------
+    -- 6) Aura Dual: Rayos Morados y Carmesí Entrelazados
     ---------------------------------------------------------------------
     local STRIP_THICKNESS = 6
     local TILE_SIZE = 96
     local SCROLL_TIME = 3.5
 
-    local function makeEdge(name, size, position, horizontal)
+    local function makeEdge(name, size, position, horizontal, color, speed, reverse)
         local mask = Instance.new("Frame")
         mask.Name = name
         mask.BackgroundTransparency = 1
@@ -224,40 +259,76 @@ Theme.BuildDesign = function(Window)
         local img = Instance.new("ImageLabel")
         img.BackgroundTransparency = 1
         img.Image = Theme.Assets.LightningTexture
-        img.ImageColor3 = Theme.GlowColor
+        img.ImageColor3 = color
         img.ScaleType = Enum.ScaleType.Tile
+        
+        local goal
         if horizontal then
             img.Size = UDim2.new(2, 0, 1, 0)
             img.TileSize = UDim2.new(0, TILE_SIZE, 1, 0)
+            if reverse then
+                img.Position = UDim2.new(-1, 0, 0, 0)
+                goal = UDim2.new(0, 0, 0, 0)
+            else
+                goal = UDim2.new(-1, 0, 0, 0)
+            end
         else
             img.Size = UDim2.new(1, 0, 2, 0)
             img.TileSize = UDim2.new(1, 0, 0, TILE_SIZE)
+            if reverse then
+                img.Position = UDim2.new(0, 0, -1, 0)
+                goal = UDim2.new(0, 0, 0, 0)
+            else
+                goal = UDim2.new(0, 0, -1, 0)
+            end
         end
         img.Parent = mask
 
-        local goal = horizontal and UDim2.new(-1, 0, 0, 0) or UDim2.new(0, 0, -1, 0)
         TweenService:Create(
             img,
-            TweenInfo.new(SCROLL_TIME, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1, false),
+            TweenInfo.new(speed, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1, false),
             { Position = goal }
         ):Play()
     end
 
-    makeEdge("BoltTop", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true)
-    makeEdge("BoltBottom", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true)
-    makeEdge("BoltLeft", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false)
-    makeEdge("BoltRight", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false)
+    -- Capa 1: Quirks Normales (Morado oscuro)
+    makeEdge("BoltTop_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltBottom_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltLeft_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltRight_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
+
+    -- Capa 2: All For One (Rojo Carmesí)
+    makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
+    makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
+    makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
+    makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
 
     ---------------------------------------------------------------------
-    -- 6) Firma "All For One": una esquina asimétrica (usa el nuevo
-    --    per-corner rounding de UICorner). Sutil, no rompe el layout,
-    --    y hace que el hub no se vea "genérico". Fácil de revertir si
-    --    no te convence: solo borra este bloque.
+    -- 7) Firma Asimétrica AFO
     ---------------------------------------------------------------------
     local rootCorner = Root:FindFirstChildOfClass("UICorner")
     if rootCorner then
-        rootCorner.TopLeftRadius = UDim.new(0, 2)
+        rootCorner.TopLeftRadius = UDim.new(0, 1)
+        rootCorner.BottomRightRadius = UDim.new(0, 1)
     end
+
+    ---------------------------------------------------------------------
+    -- 8) Cambio de color de la "bolita" verde superior izquierda a Rojo Carmesí
+    ---------------------------------------------------------------------
+    task.spawn(function()
+        task.wait(0.4) -- Esperar a que Fluent cargue los elementos internos
+        if not Root then return end
+
+        for _, obj in pairs(Root:GetDescendants()) do
+            -- Buscamos marcos pequeños con esquinas redondeadas (la bolita de estado/versión suele ser un Frame con UICorner completo)
+            if obj:IsA("Frame") and (obj.AbsoluteSize.X <= 16 and obj.AbsoluteSize.Y <= 16) then
+                local corner = obj:FindFirstChildOfClass("UICorner")
+                if corner then
+                    obj.BackgroundColor3 = Theme.CrimsonGlow
+                end
+            end
+        end
+    end)
 end
 
 return Theme
