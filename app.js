@@ -1,28 +1,45 @@
 const express = require("express");
 const { Pool } = require("pg");
+const crypto = require("crypto");
 
 const app = express();
 
 app.use(express.json({ limit: "2kb" }));
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("Falta la variable de entorno DATABASE_URL.");
+  throw new Error("Missing DATABASE_URL");
+}
+
+if (!process.env.string) {
+  throw new Error("Missing string");
 }
 
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: { rejectUnauthorized: false }
 });
+
+function isAdminKey(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    return false;
+  }
+
+  const received = Buffer.from(value);
+  const expected = Buffer.from(process.env.string);
+
+  return (
+    received.length === expected.length &&
+    crypto.timingSafeEqual(received, expected)
+  );
+}
 
 async function initializeDatabase() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id BIGSERIAL PRIMARY KEY,
-      sender TEXT NOT NULL,
-      sender_id BIGINT NOT NULL,
-      message TEXT NOT NULL,
+      text TEXT NOT NULL,
+      verification TEXT NOT NULL
+        CHECK (verification IN ('admin', 'no admin')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -37,43 +54,37 @@ app.get("/", (_req, res) => {
 
 app.post("/messages", async (req, res) => {
   try {
-    const { sender, senderId, message } = req.body || {};
-    const numericSenderId = Number(senderId);
+    const message = req.body?.message;
+    const apiKey = req.get("X-API-Key") || "";
+    const verification = isAdminKey(apiKey) ? "admin" : "no admin";
 
     if (
-      typeof sender !== "string" ||
       typeof message !== "string" ||
-      !sender.trim() ||
       !message.trim() ||
-      sender.trim().length > 32 ||
-      message.trim().length > 250 ||
-      !Number.isSafeInteger(numericSenderId) ||
-      numericSenderId <= 0
+      message.trim().length > 250
     ) {
       return res.status(400).json({
-        error: "Invalid message data"
+        error: "Invalid message"
       });
     }
 
+    const finalText = `${message.trim()} + ${verification}`;
+
     const result = await db.query(
-      `INSERT INTO chat_messages (sender, sender_id, message)
-       VALUES ($1, $2, $3)
+      `INSERT INTO chat_messages (text, verification)
+       VALUES ($1, $2)
        RETURNING
          id,
-         sender,
-         sender_id AS "senderId",
-         message,
+         text,
+         verification,
          created_at AS "createdAt"`,
-      [
-        sender.trim(),
-        numericSenderId,
-        message.trim()
-      ]
+      [finalText, verification]
     );
 
     return res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error("Error saving message:", error);
+    console.error("Message error:", error);
+
     return res.status(500).json({
       error: "Could not save message"
     });
@@ -83,16 +94,16 @@ app.post("/messages", async (req, res) => {
 app.get("/messages", async (req, res) => {
   try {
     const requestedAfter = Number(req.query.after);
-    const after = Number.isSafeInteger(requestedAfter) && requestedAfter > 0
-      ? requestedAfter
-      : 0;
+    const after =
+      Number.isSafeInteger(requestedAfter) && requestedAfter > 0
+        ? requestedAfter
+        : 0;
 
     const result = await db.query(
       `SELECT
          id,
-         sender,
-         sender_id AS "senderId",
-         message,
+         text,
+         verification,
          created_at AS "createdAt"
        FROM chat_messages
        WHERE id > $1
@@ -105,7 +116,8 @@ app.get("/messages", async (req, res) => {
       messages: result.rows
     });
   } catch (error) {
-    console.error("Error reading messages:", error);
+    console.error("Read error:", error);
+
     return res.status(500).json({
       error: "Could not read messages"
     });
@@ -123,6 +135,6 @@ async function startServer() {
 }
 
 startServer().catch((error) => {
-  console.error("Could not start VerificatorOne:", error);
+  console.error("Startup error:", error);
   process.exit(1);
 });
