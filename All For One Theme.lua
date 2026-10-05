@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V5)
---  Dirección de arte: Energía oscura inestable, rayos reales chocando, estática.
+--  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V6)
+--  Rayos laterales cruzados, Perfil de "Villain" HD y Título Imponente
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -16,12 +16,11 @@ local Theme = {
     AcrylicMain = Color3.fromRGB(12, 6, 18),
     AcrylicBorder = Color3.fromRGB(100, 10, 145),
     
-    -- Degradado Morado Oscuro/Vacío
+    -- Degradado Morado (Más claro para no oscurecer el fondo)
     AcrylicGradient = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 8, 115)),
-        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(18, 6, 30)),
-        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(45, 5, 80)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 3, 14)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(85, 15, 130)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 10, 60)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(85, 15, 130)),
     }),
     AcrylicNoise = 0.75,
     TitleBarLine = Color3.fromRGB(100, 10, 145),
@@ -86,10 +85,10 @@ local Theme = {
 
 Theme.Assets = {
     BannerId = "rbxassetid://135276561043104",
-    BannerImageTransparency = 0.65,
-    TintTransparency = 0.35,
-    LightningTexture = "rbxassetid://7151777149", -- Textura solicitada
-    StaticNoise = "rbxassetid://167262864", -- Estática para dar detalle de inestabilidad
+    BannerImageTransparency = 0.4, -- Más transparente para dejar ver tu fondo
+    TintTransparency = 0.1, -- Menos oscuridad
+    LightningTexture = "rbxassetid://7151777149",
+    StaticNoise = "rbxassetid://167262864", 
 }
 
 Theme.BuildDesign = function(Window)
@@ -97,7 +96,7 @@ Theme.BuildDesign = function(Window)
     local acrylicFrame = Window.AcrylicPaint.Frame
 
     ---------------------------------------------------------------------
-    -- 1) Banner, Tintado Oscuro y Estática de "Energía"
+    -- 1) Banner, Estática y Tintado
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -120,11 +119,10 @@ Theme.BuildDesign = function(Window)
     banner.ZIndex = 1
     banner.Parent = art
 
-    -- Capa de estática/ruido animada (Detalle extra de caos)
     local staticFx = Instance.new("ImageLabel")
     staticFx.BackgroundTransparency = 1
     staticFx.Image = Theme.Assets.StaticNoise
-    staticFx.ImageTransparency = 0.88
+    staticFx.ImageTransparency = 0.90
     staticFx.Size = UDim2.fromScale(2, 2)
     staticFx.ZIndex = 2
     staticFx.Parent = art
@@ -145,14 +143,6 @@ Theme.BuildDesign = function(Window)
     tint.ZIndex = 3
     tint.Parent = art
 
-    local tintGradient = Instance.new("UIGradient")
-    tintGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AcrylicBorder),
-        ColorSequenceKeypoint.new(1, Theme.AcrylicMain),
-    })
-    tintGradient.Rotation = 90
-    tintGradient.Parent = tint
-
     ---------------------------------------------------------------------
     -- 2) Fondo Base Deslizante
     ---------------------------------------------------------------------
@@ -170,7 +160,7 @@ Theme.BuildDesign = function(Window)
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Aparición de Rayos Reales (Reemplazo del Confetti)
+    -- 3) Rayos Horizontales (De lado a lado)
     ---------------------------------------------------------------------
     local SparksLayer = Instance.new("Frame")
     SparksLayer.Name = "AFO_LightningStrikes"
@@ -180,175 +170,130 @@ Theme.BuildDesign = function(Window)
     SparksLayer.Parent = art
 
     task.spawn(function()
-        while task.wait(math.random(1, 6) * 0.1) do
+        while task.wait(math.random(1, 5) * 0.1) do
             if not Root or not Root.Parent then break end
             
             local strike = Instance.new("ImageLabel")
             strike.BackgroundTransparency = 1
             strike.Image = Theme.Assets.LightningTexture
-            strike.ImageColor3 = math.random() > 0.4 and Theme.GlowColor or Theme.CrimsonGlow
+            strike.ImageColor3 = math.random() > 0.3 and Theme.GlowColor or Theme.CrimsonGlow
             
-            -- Tamaños extremos para simular un relámpago cruzando la pantalla
-            local w = math.random(150, 400)
-            local h = math.random(30, 100)
-            strike.Size = UDim2.new(0, w, 0, h)
+            -- Al estar la textura vertical, la rotamos ~90 grados
+            -- Y hacemos que su tamaño "Y" (que ahora es horizontal) sea gigantesco para cruzar la pantalla
+            strike.Size = UDim2.new(0, math.random(50, 120), 1.5, 0)
+            strike.AnchorPoint = Vector2.new(0.5, 0.5)
+            strike.Position = UDim2.new(0.5, 0, math.random(10, 90)/100, 0)
+            strike.Rotation = math.random(85, 95)
             
-            strike.Position = UDim2.new(math.random(-10, 90)/100, 0, math.random(-10, 90)/100, 0)
-            strike.Rotation = math.random(-180, 180)
             strike.ImageTransparency = 0
             strike.Parent = SparksLayer
 
-            -- Animación de destello eléctrico (aparece y desaparece estirándose)
-            TweenService:Create(strike, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, w * 1.5, 0, h * 0.5),
+            TweenService:Create(strike, TweenInfo.new(0.3, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, math.random(10, 40), 2, 0), -- Se estira y adelgaza al desaparecer
                 ImageTransparency = 1
             }):Play()
 
-            game:GetService("Debris"):AddItem(strike, 0.3)
+            game:GetService("Debris"):AddItem(strike, 0.4)
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 4) Estructuras UI Visuales (Shadow Inestable)
+    -- 4) Estructuras UI Visuales (Aura Latiendo)
     ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke")
-    if not stroke then
-        stroke = Instance.new("UIStroke")
-        stroke.Parent = Root
-    end
+    if not stroke then stroke = Instance.new("UIStroke"); stroke.Parent = Root end
     stroke.Color = Theme.GlowColor
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
     local shadow = Root:FindFirstChildOfClass("UIShadow")
-    if not shadow then
-        shadow = Instance.new("UIShadow")
-        shadow.Parent = Root
-    end
+    if not shadow then shadow = Instance.new("UIShadow"); shadow.Parent = Root end
     shadow.Color = Theme.GlowColor
     shadow.BlurRadius = UDim.new(0, 50)
     shadow.Offset = UDim2.new(0, 0, 0, 0)
     shadow.ZIndex = -1
 
-    ---------------------------------------------------------------------
-    -- 5) Inestabilidad (Ruido Perlin Agresivo para el Aura)
-    ---------------------------------------------------------------------
     local timeX = 0
     RunService.RenderStepped:Connect(function(dt)
         timeX = timeX + (dt * 8.0) 
         local noise = math.noise(timeX, 0, 0)
-        
-        if stroke then
-            stroke.Thickness = 2 + math.abs(noise * 4) -- Borde palpitante
-        end
+        if stroke then stroke.Thickness = 1.5 + math.abs(noise * 3) end
         if shadow then
-            -- Aura que late fuerte y cambia entre morado y rojo
             shadow.Transparency = 0.15 + math.abs(noise * 0.4)
             shadow.Spread = 8 + (noise * 6)
-            shadow.Color = noise > 0.3 and Theme.CrimsonGlow or Theme.GlowColor
+            shadow.Color = noise > 0.4 and Theme.CrimsonGlow or Theme.GlowColor
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 6) Bordes de Rayos Morados y Carmesí Entrelazados (Más gruesos)
-    ---------------------------------------------------------------------
-    local STRIP_THICKNESS = 22 -- Bordes más anchos para notar la textura
-    local TILE_SIZE = 120
-    local SCROLL_TIME = 1.2 
-
-    local function makeEdge(name, size, position, horizontal, color, speed, reverse)
-        local mask = Instance.new("Frame")
-        mask.Name = name
-        mask.BackgroundTransparency = 1
-        mask.ClipsDescendants = true
-        mask.Size = size
-        mask.Position = position
-        mask.ZIndex = 50
-        mask.Active = false
-        mask.Parent = Root
-
-        local img = Instance.new("ImageLabel")
-        img.BackgroundTransparency = 1
-        img.Image = Theme.Assets.LightningTexture
-        img.ImageColor3 = color
-        img.ScaleType = Enum.ScaleType.Tile
-        
-        local goal
-        if horizontal then
-            img.Size = UDim2.new(2, 0, 1, 0)
-            img.TileSize = UDim2.new(0, TILE_SIZE, 1, 0)
-            if reverse then
-                img.Position = UDim2.new(-1, 0, 0, 0)
-                goal = UDim2.new(0, 0, 0, 0)
-            else
-                goal = UDim2.new(-1, 0, 0, 0)
-            end
-        else
-            img.Size = UDim2.new(1, 0, 2, 0)
-            img.TileSize = UDim2.new(1, 0, 0, TILE_SIZE)
-            if reverse then
-                img.Position = UDim2.new(0, 0, -1, 0)
-                goal = UDim2.new(0, 0, 0, 0)
-            else
-                goal = UDim2.new(0, 0, -1, 0)
-            end
-        end
-        img.Parent = mask
-
-        -- Movimiento continuo del rayo
-        TweenService:Create(
-            img,
-            TweenInfo.new(speed, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1, false),
-            { Position = goal }
-        ):Play()
-
-        -- Pulsación de opacidad para que parezca electricidad viva
-        task.spawn(function()
-            while task.wait(math.random(2, 6)*0.1) do
-                if not img.Parent then break end
-                TweenService:Create(img, TweenInfo.new(0.1), {ImageTransparency = math.random(10, 60)/100}):Play()
-                task.wait(0.1)
-                TweenService:Create(img, TweenInfo.new(0.1), {ImageTransparency = 0}):Play()
-            end
-        end)
-    end
-
-    -- Capa Morada
-    makeEdge("BoltTop_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, -STRIP_THICKNESS/2), true, Theme.GlowColor, SCROLL_TIME, false)
-    makeEdge("BoltBottom_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS/2), true, Theme.GlowColor, SCROLL_TIME, false)
-    makeEdge("BoltLeft_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, -STRIP_THICKNESS/2, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
-    makeEdge("BoltRight_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS/2, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
-
-    -- Capa Carmesí Inversa
-    makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, -STRIP_THICKNESS/2), true, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
-    makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS/2), true, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
-    makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, -STRIP_THICKNESS/2, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
-    makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS/2, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
-
-    ---------------------------------------------------------------------
-    -- 7) Parche de Título y Bolita de Versión
+    -- 5) Inyección de Textos y Corrección de Perfil
     ---------------------------------------------------------------------
     task.spawn(function()
-        task.wait(0.5) 
+        task.wait(1.5) 
         if not Root then return end
 
         for _, obj in pairs(Root:GetDescendants()) do
-            if obj:IsA("TextLabel") and obj.Text:find("Todo para Uno") then
-                obj.Text = obj.Text:gsub("Todo para Uno", "") 
+            -- A) MEJORA DEL TÍTULO PRINCIPAL
+            if obj:IsA("TextLabel") and (obj.Text:find("All For One") or obj.Text:find("Todo para Uno")) then
+                obj.Text = "ALL FOR ONE"
+                obj.TextScaled = false
+                obj.TextSize = 22
+                obj.Font = Enum.Font.GothamBlack
+                obj.TextColor3 = Theme.CrimsonGlow
+                
+                local titleStroke = obj:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
+                titleStroke.Color = Theme.GlowColor
+                titleStroke.Thickness = 1.2
+                titleStroke.Transparency = 0.3
+                titleStroke.Parent = obj
             end
             
-            if obj:IsA("Frame") and obj.BackgroundColor3.G > 0.5 and obj.BackgroundColor3.R < 0.3 then
-                for _, child in pairs(obj:GetChildren()) do
+            -- B) CORRECCIÓN DEL PERFIL DE USUARIO
+            if obj:IsA("ImageLabel") and obj.Image:match("rbxthumb") then
+                local userCard = obj.Parent
+                local labels = {}
+                
+                for _, child in pairs(userCard:GetDescendants()) do
                     if child:IsA("TextLabel") then
-                        obj.BackgroundColor3 = Theme.CrimsonGlow
-                        break
+                        table.insert(labels, child)
+                    elseif child:IsA("ImageLabel") and child.Image:match("eye") then
+                        -- Destruir el icono del ojo por completo
+                        local btn = child.Parent
+                        if btn and (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
+                            btn.Visible = false
+                        end
+                        child.Visible = false
                     end
+                end
+                
+                -- Organizar labels por posición Y para saber cuál es el de arriba
+                table.sort(labels, function(a, b) return a.AbsolutePosition.Y < b.AbsolutePosition.Y end)
+                
+                if #labels > 0 then
+                    local topLabel = labels[1]
+                    
+                    -- Desactivar el TextScaled para recuperar calidad HD
+                    topLabel.TextScaled = false
+                    topLabel.TextSize = 16 
+                    topLabel.Font = Enum.Font.GothamBold
+                    topLabel.Text = "Villain"
+                    topLabel.TextColor3 = Theme.GlowColor
+                    
+                    -- Si hay un segundo texto (el @username), lo ocultamos
+                    -- Esto arregla el bug del texto desplazado hacia abajo
+                    if #labels >= 2 then
+                        labels[2].Visible = false
+                    end
+                    
+                    -- Candado para que Fluent no lo vuelva a cambiar
+                    topLabel:GetPropertyChangedSignal("Text"):Connect(function()
+                        if topLabel.Text ~= "Villain" then
+                            topLabel.Text = "Villain"
+                        end
+                    end)
                 end
             end
         end
     end)
-    
-    -- Nota: La sección 8 (Perfil hackeado con doble texto) fue eliminada
-    -- tal y como solicitaste para mantener el sistema de censura limpio.
 end
 
 return Theme
