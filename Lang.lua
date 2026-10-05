@@ -80,6 +80,17 @@ return {
         notif_copyavatar_title = "Copy Avatar",
         notif_on = "Activado",
         notif_off = "Desactivado",
+        notif_already_active = "Ya está activo",
+        notif_already_exists = "Ya hay uno existente",
+        notif_already_cloned = "Ya hay un clon generado",
+        notif_already_playing = "Ya hay un emote reproduciéndose",
+        notif_config_saved = "Configuración guardada correctamente.",
+        notif_config_loaded = "Configuración cargada con éxito.",
+        notif_config_not_found = "No hay una configuración guardada.",
+        notif_hub_deleted = "Hub eliminado correctamente.",
+        notif_player_not_found = "Jugador no encontrado.",
+        notif_avatar_copied = "Avatar copiado con éxito.",
+        notif_error = "Ocurrió un error inesperado."
     },
     EN = {
         subtitle = "All For One",
@@ -162,5 +173,16 @@ return {
         notif_copyavatar_title = "Copy Avatar",
         notif_on = "Enabled",
         notif_off = "Disabled",
+        notif_already_active = "Already active",
+        notif_already_exists = "There is already one existing",
+        notif_already_cloned = "A clone is already generated",
+        notif_already_playing = "An emote is already playing",
+        notif_config_saved = "Config successfully saved.",
+        notif_config_loaded = "Config successfully loaded.",
+        notif_config_not_found = "No saved config found.",
+        notif_hub_deleted = "Hub successfully deleted.",
+        notif_player_not_found = "Player not found.",
+        notif_avatar_copied = "Avatar successfully copied.",
+        notif_error = "An unexpected error occurred."
     }
 }
