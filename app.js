@@ -4,7 +4,7 @@ const crypto = require("crypto");
 
 const app = express();
 
-app.use(express.json({ limit: "2kb" }));
+app.use(express.json({ limit: "32kb" }));
 
 if (!process.env.DATABASE_URL) {
   throw new Error("Missing DATABASE_URL");
@@ -127,6 +127,12 @@ async function initializeDatabase() {
   `);
 
   await db.query(`
+    UPDATE chat_messages
+    SET verification = '0'
+    WHERE verification IS NULL;
+  `);
+
+  await db.query(`
     ALTER TABLE chat_messages
     ALTER COLUMN text SET NOT NULL;
   `);
@@ -134,6 +140,11 @@ async function initializeDatabase() {
   await db.query(`
     ALTER TABLE chat_messages
     ALTER COLUMN verification SET NOT NULL;
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS chat_messages_created_at_id_idx
+    ON chat_messages (created_at DESC, id ASC);
   `);
 }
 
@@ -148,15 +159,22 @@ app.post("/messages", async (req, res) => {
   try {
     const message = req.body?.message;
     const apiKey = req.get("X-API-Key") || "";
-    const v = isAdminKey(apiKey) ? "1" : "0";
 
-    if (
-      typeof message !== "string" ||
-      !message.trim() ||
-      message.trim().length > 250
-    ) {
+    const isAdmin = isAdminKey(apiKey);
+    const v = isAdmin ? "1" : "0";
+
+    if (typeof message !== "string" || !message.trim()) {
       return res.status(400).json({
         error: "Invalid message"
+      });
+    }
+
+    const trimmedMessage = message.trim();
+
+    if (!isAdmin && Buffer.byteLength(trimmedMessage, "utf8") > 8 * 1024) {
+      return res.status(413).json({
+        error: "Message too large",
+        limit: "8kb"
       });
     }
 
@@ -164,7 +182,7 @@ app.post("/messages", async (req, res) => {
       `INSERT INTO chat_messages (text, verification)
        VALUES ($1, $2)
        RETURNING id, text, verification`,
-      [message.trim(), v]
+      [trimmedMessage, v]
     );
 
     const row = result.rows[0];
@@ -196,6 +214,7 @@ app.get("/messages", async (req, res) => {
       `SELECT id, text, verification
        FROM chat_messages
        WHERE id > $1
+         AND created_at >= NOW() - INTERVAL '10 seconds'
        ORDER BY id ASC
        LIMIT 100`,
       [after]
@@ -207,7 +226,9 @@ app.get("/messages", async (req, res) => {
       v: row.verification
     }));
 
-    return res.json({ messages });
+    return res.json({
+      messages
+    });
   } catch (error) {
     console.error("Read error:", error);
 
