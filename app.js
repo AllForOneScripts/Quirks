@@ -16,7 +16,9 @@ if (!process.env.string) {
 
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 function isAdminKey(value) {
@@ -37,11 +39,76 @@ async function initializeDatabase() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id BIGSERIAL PRIMARY KEY,
-      text TEXT NOT NULL,
-      verification TEXT NOT NULL
-        CHECK (verification IN ('admin', 'no admin')),
+      text TEXT,
+      verification TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await db.query(`
+    ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS text TEXT;
+  `);
+
+  await db.query(`
+    ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS verification TEXT;
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'chat_messages'
+          AND column_name = 'sender'
+      ) THEN
+        ALTER TABLE chat_messages
+        ALTER COLUMN sender DROP NOT NULL;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'chat_messages'
+          AND column_name = 'sender_id'
+      ) THEN
+        ALTER TABLE chat_messages
+        ALTER COLUMN sender_id DROP NOT NULL;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'chat_messages'
+          AND column_name = 'message'
+      ) THEN
+        ALTER TABLE chat_messages
+        ALTER COLUMN message DROP NOT NULL;
+
+        UPDATE chat_messages
+        SET text = message
+        WHERE text IS NULL;
+      END IF;
+    END
+    $$;
+  `);
+
+  await db.query(`
+    UPDATE chat_messages
+    SET verification = 'no admin'
+    WHERE verification IS NULL;
+  `);
+
+  await db.query(`
+    ALTER TABLE chat_messages
+    ALTER COLUMN text SET NOT NULL;
+  `);
+
+  await db.query(`
+    ALTER TABLE chat_messages
+    ALTER COLUMN verification SET NOT NULL;
   `);
 }
 
@@ -94,6 +161,7 @@ app.post("/messages", async (req, res) => {
 app.get("/messages", async (req, res) => {
   try {
     const requestedAfter = Number(req.query.after);
+
     const after =
       Number.isSafeInteger(requestedAfter) && requestedAfter > 0
         ? requestedAfter
