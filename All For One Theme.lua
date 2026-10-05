@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V5)
---  Dirección de arte: Energía oscura profunda, rayos inestables reales, bordes expansivos.
+--  Dirección de arte: Energía oscura inestable, rayos reales chocando, estática.
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -16,12 +16,12 @@ local Theme = {
     AcrylicMain = Color3.fromRGB(12, 6, 18),
     AcrylicBorder = Color3.fromRGB(100, 10, 145),
     
-    -- Degradado Morado Puro, más profundo
+    -- Degradado Morado Oscuro/Vacío
     AcrylicGradient = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 5, 100)),
-        ColorSequenceKeypoint.new(0.4, Color3.fromRGB(15, 4, 25)),
-        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(35, 4, 65)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(5, 2, 10)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 8, 115)),
+        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(18, 6, 30)),
+        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(45, 5, 80)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 3, 14)),
     }),
     AcrylicNoise = 0.75,
     TitleBarLine = Color3.fromRGB(100, 10, 145),
@@ -38,16 +38,19 @@ local Theme = {
     ToggleToggled = Color3.fromRGB(165, 20, 220),
     SliderRail = Color3.fromRGB(38, 15, 58),
     
+    -- Dropdown
     DropdownFrame = Color3.fromRGB(16, 6, 23),
     DropdownHolder = Color3.fromRGB(6, 3, 10),
     DropdownBorder = Color3.fromRGB(80, 8, 120),
     DropdownOption = Color3.fromRGB(24, 10, 34),
     Keybind = Color3.fromRGB(24, 10, 34),
     
+    -- Inputs
     Input = Color3.fromRGB(16, 6, 23),
     InputFocused = Color3.fromRGB(6, 3, 10),
     InputIndicator = Color3.fromRGB(125, 15, 180),
     
+    -- Diálogos
     Dialog = Color3.fromRGB(16, 6, 23),
     DialogHolder = Color3.fromRGB(6, 3, 10),
     DialogHolderLine = Color3.fromRGB(80, 8, 120),
@@ -57,6 +60,7 @@ local Theme = {
     DialogInput = Color3.fromRGB(16, 6, 23),
     DialogInputLine = Color3.fromRGB(125, 15, 180),
     
+    -- Texto
     Text = Color3.fromRGB(244, 235, 250),
     SubText = Color3.fromRGB(185, 150, 215),
     Hover = Color3.fromRGB(48, 20, 68),
@@ -66,6 +70,7 @@ local Theme = {
     StrokeShine = false,
     StrokeDark = Color3.fromRGB(60, 5, 95),
     
+    -- Botones
     ButtonGradient = {
         Background = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(52, 10, 85)),
@@ -81,9 +86,10 @@ local Theme = {
 
 Theme.Assets = {
     BannerId = "rbxassetid://135276561043104",
-    BannerImageTransparency = 0.8,
-    TintTransparency = 0.15,
-    LightningTexture = "rbxassetid://7151777149", -- Textura Vertical de Rayo actualizada
+    BannerImageTransparency = 0.65,
+    TintTransparency = 0.35,
+    LightningTexture = "rbxassetid://7151777149", -- Textura solicitada
+    StaticNoise = "rbxassetid://167262864", -- Estática para dar detalle de inestabilidad
 }
 
 Theme.BuildDesign = function(Window)
@@ -91,7 +97,7 @@ Theme.BuildDesign = function(Window)
     local acrylicFrame = Window.AcrylicPaint.Frame
 
     ---------------------------------------------------------------------
-    -- 1) Atmósfera Base y Viñeta de Energía Oscura
+    -- 1) Banner, Tintado Oscuro y Estática de "Energía"
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -114,13 +120,29 @@ Theme.BuildDesign = function(Window)
     banner.ZIndex = 1
     banner.Parent = art
 
+    -- Capa de estática/ruido animada (Detalle extra de caos)
+    local staticFx = Instance.new("ImageLabel")
+    staticFx.BackgroundTransparency = 1
+    staticFx.Image = Theme.Assets.StaticNoise
+    staticFx.ImageTransparency = 0.88
+    staticFx.Size = UDim2.fromScale(2, 2)
+    staticFx.ZIndex = 2
+    staticFx.Parent = art
+    
+    task.spawn(function()
+        while task.wait(0.05) do
+            if not Root then break end
+            staticFx.Position = UDim2.new(math.random(-50, 0)/100, 0, math.random(-50, 0)/100, 0)
+        end
+    end)
+
     local tint = Instance.new("Frame")
     tint.Name = "PurpleTint"
     tint.BackgroundColor3 = Theme.AcrylicBorder
     tint.BackgroundTransparency = Theme.Assets.TintTransparency
     tint.BorderSizePixel = 0
     tint.Size = UDim2.fromScale(1, 1)
-    tint.ZIndex = 2
+    tint.ZIndex = 3
     tint.Parent = art
 
     local tintGradient = Instance.new("UIGradient")
@@ -131,19 +153,8 @@ Theme.BuildDesign = function(Window)
     tintGradient.Rotation = 90
     tintGradient.Parent = tint
 
-    -- Viñeta oscura expansiva (Da sensación de profundidad y arte)
-    local vignette = Instance.new("ImageLabel")
-    vignette.Name = "DarkVignette"
-    vignette.BackgroundTransparency = 1
-    vignette.Image = "rbxassetid://115456208168249" -- Sombra radial estándar
-    vignette.ImageColor3 = Color3.fromRGB(0, 0, 0)
-    vignette.Size = UDim2.fromScale(1, 1)
-    vignette.ZIndex = 3
-    vignette.ImageTransparency = 0.4
-    vignette.Parent = art
-
     ---------------------------------------------------------------------
-    -- 2) Fondo Deslizante Profundo
+    -- 2) Fondo Base Deslizante
     ---------------------------------------------------------------------
     local bgGradient = acrylicFrame:FindFirstChildOfClass("UIGradient")
     if not bgGradient then
@@ -154,12 +165,51 @@ Theme.BuildDesign = function(Window)
     end
     TweenService:Create(
         bgGradient,
-        TweenInfo.new(12, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { Offset = Vector2.new(0.5, 0) }
+        TweenInfo.new(8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        { Offset = Vector2.new(0.4, 0) }
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Expansión Agresiva de Bordes (Stroke & Shadow)
+    -- 3) Aparición de Rayos Reales (Reemplazo del Confetti)
+    ---------------------------------------------------------------------
+    local SparksLayer = Instance.new("Frame")
+    SparksLayer.Name = "AFO_LightningStrikes"
+    SparksLayer.Size = UDim2.fromScale(1, 1)
+    SparksLayer.BackgroundTransparency = 1
+    SparksLayer.ZIndex = 4
+    SparksLayer.Parent = art
+
+    task.spawn(function()
+        while task.wait(math.random(1, 6) * 0.1) do
+            if not Root or not Root.Parent then break end
+            
+            local strike = Instance.new("ImageLabel")
+            strike.BackgroundTransparency = 1
+            strike.Image = Theme.Assets.LightningTexture
+            strike.ImageColor3 = math.random() > 0.4 and Theme.GlowColor or Theme.CrimsonGlow
+            
+            -- Tamaños extremos para simular un relámpago cruzando la pantalla
+            local w = math.random(150, 400)
+            local h = math.random(30, 100)
+            strike.Size = UDim2.new(0, w, 0, h)
+            
+            strike.Position = UDim2.new(math.random(-10, 90)/100, 0, math.random(-10, 90)/100, 0)
+            strike.Rotation = math.random(-180, 180)
+            strike.ImageTransparency = 0
+            strike.Parent = SparksLayer
+
+            -- Animación de destello eléctrico (aparece y desaparece estirándose)
+            TweenService:Create(strike, TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, w * 1.5, 0, h * 0.5),
+                ImageTransparency = 1
+            }):Play()
+
+            game:GetService("Debris"):AddItem(strike, 0.3)
+        end
+    end)
+
+    ---------------------------------------------------------------------
+    -- 4) Estructuras UI Visuales (Shadow Inestable)
     ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke")
     if not stroke then
@@ -175,96 +225,107 @@ Theme.BuildDesign = function(Window)
         shadow.Parent = Root
     end
     shadow.Color = Theme.GlowColor
-    shadow.BlurRadius = UDim.new(0, 60) -- Blur base más alto
+    shadow.BlurRadius = UDim.new(0, 50)
+    shadow.Offset = UDim2.new(0, 0, 0, 0)
     shadow.ZIndex = -1
 
-    -- Inestabilidad Amplificada
+    ---------------------------------------------------------------------
+    -- 5) Inestabilidad (Ruido Perlin Agresivo para el Aura)
+    ---------------------------------------------------------------------
     local timeX = 0
     RunService.RenderStepped:Connect(function(dt)
-        timeX = timeX + (dt * 6.5) 
+        timeX = timeX + (dt * 8.0) 
         local noise = math.noise(timeX, 0, 0)
         
-        -- Expansión masiva: El borde y la sombra reaccionan violentamente
         if stroke then
-            stroke.Thickness = 2 + math.abs(noise * 7) -- Antes 3.5, ahora se expande el doble
+            stroke.Thickness = 2 + math.abs(noise * 4) -- Borde palpitante
         end
         if shadow then
+            -- Aura que late fuerte y cambia entre morado y rojo
             shadow.Transparency = 0.15 + math.abs(noise * 0.4)
-            shadow.Spread = 5 + (math.abs(noise) * 15) -- Expansión dramática del aura
-        end
-        if vignette then
-            vignette.ImageTransparency = 0.3 + math.abs(noise * 0.2)
+            shadow.Spread = 8 + (noise * 6)
+            shadow.Color = noise > 0.3 and Theme.CrimsonGlow or Theme.GlowColor
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 4) Sistema de Descargas Eléctricas Reales
+    -- 6) Bordes de Rayos Morados y Carmesí Entrelazados (Más gruesos)
     ---------------------------------------------------------------------
-    local LightningLayer = Instance.new("Frame")
-    LightningLayer.Name = "AFO_Lightning"
-    LightningLayer.Size = UDim2.fromScale(1, 1)
-    LightningLayer.BackgroundTransparency = 1
-    LightningLayer.ZIndex = 5
-    LightningLayer.ClipsDescendants = true
-    LightningLayer.Parent = art
+    local STRIP_THICKNESS = 22 -- Bordes más anchos para notar la textura
+    local TILE_SIZE = 120
+    local SCROLL_TIME = 1.2 
 
-    -- Función para simular un "flash" de rayo real
-    local function flashLightning(bolt)
-        bolt.ImageTransparency = 0
-        task.wait(math.random(2, 5) * 0.01)
-        bolt.ImageTransparency = 0.8
-        task.wait(math.random(1, 3) * 0.01)
-        bolt.ImageTransparency = 0.2
+    local function makeEdge(name, size, position, horizontal, color, speed, reverse)
+        local mask = Instance.new("Frame")
+        mask.Name = name
+        mask.BackgroundTransparency = 1
+        mask.ClipsDescendants = true
+        mask.Size = size
+        mask.Position = position
+        mask.ZIndex = 50
+        mask.Active = false
+        mask.Parent = Root
+
+        local img = Instance.new("ImageLabel")
+        img.BackgroundTransparency = 1
+        img.Image = Theme.Assets.LightningTexture
+        img.ImageColor3 = color
+        img.ScaleType = Enum.ScaleType.Tile
         
-        TweenService:Create(bolt, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            ImageTransparency = 1,
-            Size = UDim2.new(bolt.Size.X.Scale, bolt.Size.X.Offset * 1.5, bolt.Size.Y.Scale, bolt.Size.Y.Offset * 1.2)
-        }):Play()
-        
-        game:GetService("Debris"):AddItem(bolt, 0.25)
+        local goal
+        if horizontal then
+            img.Size = UDim2.new(2, 0, 1, 0)
+            img.TileSize = UDim2.new(0, TILE_SIZE, 1, 0)
+            if reverse then
+                img.Position = UDim2.new(-1, 0, 0, 0)
+                goal = UDim2.new(0, 0, 0, 0)
+            else
+                goal = UDim2.new(-1, 0, 0, 0)
+            end
+        else
+            img.Size = UDim2.new(1, 0, 2, 0)
+            img.TileSize = UDim2.new(1, 0, 0, TILE_SIZE)
+            if reverse then
+                img.Position = UDim2.new(0, 0, -1, 0)
+                goal = UDim2.new(0, 0, 0, 0)
+            else
+                goal = UDim2.new(0, 0, -1, 0)
+            end
+        end
+        img.Parent = mask
+
+        -- Movimiento continuo del rayo
+        TweenService:Create(
+            img,
+            TweenInfo.new(speed, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1, false),
+            { Position = goal }
+        ):Play()
+
+        -- Pulsación de opacidad para que parezca electricidad viva
+        task.spawn(function()
+            while task.wait(math.random(2, 6)*0.1) do
+                if not img.Parent then break end
+                TweenService:Create(img, TweenInfo.new(0.1), {ImageTransparency = math.random(10, 60)/100}):Play()
+                task.wait(0.1)
+                TweenService:Create(img, TweenInfo.new(0.1), {ImageTransparency = 0}):Play()
+            end
+        end)
     end
 
-    task.spawn(function()
-        while task.wait(math.random(1, 8) * 0.05) do -- Rayos caóticos
-            if not Root or not Root.Parent then break end
-            
-            local isCrimson = math.random() > 0.65
-            local bolt = Instance.new("ImageLabel")
-            bolt.Image = Theme.Assets.LightningTexture
-            bolt.BackgroundTransparency = 1
-            bolt.ImageColor3 = isCrimson and Theme.CrimsonGlow or Theme.GlowColor
-            bolt.ImageTransparency = 1
-            
-            -- Posicionamiento Aleatorio en Bordes
-            local edge = math.random(1, 4)
-            local boltWidth = math.random(20, 60)
-            local boltLength = math.random(150, 400)
-            
-            if edge == 1 then -- Arriba
-                bolt.Size = UDim2.new(0, boltLength, 0, boltWidth)
-                bolt.Position = UDim2.new(math.random(), 0, 0, -boltWidth/2)
-                bolt.Rotation = 90 + math.random(-10, 10)
-            elseif edge == 2 then -- Abajo
-                bolt.Size = UDim2.new(0, boltLength, 0, boltWidth)
-                bolt.Position = UDim2.new(math.random(), 0, 1, -boltWidth/2)
-                bolt.Rotation = 90 + math.random(-10, 10)
-            elseif edge == 3 then -- Izquierda
-                bolt.Size = UDim2.new(0, boltWidth, 0, boltLength)
-                bolt.Position = UDim2.new(0, -boltWidth/2, math.random(), 0)
-                bolt.Rotation = math.random(-10, 10)
-            else -- Derecha
-                bolt.Size = UDim2.new(0, boltWidth, 0, boltLength)
-                bolt.Position = UDim2.new(1, -boltWidth/2, math.random(), 0)
-                bolt.Rotation = math.random(-10, 10)
-            end
-            
-            bolt.Parent = LightningLayer
-            task.spawn(flashLightning, bolt)
-        end
-    end)
+    -- Capa Morada
+    makeEdge("BoltTop_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, -STRIP_THICKNESS/2), true, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltBottom_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS/2), true, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltLeft_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, -STRIP_THICKNESS/2, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
+    makeEdge("BoltRight_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS/2, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
+
+    -- Capa Carmesí Inversa
+    makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, -STRIP_THICKNESS/2), true, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
+    makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS/2), true, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
+    makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, -STRIP_THICKNESS/2, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
+    makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS/2, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.7, true)
 
     ---------------------------------------------------------------------
-    -- 5) Parche de Título y Bolita de Versión
+    -- 7) Parche de Título y Bolita de Versión
     ---------------------------------------------------------------------
     task.spawn(function()
         task.wait(0.5) 
@@ -285,70 +346,9 @@ Theme.BuildDesign = function(Window)
             end
         end
     end)
-
-    ---------------------------------------------------------------------
-    -- 6) Limpieza de Perfil (UserCard: Eliminar Subtítulo)
-    ---------------------------------------------------------------------
-    task.spawn(function()
-        task.wait(1.0) -- Esperar a que la UI de Fluent se arme
-        if not Root then return end
-
-        local userCard
-        -- Buscamos el contenedor del perfil guiándonos por el Avatar
-        for _, obj in pairs(Root:GetDescendants()) do
-            if obj:IsA("ImageLabel") and obj.Image:match("rbxthumb") then
-                local current = obj.Parent
-                local levels = 0
-                while current and current ~= Root and levels < 3 do
-                    local txtCount = 0
-                    for _, child in pairs(current:GetDescendants()) do
-                        if child:IsA("TextLabel") then txtCount = txtCount + 1 end
-                    end
-                    if txtCount >= 2 then
-                        userCard = current
-                        break
-                    end
-                    current = current.Parent
-                    levels = levels + 1
-                end
-                break
-            end
-        end
-
-        if userCard then
-            local labels = {}
-            for _, obj in pairs(userCard:GetDescendants()) do
-                if obj:IsA("TextLabel") then
-                    table.insert(labels, obj)
-                end
-            end
-            
-            if #labels >= 2 then
-                -- Ordenar por posición Y para saber cuál está arriba y cuál abajo
-                table.sort(labels, function(a, b) return a.AbsolutePosition.Y < b.AbsolutePosition.Y end)
-                
-                local topLabel = labels[1]
-                local bottomLabel = labels[2]
-
-                -- Destruimos la segunda línea de texto por completo
-                if bottomLabel then
-                    bottomLabel.Visible = false
-                    bottomLabel:Destroy()
-                end
-
-                -- Centramos y ajustamos la línea principal
-                if topLabel then
-                    topLabel.Size = UDim2.new(1, 0, 1, 0)
-                    topLabel.TextYAlignment = Enum.TextYAlignment.Center
-                    topLabel.TextScaled = true
-                    
-                    local constraint = Instance.new("UITextSizeConstraint")
-                    constraint.MaxTextSize = 15 -- Evita que nombres cortos se vean gigantes
-                    constraint.Parent = topLabel
-                end
-            end
-        end
-    end)
+    
+    -- Nota: La sección 8 (Perfil hackeado con doble texto) fue eliminada
+    -- tal y como solicitaste para mantener el sistema de censura limpio.
 end
 
 return Theme
