@@ -1,7 +1,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V3)
+--  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V4)
 --  Dirección de arte: Energía oscura inestable, múltiples quirks chocando.
---  Fondo morado puro, píldora de versión carmesí y texto auto-corregido.
+--  Incluye: Perfil hackeado (Censura por defecto, Auto-escala, @Username real).
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -17,7 +17,7 @@ local Theme = {
     AcrylicMain = Color3.fromRGB(12, 6, 18),
     AcrylicBorder = Color3.fromRGB(100, 10, 145),
     
-    -- Degradado Morado Puro (sin rojo) restaurado
+    -- Degradado Morado Puro (sin rojo)
     AcrylicGradient = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 8, 115)),
         ColorSequenceKeypoint.new(0.35, Color3.fromRGB(18, 6, 30)),
@@ -90,9 +90,6 @@ local Theme = {
     },
 }
 
--- ═══════════════════════════════════════════════════════════════════════════
---  Assets
--- ═══════════════════════════════════════════════════════════════════════════
 Theme.Assets = {
     BannerId = "rbxassetid://135276561043104",
     BannerImageTransparency = 0.75,
@@ -100,9 +97,6 @@ Theme.Assets = {
     LightningTexture = "rbxassetid://96766676523858",
 }
 
--- ═══════════════════════════════════════════════════════════════════════════
---  Theme.BuildDesign(Window)
--- ═══════════════════════════════════════════════════════════════════════════
 Theme.BuildDesign = function(Window)
     local Root = Window.Root
     local acrylicFrame = Window.AcrylicPaint.Frame
@@ -149,7 +143,7 @@ Theme.BuildDesign = function(Window)
     tintGradient.Parent = tint
 
     ---------------------------------------------------------------------
-    -- 2) Fondo Base Deslizante (Morado sin rojo)
+    -- 2) Fondo Base Deslizante
     ---------------------------------------------------------------------
     local bgGradient = acrylicFrame:FindFirstChildOfClass("UIGradient")
     if not bgGradient then
@@ -165,7 +159,7 @@ Theme.BuildDesign = function(Window)
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Sistema de Chispas Residuales (Más Agresivo y Rápido)
+    -- 3) Sistema de Chispas Residuales Rápidas
     ---------------------------------------------------------------------
     local SparksLayer = Instance.new("Frame")
     SparksLayer.Name = "AFO_Sparks"
@@ -175,7 +169,6 @@ Theme.BuildDesign = function(Window)
     SparksLayer.Parent = art
 
     task.spawn(function()
-        -- Genera chispas mucho más rápido (agresivo)
         while task.wait(math.random(2, 5) * 0.02) do
             if not Root or not Root.Parent then break end
             local spark = Instance.new("Frame")
@@ -187,7 +180,6 @@ Theme.BuildDesign = function(Window)
             spark.BackgroundTransparency = 0.1
             spark.Parent = SparksLayer
 
-            -- Animación más violenta y rápida
             TweenService:Create(spark, TweenInfo.new(math.random(2, 5) * 0.1, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
                 Size = UDim2.new(0, math.random(150, 400), 0, 0),
                 BackgroundTransparency = 1,
@@ -220,11 +212,11 @@ Theme.BuildDesign = function(Window)
     shadow.ZIndex = -1
 
     ---------------------------------------------------------------------
-    -- 5) Inestabilidad (Ruido Perlin) para Latidos Caóticos
+    -- 5) Inestabilidad (Ruido Perlin)
     ---------------------------------------------------------------------
     local timeX = 0
     RunService.RenderStepped:Connect(function(dt)
-        timeX = timeX + (dt * 5.0) -- Latido más rápido
+        timeX = timeX + (dt * 5.0) 
         local noise = math.noise(timeX, 0, 0)
         
         if stroke then
@@ -237,11 +229,11 @@ Theme.BuildDesign = function(Window)
     end)
 
     ---------------------------------------------------------------------
-    -- 6) Aura Dual: Rayos Morados y Carmesí Entrelazados (Más Rápidos)
+    -- 6) Rayos Morados y Carmesí Entrelazados Rápidos
     ---------------------------------------------------------------------
     local STRIP_THICKNESS = 6
     local TILE_SIZE = 96
-    local SCROLL_TIME = 1.8 -- Tiempo reducido para que los rayos corran velozmente
+    local SCROLL_TIME = 1.8 
 
     local function makeEdge(name, size, position, horizontal, color, speed, reverse)
         local mask = Instance.new("Frame")
@@ -289,45 +281,147 @@ Theme.BuildDesign = function(Window)
         ):Play()
     end
 
-    -- Capa 1: Quirks Normales (Morado oscuro)
     makeEdge("BoltTop_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.GlowColor, SCROLL_TIME, false)
     makeEdge("BoltBottom_P", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.GlowColor, SCROLL_TIME, false)
     makeEdge("BoltLeft_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
     makeEdge("BoltRight_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
 
-    -- Capa 2: All For One (Rojo Carmesí, en contravía)
     makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
     makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
     makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
     makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
 
     ---------------------------------------------------------------------
-    -- 7) Parche: Modificación de la barra de título (Bolita verde y texto)
+    -- 7) Parche de Título y Bolita de Versión
     ---------------------------------------------------------------------
     task.spawn(function()
-        task.wait(0.5) -- Esperar a que Fluent cargue la UI por completo
+        task.wait(0.5) 
         if not Root then return end
 
         for _, obj in pairs(Root:GetDescendants()) do
-            -- 1. Eliminar el texto "Todo para Uno" en español
             if obj:IsA("TextLabel") and obj.Text:find("Todo para Uno") then
-                -- Quitamos esa porción del string
                 obj.Text = obj.Text:gsub("Todo para Uno", "") 
             end
             
-            -- 2. Encontrar la "bolita de versión" verde y volverla carmesí
-            -- Buscamos el fondo de la píldora usando el color verde clásico que usa Fluent o buscando a los padres del texto "2.0"
-            if obj:IsA("Frame") then
-                -- Evalúa si es de color verde (R bajo, G alto, B bajo/medio)
-                if obj.BackgroundColor3.G > 0.5 and obj.BackgroundColor3.R < 0.3 then
-                    -- Revisamos que tenga una etiqueta de texto dentro (como el "2.0")
-                    for _, child in pairs(obj:GetChildren()) do
-                        if child:IsA("TextLabel") then
-                            obj.BackgroundColor3 = Theme.CrimsonGlow
-                            break
+            if obj:IsA("Frame") and obj.BackgroundColor3.G > 0.5 and obj.BackgroundColor3.R < 0.3 then
+                for _, child in pairs(obj:GetChildren()) do
+                    if child:IsA("TextLabel") then
+                        obj.BackgroundColor3 = Theme.CrimsonGlow
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    ---------------------------------------------------------------------
+    -- 8) Modificación Hacking del Perfil de Usuario (UserCard)
+    ---------------------------------------------------------------------
+    task.spawn(function()
+        task.wait(1.5) -- Tiempo prudente para que Fluent arme el UserCard
+        if not Root then return end
+
+        local player = game:GetService("Players").LocalPlayer
+        local realDisplay = player.DisplayName
+        local realUser = "@" .. player.Name
+
+        local userCard
+        for _, obj in pairs(Root:GetDescendants()) do
+            if obj:IsA("ImageLabel") and obj.Image:match("rbxthumb") then
+                -- Escalar un par de niveles hasta agarrar el contenedor principal que tiene los textos
+                local current = obj.Parent
+                local levels = 0
+                while current and current ~= Root and levels < 3 do
+                    local txtCount = 0
+                    for _, child in pairs(current:GetDescendants()) do
+                        if child:IsA("TextLabel") then txtCount = txtCount + 1 end
+                    end
+                    if txtCount >= 2 then
+                        userCard = current
+                        break
+                    end
+                    current = current.Parent
+                    levels = levels + 1
+                end
+                break
+            end
+        end
+
+        if userCard then
+            local labels = {}
+            for _, obj in pairs(userCard:GetDescendants()) do
+                if obj:IsA("TextLabel") then
+                    table.insert(labels, obj)
+                end
+            end
+            
+            if #labels >= 2 then
+                -- El Y absoluto más bajo pertenece al título (arriba)
+                table.sort(labels, function(a, b) return a.AbsolutePosition.Y < b.AbsolutePosition.Y end)
+                
+                local topLabel = labels[1]
+                local bottomLabel = labels[2]
+
+                -- Auto-escalado para nombres largos
+                topLabel.TextScaled = true
+                bottomLabel.TextScaled = true
+
+                -- Limitador para evitar textos gigantes en nombres cortos
+                local topConstraint = Instance.new("UITextSizeConstraint")
+                topConstraint.MaxTextSize = 14
+                topConstraint.Parent = topLabel
+
+                local bottomConstraint = Instance.new("UITextSizeConstraint")
+                bottomConstraint.MaxTextSize = 13
+                bottomConstraint.Parent = bottomLabel
+                
+                -- Estado Lógico
+                local isAnonymous = true
+                local isUpdating = false
+
+                local function applyState()
+                    isUpdating = true
+                    if isAnonymous then
+                        topLabel.Text = "Anonymous"
+                        bottomLabel.Text = "Censurado"
+                    else
+                        topLabel.Text = realDisplay
+                        bottomLabel.Text = realUser
+                    end
+                    isUpdating = false
+                end
+
+                -- Bloqueador de Sobreescritura (Ignora los cambios nativos de Fluent)
+                topLabel:GetPropertyChangedSignal("Text"):Connect(function()
+                    if not isUpdating and topLabel.Text ~= "Anonymous" and topLabel.Text ~= realDisplay then
+                        applyState()
+                    end
+                end)
+
+                -- Interceptar clics en el botón de privacidad (el ojito de Fluent)
+                for _, obj in pairs(userCard:GetDescendants()) do
+                    if obj:IsA("ImageLabel") and not obj.Image:match("rbxthumb") then
+                        local btn = obj.Parent
+                        if btn then
+                            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                                btn.MouseButton1Click:Connect(function()
+                                    isAnonymous = not isAnonymous
+                                    applyState()
+                                end)
+                            elseif btn:IsA("Frame") then
+                                btn.InputBegan:Connect(function(input)
+                                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                                        isAnonymous = not isAnonymous
+                                        applyState()
+                                    end
+                                end)
+                            end
                         end
                     end
                 end
+
+                -- Estado por defecto (Inyección inicial)
+                applyState()
             end
         end
     end)
