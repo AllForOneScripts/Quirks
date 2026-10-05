@@ -1,17 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (VERSIÓN CORREGIDA)
+--  ALL FOR ONE THEME - OVERHAUL CAÓTICO Y SALVAJE (V3)
 --  Dirección de arte: Energía oscura inestable, múltiples quirks chocando.
---  Indicador superior izquierdo cambiado directamente a rojo carmesí.
+--  Fondo morado puro, píldora de versión carmesí y texto auto-corregido.
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
 local Theme = {
-    -- Color de marca original
     Accent = Color3.fromRGB(165, 20, 220),
-    -- Morado inestable para los quirks
     GlowColor = Color3.fromRGB(180, 20, 255),
-    -- Rojo Carmesí puro de All For One
     CrimsonGlow = Color3.fromRGB(220, 20, 60), 
     
     IconColor = Color3.fromRGB(225, 130, 255),
@@ -20,13 +17,12 @@ local Theme = {
     AcrylicMain = Color3.fromRGB(12, 6, 18),
     AcrylicBorder = Color3.fromRGB(100, 10, 145),
     
-    -- Degradado corrompido: Morado -> Sangre -> Negro
+    -- Degradado Morado Puro (sin rojo) restaurado
     AcrylicGradient = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 8, 115)),
-        ColorSequenceKeypoint.new(0.3, Color3.fromRGB(15, 3, 20)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 5, 20)), -- Inyección carmesí
-        ColorSequenceKeypoint.new(0.7, Color3.fromRGB(30, 4, 45)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(5, 1, 8)),
+        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(18, 6, 30)),
+        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(45, 5, 80)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 3, 14)),
     }),
     AcrylicNoise = 0.65,
     TitleBarLine = Color3.fromRGB(100, 10, 145),
@@ -112,7 +108,7 @@ Theme.BuildDesign = function(Window)
     local acrylicFrame = Window.AcrylicPaint.Frame
 
     ---------------------------------------------------------------------
-    -- 1) Banner y Tintado Oscuro
+    -- 1) Banner y Tintado Oscuro (Morado puro)
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -146,14 +142,14 @@ Theme.BuildDesign = function(Window)
 
     local tintGradient = Instance.new("UIGradient")
     tintGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.CrimsonGlow),
+        ColorSequenceKeypoint.new(0, Theme.AcrylicBorder),
         ColorSequenceKeypoint.new(1, Theme.AcrylicMain),
     })
     tintGradient.Rotation = 90
     tintGradient.Parent = tint
 
     ---------------------------------------------------------------------
-    -- 2) Fondo Base Deslizante
+    -- 2) Fondo Base Deslizante (Morado sin rojo)
     ---------------------------------------------------------------------
     local bgGradient = acrylicFrame:FindFirstChildOfClass("UIGradient")
     if not bgGradient then
@@ -169,7 +165,7 @@ Theme.BuildDesign = function(Window)
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Sistema de Chispas Residuales (Energía Descontrolada)
+    -- 3) Sistema de Chispas Residuales (Más Agresivo y Rápido)
     ---------------------------------------------------------------------
     local SparksLayer = Instance.new("Frame")
     SparksLayer.Name = "AFO_Sparks"
@@ -179,24 +175,26 @@ Theme.BuildDesign = function(Window)
     SparksLayer.Parent = art
 
     task.spawn(function()
-        while task.wait(math.random(1, 4) * 0.1) do
+        -- Genera chispas mucho más rápido (agresivo)
+        while task.wait(math.random(2, 5) * 0.02) do
             if not Root or not Root.Parent then break end
             local spark = Instance.new("Frame")
-            spark.BackgroundColor3 = math.random() > 0.4 and Theme.CrimsonGlow or Theme.GlowColor
+            spark.BackgroundColor3 = math.random() > 0.5 and Theme.CrimsonGlow or Theme.GlowColor
             spark.BorderSizePixel = 0
-            spark.Size = UDim2.new(0, math.random(10, 60), 0, math.random(1, 3))
+            spark.Size = UDim2.new(0, math.random(15, 80), 0, math.random(1, 4))
             spark.Position = UDim2.new(math.random(), 0, math.random(), 0)
-            spark.Rotation = math.random(-25, 25)
-            spark.BackgroundTransparency = 0.2
+            spark.Rotation = math.random(-35, 35)
+            spark.BackgroundTransparency = 0.1
             spark.Parent = SparksLayer
 
-            TweenService:Create(spark, TweenInfo.new(math.random(3, 7) * 0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, math.random(120, 350), 0, 0),
+            -- Animación más violenta y rápida
+            TweenService:Create(spark, TweenInfo.new(math.random(2, 5) * 0.1, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, math.random(150, 400), 0, 0),
                 BackgroundTransparency = 1,
-                Position = spark.Position + UDim2.new(math.random(-15, 15)/100, 0, math.random(-15, 15)/100, 0)
+                Position = spark.Position + UDim2.new(math.random(-20, 20)/100, 0, math.random(-20, 20)/100, 0)
             }):Play()
 
-            game:GetService("Debris"):AddItem(spark, 1)
+            game:GetService("Debris"):AddItem(spark, 0.6)
         end
     end)
 
@@ -226,24 +224,24 @@ Theme.BuildDesign = function(Window)
     ---------------------------------------------------------------------
     local timeX = 0
     RunService.RenderStepped:Connect(function(dt)
-        timeX = timeX + (dt * 3.5)
+        timeX = timeX + (dt * 5.0) -- Latido más rápido
         local noise = math.noise(timeX, 0, 0)
         
         if stroke then
-            stroke.Thickness = 2 + math.abs(noise * 3)
+            stroke.Thickness = 2 + math.abs(noise * 3.5)
         end
         if shadow then
-            shadow.Transparency = 0.35 + math.abs(noise * 0.25)
-            shadow.Spread = 3 + (noise * 3)
+            shadow.Transparency = 0.25 + math.abs(noise * 0.3)
+            shadow.Spread = 4 + (noise * 4)
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 6) Aura Dual: Rayos Morados y Carmesí Entrelazados
+    -- 6) Aura Dual: Rayos Morados y Carmesí Entrelazados (Más Rápidos)
     ---------------------------------------------------------------------
     local STRIP_THICKNESS = 6
     local TILE_SIZE = 96
-    local SCROLL_TIME = 3.5
+    local SCROLL_TIME = 1.8 -- Tiempo reducido para que los rayos corran velozmente
 
     local function makeEdge(name, size, position, horizontal, color, speed, reverse)
         local mask = Instance.new("Frame")
@@ -297,34 +295,38 @@ Theme.BuildDesign = function(Window)
     makeEdge("BoltLeft_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
     makeEdge("BoltRight_P", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.GlowColor, SCROLL_TIME, false)
 
-    -- Capa 2: All For One (Rojo Carmesí)
-    makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
-    makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
-    makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
-    makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.75, true)
+    -- Capa 2: All For One (Rojo Carmesí, en contravía)
+    makeEdge("BoltTop_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 0, 0), true, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
+    makeEdge("BoltBottom_C", UDim2.new(1, 0, 0, STRIP_THICKNESS), UDim2.new(0, 0, 1, -STRIP_THICKNESS), true, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
+    makeEdge("BoltLeft_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(0, 0, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
+    makeEdge("BoltRight_C", UDim2.new(0, STRIP_THICKNESS, 1, 0), UDim2.new(1, -STRIP_THICKNESS, 0, 0), false, Theme.CrimsonGlow, SCROLL_TIME * 0.8, true)
 
     ---------------------------------------------------------------------
-    -- 7) Firma Asimétrica AFO
-    ---------------------------------------------------------------------
-    local rootCorner = Root:FindFirstChildOfClass("UICorner")
-    if rootCorner then
-        rootCorner.TopLeftRadius = UDim.new(0, 1)
-        rootCorner.BottomRightRadius = UDim.new(0, 1)
-    end
-
-    ---------------------------------------------------------------------
-    -- 8) Cambio de color de la "bolita" verde superior izquierda a Rojo Carmesí
+    -- 7) Parche: Modificación de la barra de título (Bolita verde y texto)
     ---------------------------------------------------------------------
     task.spawn(function()
-        task.wait(0.4) -- Esperar a que Fluent cargue los elementos internos
+        task.wait(0.5) -- Esperar a que Fluent cargue la UI por completo
         if not Root then return end
 
         for _, obj in pairs(Root:GetDescendants()) do
-            -- Buscamos marcos pequeños con esquinas redondeadas (la bolita de estado/versión suele ser un Frame con UICorner completo)
-            if obj:IsA("Frame") and (obj.AbsoluteSize.X <= 16 and obj.AbsoluteSize.Y <= 16) then
-                local corner = obj:FindFirstChildOfClass("UICorner")
-                if corner then
-                    obj.BackgroundColor3 = Theme.CrimsonGlow
+            -- 1. Eliminar el texto "Todo para Uno" en español
+            if obj:IsA("TextLabel") and obj.Text:find("Todo para Uno") then
+                -- Quitamos esa porción del string
+                obj.Text = obj.Text:gsub("Todo para Uno", "") 
+            end
+            
+            -- 2. Encontrar la "bolita de versión" verde y volverla carmesí
+            -- Buscamos el fondo de la píldora usando el color verde clásico que usa Fluent o buscando a los padres del texto "2.0"
+            if obj:IsA("Frame") then
+                -- Evalúa si es de color verde (R bajo, G alto, B bajo/medio)
+                if obj.BackgroundColor3.G > 0.5 and obj.BackgroundColor3.R < 0.3 then
+                    -- Revisamos que tenga una etiqueta de texto dentro (como el "2.0")
+                    for _, child in pairs(obj:GetChildren()) do
+                        if child:IsA("TextLabel") then
+                            obj.BackgroundColor3 = Theme.CrimsonGlow
+                            break
+                        end
+                    end
                 end
             end
         end
