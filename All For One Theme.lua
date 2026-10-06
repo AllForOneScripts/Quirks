@@ -1,8 +1,3 @@
--- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - V10 (STORM CORE · DEEP VIOLET)
---  Nubes volumétricas con parallax, rayos de plasma, borde de energía,
---  título justificado al ancho del sidebar y badge de versión en carmesí.
--- ═══════════════════════════════════════════════════════════════════════════
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -646,16 +641,14 @@ Theme.BuildDesign = function(Window)
     end
 
     ---------------------------------------------------------------------
-    -- 8) TÍTULO (letras justificadas), BADGE DE VERSIÓN Y TARJETA DE USUARIO
+    -- 8) TÍTULO (letras justificadas) Y TARJETA DE USUARIO
     ---------------------------------------------------------------------
     local TITLE = "All For One"
     local TITLE_BASE = Color3.fromRGB(232, 220, 250)
-    local titleLabel, titleTarget, pill
+    local titleLabel, titleTarget
     local letters = {}
     local titleFX = newFrame(Root, 60)
     titleFX.Name = "AFO_TitleFX"
-    local badgeLayer = newFrame(Root, 62)
-    badgeLayer.Name = "AFO_Badge"
 
     local function findSideBar()
         for _, obj in ipairs(Root:GetDescendants()) do
@@ -749,27 +742,19 @@ Theme.BuildDesign = function(Window)
         titleLabel = label
     end
 
-    local function setupBadge(lbl)
+    -- Oculta por completo el badge de versión ("2.0")
+    local function hideBadge(lbl)
         lbl:SetAttribute("AFO", true)
-        local p = lbl
+        local target = lbl
         local par = lbl.Parent
-        if lbl.BackgroundTransparency >= 1 and par and par:IsA("GuiObject") and par ~= Root and par.BackgroundTransparency < 1 then
-            p = par
+        if lbl.BackgroundTransparency >= 1 and par and par:IsA("GuiObject") and par ~= Root
+            and par.BackgroundTransparency < 1 and par.AbsoluteSize.X < 100 then
+            target = par
         end
-        p:SetAttribute("AFO", true)
-        local sz = p.AbsoluteSize
-        p.AnchorPoint = Vector2.new(0, 0)
-        p.Size = UDim2.fromOffset(math.max(sz.X, 34), math.max(sz.Y, 18))
-        p.BackgroundColor3 = Theme.Crimson
-        if lbl ~= p and lbl.BackgroundTransparency < 1 then lbl.BackgroundColor3 = Theme.Crimson end
-        lbl.TextColor3 = WHITE
-        for _, d in ipairs(p:GetDescendants()) do
-            if d:IsA("UIStroke") then d.Color = Theme.Crimson end
-            if d:IsA("GuiObject") then d.ZIndex = 63 end
-        end
-        p.ZIndex = 62
-        p.Parent = badgeLayer
-        pill = p
+        target.Visible = false
+        target:GetPropertyChangedSignal("Visible"):Connect(function()
+            if target.Visible then target.Visible = false end
+        end)
     end
 
     -- Tarjeta de usuario: arriba nombre visible, abajo @usuario. Oculto: Villain / @******
@@ -851,8 +836,8 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Badge de versión (el "2.0")
-        if not pill and #badgeCands > 0 then setupBadge(badgeCands[1]) end
+        -- Badge de versión: se oculta
+        for _, c in ipairs(badgeCands) do hideBadge(c) end
 
         -- Tarjeta de usuario
         if bottomCand and not userTop then
@@ -1026,17 +1011,6 @@ Theme.BuildDesign = function(Window)
                     paint(p, pickColor(), 1.5 + rand() * 1.8)
                 end
             end
-        end
-
-        -- Badge de versión: a la derecha del título, sin solaparse con los controles
-        if pill and pill.Parent == badgeLayer and titleLabel and titleLabel.Parent then
-            local rp = Root.AbsolutePosition
-            local ap, asz = titleLabel.AbsolutePosition, titleLabel.AbsoluteSize
-            pill.Position = UDim2.fromOffset(
-                (ap.X - rp.X) + (titleTarget or asz.X) + 10,
-                (ap.Y - rp.Y) + asz.Y / 2 - pill.AbsoluteSize.Y / 2
-            )
-            pill.BackgroundColor3 = Theme.Crimson:Lerp(Color3.fromRGB(255, 80, 110), math.clamp(sg * 0.8 + 0.08 * math.sin(t * 3), 0, 1))
         end
 
         -- Partículas
