@@ -1,13 +1,11 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - V6 (Corrección Definitiva)
---  Colores integrados (Morado, Negro, Rojo, Amarillo). Niebla implementada.
---  Rayos horizontales múltiples. Sistema de censura "Villain" respetado.
+--  ALL FOR ONE THEME - V7 (Corrección Exacta)
+--  Rayos horizontales lentos, Viñeta, Cenizas, Censura nativa y Título exacto.
 -- ═══════════════════════════════════════════════════════════════════════════
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
 local Theme = {
-    -- Paleta principal All For One (Morado, Negro, Rojo, Amarillo)
     Accent = Color3.fromRGB(165, 20, 220),
     GlowColor = Color3.fromRGB(180, 20, 255),
     Crimson = Color3.fromRGB(220, 20, 60),
@@ -17,15 +15,14 @@ local Theme = {
     IconColor = Color3.fromRGB(225, 130, 255),
     IconSize = 18,
     
-    AcrylicMain = Color3.fromRGB(8, 4, 12), -- Más oscuro (Negro/Morado)
+    AcrylicMain = Color3.fromRGB(8, 4, 12),
     AcrylicBorder = Color3.fromRGB(80, 10, 110),
     
-    -- Degradado de fondo priorizando Negro, Morado y destellos Rojos
     AcrylicGradient = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 5, 15)),     -- Negro
-        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(70, 8, 115)), -- Morado
-        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(80, 10, 25)), -- Rojo Oscuro
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 5, 15)),     -- Negro
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 5, 15)),
+        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(70, 8, 115)),
+        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(80, 10, 25)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 5, 15)),
     }),
     AcrylicNoise = 0.65,
     TitleBarLine = Color3.fromRGB(100, 10, 145),
@@ -86,7 +83,8 @@ Theme.Assets = {
     BannerImageTransparency = 0.65,
     TintTransparency = 0.40,
     LightningTexture = "rbxassetid://96766676523858",
-    FogTexture = "rbxassetid://2118357406" -- Textura de niebla densa
+    FogTexture = "rbxassetid://2118357406",
+    Vignette = "rbxassetid://182223762" -- Textura de viñeta oscura
 }
 
 Theme.BuildDesign = function(Window)
@@ -94,7 +92,7 @@ Theme.BuildDesign = function(Window)
     local acrylicFrame = Window.AcrylicPaint.Frame
 
     ---------------------------------------------------------------------
-    -- 1) Banner, Tintado y Sistema de Niebla (Fog)
+    -- 1) Atmósfera: Banner, Niebla, Viñeta y Cenizas
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -117,13 +115,12 @@ Theme.BuildDesign = function(Window)
     banner.ZIndex = 1
     banner.Parent = art
 
-    -- Niebla Ambiental Lenta
     local fogLayer = Instance.new("ImageLabel")
     fogLayer.Name = "AFOFog"
     fogLayer.BackgroundTransparency = 1
     fogLayer.Image = Theme.Assets.FogTexture
     fogLayer.ImageColor3 = Theme.GlowColor
-    fogLayer.ImageTransparency = 0.75
+    fogLayer.ImageTransparency = 0.85
     fogLayer.Size = UDim2.fromScale(2, 2)
     fogLayer.ZIndex = 2
     fogLayer.Parent = art
@@ -131,19 +128,48 @@ Theme.BuildDesign = function(Window)
     task.spawn(function()
         while task.wait() do
             if not Root then break end
-            local t = tick() * 0.05
+            local t = tick() * 0.03
             fogLayer.Position = UDim2.new(-0.5 + math.sin(t) * 0.1, 0, -0.5 + math.cos(t) * 0.1, 0)
         end
     end)
 
-    local tint = Instance.new("Frame")
-    tint.Name = "DarkTint"
-    tint.BackgroundColor3 = Theme.DarkMatter
-    tint.BackgroundTransparency = Theme.Assets.TintTransparency
-    tint.BorderSizePixel = 0
-    tint.Size = UDim2.fromScale(1, 1)
-    tint.ZIndex = 3
-    tint.Parent = art
+    -- Viñeta para concentrar la oscuridad
+    local vignette = Instance.new("ImageLabel")
+    vignette.BackgroundTransparency = 1
+    vignette.Size = UDim2.fromScale(1, 1)
+    vignette.Image = Theme.Assets.Vignette
+    vignette.ImageColor3 = Theme.DarkMatter
+    vignette.ImageTransparency = 0.2
+    vignette.ZIndex = 5
+    vignette.Parent = art
+
+    -- Sistema de Cenizas Flotantes (Partículas oscuras)
+    local ashLayer = Instance.new("Frame")
+    ashLayer.BackgroundTransparency = 1
+    ashLayer.Size = UDim2.fromScale(1, 1)
+    ashLayer.ZIndex = 3
+    ashLayer.Parent = art
+    
+    task.spawn(function()
+        while task.wait(0.3) do
+            if not Root or not Root.Parent then break end
+            local ash = Instance.new("Frame")
+            ash.BackgroundColor3 = Color3.fromRGB(5, 2, 10)
+            ash.BorderSizePixel = 0
+            local size = math.random(2, 4)
+            ash.Size = UDim2.new(0, size, 0, size)
+            ash.Position = UDim2.new(math.random(0, 100)/100, 0, 1.1, 0)
+            ash.Rotation = math.random(0, 360)
+            ash.Parent = ashLayer
+            
+            TweenService:Create(ash, TweenInfo.new(math.random(4, 7), Enum.EasingStyle.Linear), {
+                Position = UDim2.new(ash.Position.X.Scale + math.random(-10, 10)/100, 0, -0.1, 0),
+                Rotation = ash.Rotation + math.random(-180, 180),
+                BackgroundTransparency = 1
+            }):Play()
+            game:GetService("Debris"):AddItem(ash, 8)
+        end
+    end)
 
     ---------------------------------------------------------------------
     -- 2) Fondo Base Deslizante
@@ -162,7 +188,7 @@ Theme.BuildDesign = function(Window)
     ):Play()
 
     ---------------------------------------------------------------------
-    -- 3) Efecto de Rayos Múltiples (Estrictamente Horizontales)
+    -- 3) Rayos Horizontales Lentos y Prolongados
     ---------------------------------------------------------------------
     local SparksLayer = Instance.new("Frame")
     SparksLayer.Name = "AFO_LightningStrikes"
@@ -171,15 +197,10 @@ Theme.BuildDesign = function(Window)
     SparksLayer.ZIndex = 4
     SparksLayer.Parent = art
 
-    local powerColors = {
-        Theme.GlowColor, -- Morado
-        Theme.Crimson,   -- Rojo
-        Theme.Yellow,    -- Amarillo
-        Color3.fromRGB(150, 150, 150) -- Quirk Cinético (Blanco/Gris)
-    }
+    local powerColors = { Theme.GlowColor, Theme.Crimson, Theme.Yellow, Color3.fromRGB(150, 150, 150) }
 
     task.spawn(function()
-        while task.wait(math.random(2, 6) * 0.1) do
+        while task.wait(math.random(4, 10) * 0.1) do
             if not Root or not Root.Parent then break end
             
             local strike = Instance.new("ImageLabel")
@@ -187,28 +208,40 @@ Theme.BuildDesign = function(Window)
             strike.Image = Theme.Assets.LightningTexture
             strike.ImageColor3 = powerColors[math.random(1, #powerColors)]
             
-            -- Dimensiones horizontales puras (Ancho masivo, altura contenida)
-            local w = math.random(800, 1500)
-            local h = math.random(20, 60)
+            local w = math.random(800, 1200)
+            local h = math.random(25, 60)
             strike.Size = UDim2.new(0, w, 0, h)
             
-            -- Aparecen cruzando de izquierda a derecha (0 o 180 grados, nunca verticales)
-            strike.Rotation = math.random() > 0.5 and 0 or 180
-            strike.Position = UDim2.new(math.random(-50, 50)/100, 0, math.random(5, 95)/100, 0)
+            -- Lógica para atravesar la pantalla
+            local isLeftToRight = math.random() > 0.5
+            local startX = isLeftToRight and -0.8 or 1.8
+            local endX = isLeftToRight and 1.8 or -0.8
+            
+            strike.Rotation = isLeftToRight and 0 or 180
+            strike.Position = UDim2.new(startX, 0, math.random(10, 90)/100, 0)
             strike.ImageTransparency = 0
             strike.Parent = SparksLayer
 
-            TweenService:Create(strike, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, w * 1.8, 0, h * 0.2),
-                ImageTransparency = 1
+            -- Tiempos mucho más lentos (1.5 a 3 segundos de duración)
+            local travelTime = math.random(15, 30) / 10
+            
+            -- Movimiento físico de lado a lado
+            TweenService:Create(strike, TweenInfo.new(travelTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                Position = UDim2.new(endX, 0, strike.Position.Y.Scale, 0)
             }):Play()
 
-            game:GetService("Debris"):AddItem(strike, 0.3)
+            -- Fade out progresivo
+            TweenService:Create(strike, TweenInfo.new(travelTime * 0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                ImageTransparency = 1,
+                Size = UDim2.new(0, w * 1.5, 0, h * 0.3)
+            }):Play()
+
+            game:GetService("Debris"):AddItem(strike, travelTime + 0.5)
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 4) Borde Corrupto/Glitch (Reemplazo de la barra neón simple)
+    -- 4) Borde Corrupto/Glitch
     ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke")
     if not stroke then
@@ -216,36 +249,28 @@ Theme.BuildDesign = function(Window)
         stroke.Parent = Root
     end
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Color = Color3.new(1, 1, 1) -- Se sobreescribe con el gradiente
+    stroke.Color = Color3.new(1, 1, 1)
 
-    -- Degradado en el borde para eliminar la sensación de color plano
-    local strokeGradient = stroke:FindFirstChildOfClass("UIGradient")
-    if not strokeGradient then
-        strokeGradient = Instance.new("UIGradient")
-        strokeGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.Crimson),
-            ColorSequenceKeypoint.new(0.3, Theme.GlowColor),
-            ColorSequenceKeypoint.new(0.7, Theme.Yellow),
-            ColorSequenceKeypoint.new(1, Theme.Crimson)
-        })
-        strokeGradient.Parent = stroke
-    end
+    local strokeGradient = stroke:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient")
+    strokeGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.Crimson),
+        ColorSequenceKeypoint.new(0.3, Theme.GlowColor),
+        ColorSequenceKeypoint.new(0.7, Theme.Yellow),
+        ColorSequenceKeypoint.new(1, Theme.Crimson)
+    })
+    strokeGradient.Parent = stroke
 
-    local shadow = Root:FindFirstChildOfClass("UIShadow")
-    if not shadow then
-        shadow = Instance.new("UIShadow")
-        shadow.Parent = Root
-    end
+    local shadow = Root:FindFirstChildOfClass("UIShadow") or Instance.new("UIShadow")
     shadow.Color = Theme.GlowColor
     shadow.BlurRadius = UDim.new(0, 60)
     shadow.ZIndex = -1
+    shadow.Parent = Root
 
     local timeX = 0
     RunService.RenderStepped:Connect(function(dt)
         timeX = timeX + (dt * 5.0) 
         local noise = math.noise(timeX, 0, 0)
         
-        -- Ruido visual tipo glitch en el borde
         if stroke then
             local glitchSpike = (math.random() > 0.95) and math.random(2, 6) or 0
             stroke.Thickness = 2 + math.abs(noise * 3) + glitchSpike
@@ -255,13 +280,12 @@ Theme.BuildDesign = function(Window)
         if shadow then
             shadow.Transparency = 0.15 + math.abs(noise * 0.3)
             shadow.Spread = 10 + (noise * 8)
-            -- Intercambio sutil de sombras según el ruido
             shadow.Color = noise > 0.4 and Theme.Crimson or Theme.GlowColor
         end
     end)
 
     ---------------------------------------------------------------------
-    -- 5) Correcciones Textuales: Título, Bolita Carmesí y Sistema Villain
+    -- 5) Correcciones Textuales: Título Exacto y Censura "Villain"
     ---------------------------------------------------------------------
     task.spawn(function()
         task.wait(0.5) 
@@ -269,36 +293,35 @@ Theme.BuildDesign = function(Window)
 
         for _, obj in pairs(Root:GetDescendants()) do
             
-            -- Bolita de versión (Identificada por el tamaño diminuto estándar de Fluent o su color)
-            if obj:IsA("Frame") and (obj.Size == UDim2.new(0, 6, 0, 6) or (obj.BackgroundColor3.G > 0.5 and obj.BackgroundColor3.R < 0.3)) then
-                if obj.Parent and obj.Parent.Name:match("Title") then
-                    obj.BackgroundColor3 = Theme.Crimson
-                end
+            -- Bolita de versión (Interceptamos su tamaño estándar y la cambiamos a Rojo Carmesí)
+            if obj:IsA("Frame") and obj.Size == UDim2.new(0, 6, 0, 6) then
+                obj.BackgroundColor3 = Theme.Crimson
             end
 
             if obj:IsA("TextLabel") then
-                -- Titulo Exacto "All For One (2.0)"
-                if obj.Text:lower():find("all for one") then
+                
+                -- FIJAR TÍTULO (Verificamos que esté en la parte superior para no tocar otras cosas)
+                if obj.AbsolutePosition.Y < 50 and (obj.Text:lower():find("all for one") or obj.Text:lower():find("villain")) then
                     obj.Text = "All For One (2.0)"
                     obj.Font = Enum.Font.GothamBlack
                     obj.TextSize = 18
                 end
 
-                -- Integración con el Sistema de Censura "Villain" (Reemplaza a Anonymous)
-                if obj.Text == "Anonymous" or obj.Text:match("Villain") or obj.Text:find("Todo para Uno") then
-                    -- Estado inicial censurado
+                -- FIJAR SISTEMA DE CENSURA (Se intercepta SÓLO el estado "Anonymous")
+                if obj.Text == "Anonymous" then
                     obj.Text = "Villain"
                     obj.TextSize = 14
                     obj.Font = Enum.Font.GothamBold
                     
-                    -- Escuchar cambios. Si Fluent restaura a "Anonymous", lo forzamos de vuelta a "Villain".
-                    -- Si el usuario le da al ojito, Fluent pondrá su Username, lo cual permitimos.
+                    -- Esto asegura que al darle al ojito se muestre tu nombre real.
+                    -- Y si vuelves a censurarlo, Fluent intentará poner "Anonymous", pero esto lo cambiará a "Villain".
                     obj:GetPropertyChangedSignal("Text"):Connect(function()
                         if obj.Text == "Anonymous" then
                             obj.Text = "Villain"
                         end
                     end)
                 end
+                
             end
         end
     end)
