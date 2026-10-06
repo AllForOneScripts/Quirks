@@ -1,76 +1,78 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  ALL FOR ONE THEME - V9 (STORM CORE)
---  Rayos procedurales con ramas, luz ambiental que ilumina la GUI, niebla
---  reactiva, partículas de paleta, borde de energía viva y título renovado.
+--  ALL FOR ONE THEME - V10 (STORM CORE · DEEP VIOLET)
+--  Nubes volumétricas con parallax, rayos de plasma, borde de energía,
+--  título justificado al ancho del sidebar y badge de versión en carmesí.
 -- ═══════════════════════════════════════════════════════════════════════════
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TextService = game:GetService("TextService")
 
 local Theme = {
-    Accent = Color3.fromRGB(165, 20, 220),
-    GlowColor = Color3.fromRGB(180, 20, 255),
+    Accent = Color3.fromRGB(135, 18, 195),
+    GlowColor = Color3.fromRGB(140, 22, 215),
     Crimson = Color3.fromRGB(220, 20, 60),
     Yellow = Color3.fromRGB(255, 215, 0),
-    DarkMatter = Color3.fromRGB(12, 6, 18),
+    DarkMatter = Color3.fromRGB(10, 4, 16),
 
-    IconColor = Color3.fromRGB(225, 130, 255),
+    IconColor = Color3.fromRGB(205, 120, 245),
     IconSize = 18,
 
-    AcrylicMain = Color3.fromRGB(8, 4, 12),
-    AcrylicBorder = Color3.fromRGB(80, 10, 110),
+    AcrylicMain = Color3.fromRGB(7, 3, 11),
+    AcrylicBorder = Color3.fromRGB(70, 10, 100),
     AcrylicGradient = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(8, 4, 12)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(18, 6, 26)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 4, 12)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(7, 3, 11)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 5, 23)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(7, 3, 11)),
     }),
     AcrylicNoise = 0.8,
-    TitleBarLine = Color3.fromRGB(100, 10, 145),
+    TitleBarLine = Color3.fromRGB(90, 10, 130),
 
-    Tab = Color3.fromRGB(18, 8, 26),
-    Element = Color3.fromRGB(14, 6, 20),
-    ElementBorder = Color3.fromRGB(80, 8, 120),
-    InElementBorder = Color3.fromRGB(125, 15, 180),
+    Tab = Color3.fromRGB(16, 7, 24),
+    Element = Color3.fromRGB(13, 5, 19),
+    ElementBorder = Color3.fromRGB(72, 8, 108),
+    InElementBorder = Color3.fromRGB(110, 14, 160),
     ElementTransparency = 0.85,
 
-    ToggleSlider = Color3.fromRGB(38, 15, 58),
-    ToggleToggled = Color3.fromRGB(165, 20, 220),
-    SliderRail = Color3.fromRGB(38, 15, 58),
+    ToggleSlider = Color3.fromRGB(34, 13, 52),
+    ToggleToggled = Color3.fromRGB(135, 18, 195),
+    SliderRail = Color3.fromRGB(34, 13, 52),
 
-    DropdownFrame = Color3.fromRGB(12, 6, 18),
+    DropdownFrame = Color3.fromRGB(11, 5, 17),
     DropdownHolder = Color3.fromRGB(6, 3, 10),
-    DropdownBorder = Color3.fromRGB(80, 8, 120),
-    DropdownOption = Color3.fromRGB(18, 8, 26),
-    Keybind = Color3.fromRGB(18, 8, 26),
+    DropdownBorder = Color3.fromRGB(72, 8, 108),
+    DropdownOption = Color3.fromRGB(16, 7, 24),
+    Keybind = Color3.fromRGB(16, 7, 24),
 
-    Input = Color3.fromRGB(12, 6, 18),
+    Input = Color3.fromRGB(11, 5, 17),
     InputFocused = Color3.fromRGB(6, 3, 10),
-    InputIndicator = Color3.fromRGB(125, 15, 180),
+    InputIndicator = Color3.fromRGB(110, 14, 160),
 
-    Dialog = Color3.fromRGB(12, 6, 18),
+    Dialog = Color3.fromRGB(11, 5, 17),
     DialogHolder = Color3.fromRGB(6, 3, 10),
-    DialogHolderLine = Color3.fromRGB(80, 8, 120),
-    DialogButton = Color3.fromRGB(14, 6, 20),
-    DialogButtonBorder = Color3.fromRGB(80, 8, 120),
-    DialogBorder = Color3.fromRGB(80, 8, 120),
-    DialogInput = Color3.fromRGB(12, 6, 18),
-    DialogInputLine = Color3.fromRGB(125, 15, 180),
+    DialogHolderLine = Color3.fromRGB(72, 8, 108),
+    DialogButton = Color3.fromRGB(13, 5, 19),
+    DialogButtonBorder = Color3.fromRGB(72, 8, 108),
+    DialogBorder = Color3.fromRGB(72, 8, 108),
+    DialogInput = Color3.fromRGB(11, 5, 17),
+    DialogInputLine = Color3.fromRGB(110, 14, 160),
 
-    Text = Color3.fromRGB(244, 235, 250),
-    SubText = Color3.fromRGB(185, 150, 215),
-    Hover = Color3.fromRGB(48, 20, 68),
+    Text = Color3.fromRGB(240, 230, 248),
+    SubText = Color3.fromRGB(175, 140, 205),
+    Hover = Color3.fromRGB(42, 17, 62),
     HoverChange = 0.05,
 
     ShineEnabled = false,
     StrokeShine = false,
-    StrokeDark = Color3.fromRGB(40, 5, 60),
+    StrokeDark = Color3.fromRGB(36, 5, 54),
 
     ButtonGradient = {
         Background = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 8, 70)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 4, 30)),
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(36, 8, 64)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(13, 4, 27)),
         }),
         Stroke = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 10, 145)),
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 10, 135)),
             ColorSequenceKeypoint.new(0.5, Color3.fromRGB(220, 20, 60)),
             ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 215, 0)),
         }),
@@ -92,20 +94,26 @@ Theme.BuildDesign = function(Window)
     local rand = math.random
     local WHITE = Color3.new(1, 1, 1)
 
+    -- Paleta (más inclinada a violetas oscuros)
+    local DEEP = Color3.fromRGB(70, 10, 115)
+    local VIOLET = Color3.fromRGB(125, 20, 200)
+    local LAV = Color3.fromRGB(190, 150, 255)
+
     local alive = true
-    local S = { t = 0, surge = 0, flashColor = Theme.GlowColor, tglitch = 0 }
+    local S = { t = 0, surge = 0, flashColor = Theme.GlowColor, tglitch = 0, wave = 1, px = 0, py = 0 }
 
     local rootCorner = Root:FindFirstChildOfClass("UICorner")
     local cornerR = rootCorner and rootCorner.CornerRadius or UDim.new(0, 8)
 
-    local powerColors = { Theme.GlowColor, Theme.Crimson, Theme.Yellow, Color3.fromRGB(200, 190, 255) }
+    local powerColors = { Theme.GlowColor, VIOLET, Theme.Crimson, LAV, Theme.Yellow }
 
     local function pickColor()
         local r = rand()
-        if r < 0.38 then return Theme.Yellow
-        elseif r < 0.68 then return Theme.GlowColor
-        elseif r < 0.90 then return Theme.Crimson
-        else return Theme.IconColor end
+        if r < 0.30 then return Theme.GlowColor
+        elseif r < 0.52 then return VIOLET
+        elseif r < 0.62 then return LAV
+        elseif r < 0.82 then return Theme.Crimson
+        else return Theme.Yellow end
     end
 
     local function round(inst, radius)
@@ -126,7 +134,7 @@ Theme.BuildDesign = function(Window)
     end
 
     ---------------------------------------------------------------------
-    -- 1) AMBIENT LIGHT EXTERIOR (sangrado de luz fuera del Hub)
+    -- 1) LUZ AMBIENTAL EXTERIOR
     ---------------------------------------------------------------------
     local ambientLight = Instance.new("ImageLabel")
     ambientLight.Name = "AFO_AmbientLight"
@@ -141,13 +149,16 @@ Theme.BuildDesign = function(Window)
     local ambientGradient = Instance.new("UIGradient")
     ambientGradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Theme.Crimson),
-        ColorSequenceKeypoint.new(0.5, Theme.GlowColor),
-        ColorSequenceKeypoint.new(1, Theme.Yellow),
+        ColorSequenceKeypoint.new(0.3, VIOLET),
+        ColorSequenceKeypoint.new(0.55, DEEP),
+        ColorSequenceKeypoint.new(0.75, Color3.fromRGB(190, 140, 10)),
+        ColorSequenceKeypoint.new(0.9, VIOLET),
+        ColorSequenceKeypoint.new(1, Theme.Crimson),
     })
     ambientGradient.Parent = ambientLight
 
     ---------------------------------------------------------------------
-    -- 2) CAPAS INTERNAS (fondo, niebla, viñeta, luz, rayos, partículas)
+    -- 2) CAPAS INTERNAS
     ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
@@ -166,25 +177,25 @@ Theme.BuildDesign = function(Window)
     banner.ZIndex = 1
     banner.Parent = art
 
-    local fogLayer = newFrame(art, 2)
-    fogLayer.Name = "Fog"
-
     local tint = Instance.new("Frame")
     tint.BackgroundColor3 = Theme.DarkMatter
-    tint.BackgroundTransparency = 0.5
+    tint.BackgroundTransparency = 0.45
     tint.BorderSizePixel = 0
     tint.Size = UDim2.fromScale(1, 1)
-    tint.ZIndex = 3
+    tint.ZIndex = 2
     tint.Parent = art
 
-    -- Viñeta de oclusión: los bordes se hunden en oscuridad
+    local fogBack = newFrame(art, 3)
+    local fogMid = newFrame(art, 4)
+    local fogFront = newFrame(art, 5)
+
     local function vignette(size, pos, rot)
         local v = Instance.new("Frame")
         v.BackgroundColor3 = Color3.new(0, 0, 0)
         v.BorderSizePixel = 0
         v.Size = size
         v.Position = pos
-        v.ZIndex = 3
+        v.ZIndex = 6
         local g = Instance.new("UIGradient")
         g.Rotation = rot
         g.Transparency = NumberSequence.new({
@@ -199,13 +210,12 @@ Theme.BuildDesign = function(Window)
     vignette(UDim2.fromScale(0.2, 1), UDim2.fromScale(0, 0), 0)
     vignette(UDim2.fromScale(0.2, 1), UDim2.fromScale(0.8, 0), 180)
 
-    -- Bruma baja
     local mist = Instance.new("Frame")
-    mist.BackgroundColor3 = Color3.fromRGB(90, 20, 140)
+    mist.BackgroundColor3 = Color3.fromRGB(80, 16, 130)
     mist.BorderSizePixel = 0
     mist.Size = UDim2.fromScale(1, 0.5)
     mist.Position = UDim2.fromScale(0, 0.5)
-    mist.ZIndex = 3
+    mist.ZIndex = 6
     local mg = Instance.new("UIGradient")
     mg.Rotation = 90
     mg.Transparency = NumberSequence.new({
@@ -220,40 +230,50 @@ Theme.BuildDesign = function(Window)
     flash.BackgroundTransparency = 1
     flash.BorderSizePixel = 0
     flash.Size = UDim2.fromScale(1, 1)
-    flash.ZIndex = 4
+    flash.ZIndex = 7
     flash.Parent = art
 
-    local glowLayer = newFrame(art, 5)
-    glowLayer.Name = "StrikeGlows"
-    local boltLayer = newFrame(art, 6)
+    local glowLayer = newFrame(art, 8)
+    local boltLayer = newFrame(art, 9)
     boltLayer.Name = "AFO_LightningStrikes"
-    local partLayer = newFrame(art, 7)
-    partLayer.Name = "Particles"
+    local partLayer = newFrame(art, 10)
 
-    -- Niebla: nubes que derivan y rotan sin patrón de cruz; se encienden con los rayos
-    local fogColors = {
-        Color3.fromRGB(70, 12, 105), Color3.fromRGB(125, 10, 40), Color3.fromRGB(95, 25, 150),
-        Color3.fromRGB(140, 105, 10), Color3.fromRGB(60, 8, 90), Color3.fromRGB(110, 12, 55),
+    ---------------------------------------------------------------------
+    -- 3) NUBES VOLUMÉTRICAS (3 capas de profundidad + núcleo iluminado + parallax)
+    ---------------------------------------------------------------------
+    local fogSpec = {
+        { parent = fogBack, count = 3, sz = 1.9, tr = 0.60, par = 4, sp = 0.05, rot = 1.5,
+          colors = { Color3.fromRGB(26, 6, 46), Color3.fromRGB(36, 8, 62), Color3.fromRGB(46, 10, 72) } },
+        { parent = fogMid, count = 4, sz = 1.4, tr = 0.66, par = 11, sp = 0.09, rot = 3,
+          colors = { Color3.fromRGB(60, 10, 95), Color3.fromRGB(76, 12, 116), Color3.fromRGB(88, 12, 70), Color3.fromRGB(54, 8, 86) } },
+        { parent = fogFront, count = 3, sz = 1.0, tr = 0.74, par = 24, sp = 0.14, rot = 5,
+          colors = { Color3.fromRGB(96, 24, 150), Color3.fromRGB(110, 28, 170), Color3.fromRGB(80, 14, 120) } },
     }
     local fog = {}
-    for i = 1, #fogColors do
+    local function cloudImg(parent)
         local p = Instance.new("ImageLabel")
         p.BackgroundTransparency = 1
         p.Image = Theme.Assets.CloudDarkness
         p.AnchorPoint = Vector2.new(0.5, 0.5)
-        p.Size = UDim2.fromScale(1.2 + rand() * 0.5, 1.2 + rand() * 0.5)
-        p.ImageColor3 = fogColors[i]
-        p.ImageTransparency = 0.88
-        p.Parent = fogLayer
-        fog[i] = {
-            obj = p, base = fogColors[i], ax = 0.1 + (i - 1) / 5 * 0.8, ay = 0.2 + rand() * 0.6,
-            amp = 0.08 + rand() * 0.1, sp = 0.12 + rand() * 0.15, ph = rand() * 6.28,
-            rs = (rand() - 0.5) * 4, bt = 0.84 + rand() * 0.06, lit = 0,
-        }
+        p.Parent = parent
+        return p
+    end
+    for _, L in ipairs(fogSpec) do
+        for i = 1, L.count do
+            local base = L.colors[(i - 1) % #L.colors + 1]
+            fog[#fog + 1] = {
+                body = cloudImg(L.parent), rim = cloudImg(L.parent),
+                base = base, rimC = base:Lerp(LAV, 0.45),
+                sz = L.sz * (0.85 + rand() * 0.3), par = L.par,
+                ax = (i - 0.5) / L.count + (rand() - 0.5) * 0.15, ay = 0.15 + rand() * 0.7,
+                amp = 0.05 + rand() * 0.08, sp = L.sp * (0.8 + rand() * 0.5), ph = rand() * 6.28,
+                rs = (rand() - 0.5) * L.rot, bt = L.tr, lit = 0, cx = 0.5, cy = 0.5,
+            }
+        end
     end
 
     ---------------------------------------------------------------------
-    -- 3) LUZ DE RAYOS (glow en la escena + derrame de luz sobre toda la GUI)
+    -- 4) LUZ DE RAYOS (glow en escena + derrame sobre toda la GUI)
     ---------------------------------------------------------------------
     local spill = Instance.new("Frame")
     spill.Name = "AFO_LightSpill"
@@ -279,7 +299,7 @@ Theme.BuildDesign = function(Window)
     end
 
     ---------------------------------------------------------------------
-    -- 4) SISTEMA DE PARTÍCULAS (paleta: violeta, carmesí, dorado)
+    -- 5) PARTÍCULAS
     ---------------------------------------------------------------------
     local particles = {}
     local function newParticle(parent)
@@ -339,13 +359,15 @@ Theme.BuildDesign = function(Window)
             p.gravity = 380
             p.life = 0.4 + rand() * 0.6
             p.mode = "spark"
-            paint(p, rand() < 0.5 and Theme.Yellow or pickColor(), 2 + rand() * 2.5)
+            paint(p, rand() < 0.4 and Theme.Yellow or pickColor(), 2 + rand() * 2.5)
         end
     end
 
     ---------------------------------------------------------------------
-    -- 5) RAYOS PROCEDURALES (zigzag fractal, ramas, destello y reencendido)
+    -- 6) RAYOS DE PLASMA (bordes suaves, trazo que se arrastra, ramas y arcos de impacto)
     ---------------------------------------------------------------------
+    local energyGradient -- se define en la sección del borde
+
     local function boltPath(a, b, detail, spread)
         local pts = { a, b }
         for _ = 1, detail do
@@ -368,8 +390,9 @@ Theme.BuildDesign = function(Window)
         S.surge = math.max(S.surge, power)
         S.flashColor = color
         local W = math.max(art.AbsoluteSize.X, 1)
+        local H = math.max(art.AbsoluteSize.Y, 1)
         for _, f in ipairs(fog) do
-            local c = Vector2.new(f.obj.Position.X.Scale * art.AbsoluteSize.X, f.obj.Position.Y.Scale * art.AbsoluteSize.Y)
+            local c = Vector2.new(f.cx * W, f.cy * H)
             local infl = math.clamp(1 - (c - pos).Magnitude / (W * 0.75), 0, 1) ^ 1.4
             f.lit = math.max(f.lit, infl * power)
         end
@@ -393,38 +416,80 @@ Theme.BuildDesign = function(Window)
         local len = (b - a).Magnitude
 
         local container = newFrame(boltLayer, 1)
-        local items = {}
+        local paths = {}
 
-        local function addSegs(pts, scale, full)
-            local layers = {
-                { th = 9 * scale, col = color, tr = 0.62, z = 1 },
-                { th = 4.5 * scale, col = color:Lerp(WHITE, 0.5), tr = 0.25, z = 2 },
-                { th = 1.8 * scale, col = WHITE, tr = 0, z = 3 },
+        local function addPath(pts, scale, full)
+            local path = { pts = pts, scale = scale, layers = {} }
+            local specs = {
+                { th = 20, col = color, base = 0.35, g = { 1, 0.3, 1 } },
+                { th = 7, col = color:Lerp(WHITE, 0.55), base = 0.1, g = { 1, 0, 1 } },
+                { th = 2.2, col = WHITE, base = 0, g = { 0.75, 0, 0.75 } },
             }
-            for _, L in ipairs(layers) do
-                if full or L.z ~= 2 then
+            for si, sp in ipairs(specs) do
+                if full or si ~= 2 then
+                    local layer = { th = sp.th, base = sp.base, frames = {} }
                     for i = 1, #pts - 1 do
-                        local p1, p2 = pts[i], pts[i + 1]
-                        local d = p2 - p1
-                        local m = (p1 + p2) / 2
-                        local s = Instance.new("Frame")
-                        s.BorderSizePixel = 0
-                        s.AnchorPoint = Vector2.new(0.5, 0.5)
-                        s.Position = UDim2.fromOffset(m.X, m.Y)
-                        s.Size = UDim2.fromOffset(d.Magnitude + L.th * 0.5, L.th)
-                        s.Rotation = math.deg(math.atan2(d.Y, d.X))
-                        s.BackgroundColor3 = L.col
-                        s.BackgroundTransparency = L.tr
-                        s.ZIndex = L.z
-                        s.Parent = container
-                        items[#items + 1] = { f = s, base = L.tr }
+                        local f = Instance.new("Frame")
+                        f.BorderSizePixel = 0
+                        f.AnchorPoint = Vector2.new(0.5, 0.5)
+                        f.BackgroundColor3 = sp.col
+                        f.BackgroundTransparency = sp.base
+                        f.ZIndex = si
+                        local g = Instance.new("UIGradient")
+                        g.Rotation = 90
+                        g.Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0, sp.g[1]),
+                            NumberSequenceKeypoint.new(0.5, sp.g[2]),
+                            NumberSequenceKeypoint.new(1, sp.g[3]),
+                        })
+                        g.Parent = f
+                        f.Parent = container
+                        layer.frames[i] = f
+                    end
+                    path.layers[#path.layers + 1] = layer
+                end
+            end
+            paths[#paths + 1] = path
+        end
+
+        local function layout(path, jit)
+            local pts = path.pts
+            local n = #pts
+            local cur = {}
+            for i = 1, n do
+                local p = pts[i]
+                if i > 1 and i < n and jit > 0 then
+                    p = p + Vector2.new((rand() - 0.5) * jit, (rand() - 0.5) * jit)
+                end
+                cur[i] = p
+            end
+            local flick = 0.75 + rand() * 0.5
+            for _, layer in ipairs(path.layers) do
+                for i = 1, n - 1 do
+                    local p1, p2 = cur[i], cur[i + 1]
+                    local d = p2 - p1
+                    local m = (p1 + p2) / 2
+                    local taper = 1.1 - 0.5 * (i / (n - 1))
+                    local f = layer.frames[i]
+                    f.Position = UDim2.fromOffset(m.X, m.Y)
+                    f.Size = UDim2.fromOffset(d.Magnitude + layer.th * 0.4, layer.th * taper * path.scale * flick)
+                    f.Rotation = math.deg(math.atan2(d.Y, d.X))
+                end
+            end
+        end
+
+        local function setFade(fade)
+            for _, path in ipairs(paths) do
+                for _, layer in ipairs(path.layers) do
+                    for _, f in ipairs(layer.frames) do
+                        f.BackgroundTransparency = layer.base + (1 - layer.base) * fade
                     end
                 end
             end
         end
 
-        local pts = boltPath(a, b, 5, len * 0.22)
-        addSegs(pts, 1, true)
+        local pts = boltPath(a, b, 5, len * 0.2)
+        addPath(pts, 1, true)
 
         local dir = (b - a).Unit
         for _ = 1, rand(2, 4) do
@@ -433,32 +498,41 @@ Theme.BuildDesign = function(Window)
             local cs, sn = math.cos(ang), math.sin(ang)
             local d = Vector2.new(dir.X * cs - dir.Y * sn, dir.X * sn + dir.Y * cs)
             local bl = len * (0.12 + rand() * 0.2)
-            addSegs(boltPath(origin, origin + d * bl, 3, bl * 0.3), 0.5, false)
+            addPath(boltPath(origin, origin + d * bl, 3, bl * 0.35), 0.5, false)
+        end
+        -- Arcos de impacto radiales
+        for _ = 1, rand(5, 8) do
+            local ang = rand() * math.pi * 2
+            local l = 25 + rand() * 55
+            addPath(boltPath(b, b + Vector2.new(math.cos(ang), math.sin(ang)) * l, 2, l * 0.45), 0.45, false)
         end
 
-        local function setFade(fade)
-            for _, it in ipairs(items) do
-                it.f.BackgroundTransparency = it.base + (1 - it.base) * fade
-            end
-        end
-
-        -- Luz a lo largo del rayo + impacto
         lightUp(b, color, 1)
         lightUp(pts[math.floor(#pts / 3)], color, 0.6)
         lightUp(pts[math.floor(#pts * 2 / 3)], color, 0.6)
         burst(b, 16, partLayer, 160)
         S.tglitch = 0.25
 
+        -- Onda de energía que recorre el borde desde el lado del impacto
+        local c = Vector2.new(W / 2, H / 2)
+        if energyGradient then
+            energyGradient.Rotation = math.deg(math.atan2(c.Y - b.Y, c.X - b.X))
+            energyGradient.Color = ColorSequence.new(WHITE:Lerp(color, 0.45))
+        end
+        S.wave = 0
+
         task.spawn(function()
-            for _, fade in ipairs({ 0, 0.7, 0.05, 0.85, 0, 0.45 }) do
+            for _, fade in ipairs({ 0, 0.6, 0.05, 0.8, 0, 0.5, 0.15 }) do
+                for _, path in ipairs(paths) do layout(path, 7) end
                 setFade(fade)
                 if fade < 0.1 then
                     S.surge = 1
                     lightUp(b, color, 0.55)
                 end
-                task.wait(0.035 + rand() * 0.03)
+                task.wait(0.03 + rand() * 0.035)
             end
             for i = 1, 10 do
+                for _, path in ipairs(paths) do layout(path, 4) end
                 setFade(i / 10)
                 task.wait(0.03)
             end
@@ -479,7 +553,7 @@ Theme.BuildDesign = function(Window)
     end)
 
     ---------------------------------------------------------------------
-    -- 6) BORDE DE ENERGÍA VIVA (colores que se funden, respira y se dispara)
+    -- 7) BORDE DE ENERGÍA (crepitante, con onda de impacto)
     ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -490,11 +564,12 @@ Theme.BuildDesign = function(Window)
     local strokeGradient = stroke:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient")
     strokeGradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Theme.Crimson),
-        ColorSequenceKeypoint.new(0.22, Theme.GlowColor),
-        ColorSequenceKeypoint.new(0.45, Theme.Yellow),
-        ColorSequenceKeypoint.new(0.52, Color3.fromRGB(255, 245, 210)),
+        ColorSequenceKeypoint.new(0.18, DEEP),
+        ColorSequenceKeypoint.new(0.36, VIOLET),
+        ColorSequenceKeypoint.new(0.52, DEEP),
         ColorSequenceKeypoint.new(0.6, Theme.Yellow),
-        ColorSequenceKeypoint.new(0.78, Theme.GlowColor),
+        ColorSequenceKeypoint.new(0.67, VIOLET),
+        ColorSequenceKeypoint.new(0.84, DEEP),
         ColorSequenceKeypoint.new(1, Theme.Crimson),
     })
     strokeGradient.Parent = stroke
@@ -516,14 +591,37 @@ Theme.BuildDesign = function(Window)
     haloStroke.Parent = halo
     local haloGradient = Instance.new("UIGradient")
     haloGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.Yellow),
+        ColorSequenceKeypoint.new(0, DEEP),
         ColorSequenceKeypoint.new(0.33, Theme.Crimson),
-        ColorSequenceKeypoint.new(0.66, Theme.GlowColor),
-        ColorSequenceKeypoint.new(1, Theme.Yellow),
+        ColorSequenceKeypoint.new(0.66, VIOLET),
+        ColorSequenceKeypoint.new(1, DEEP),
     })
     haloGradient.Parent = haloStroke
 
-    -- Orbes de energía en las esquinas
+    local energyEdge = Instance.new("Frame")
+    energyEdge.Name = "AFO_EnergyEdge"
+    energyEdge.BackgroundTransparency = 1
+    energyEdge.Size = UDim2.fromScale(1, 1)
+    energyEdge.ZIndex = 56
+    energyEdge.Parent = Root
+    round(energyEdge, cornerR)
+    local energyStroke = Instance.new("UIStroke")
+    energyStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    energyStroke.Color = WHITE
+    energyStroke.Thickness = 3
+    energyStroke.Transparency = 1
+    energyStroke.Parent = energyEdge
+    energyGradient = Instance.new("UIGradient")
+    energyGradient.Color = ColorSequence.new(WHITE)
+    energyGradient.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.42, 1),
+        NumberSequenceKeypoint.new(0.5, 0),
+        NumberSequenceKeypoint.new(0.58, 1),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    energyGradient.Parent = energyStroke
+
     local orbs = {}
     local corners = { Vector2.new(0, 0), Vector2.new(1, 0), Vector2.new(0, 1), Vector2.new(1, 1) }
     for i, c in ipairs(corners) do
@@ -548,83 +646,171 @@ Theme.BuildDesign = function(Window)
     end
 
     ---------------------------------------------------------------------
-    -- 7) TÍTULO, NOMBRE Y TEXTOS
+    -- 8) TÍTULO (letras justificadas), BADGE DE VERSIÓN Y TARJETA DE USUARIO
     ---------------------------------------------------------------------
-    local TITLE_RICH = 'All For One <font color="rgb(220,20,60)">(2.0)</font>'
-    local TITLE_PLAIN = "All For One (2.0)"
-    local titleLabel, ghostA, ghostB, titleGradient, titleStroke
-    local ghostBase = UDim2.new()
+    local TITLE = "All For One"
+    local TITLE_BASE = Color3.fromRGB(232, 220, 250)
+    local titleLabel, titleTarget, pill
+    local letters = {}
     local titleFX = newFrame(Root, 60)
     titleFX.Name = "AFO_TitleFX"
+    local badgeLayer = newFrame(Root, 62)
+    badgeLayer.Name = "AFO_Badge"
 
-    local function isTitleText(txt)
-        local l = txt:lower()
-        return l:find("all for one", 1, true) or l:find("todo para uno", 1, true)
+    local function findSideBar()
+        for _, obj in ipairs(Root:GetDescendants()) do
+            if obj:IsA("TextBox") then
+                local ph = obj.PlaceholderText:lower()
+                if ph:find("search", 1, true) or ph:find("buscar", 1, true) then
+                    local bar = obj.Parent
+                    while bar and bar ~= Root and bar:IsA("GuiObject") and bar.AbsoluteSize.X < 100 do
+                        bar = bar.Parent
+                    end
+                    if bar and bar ~= Root and bar:IsA("GuiObject") then return bar end
+                end
+            end
+        end
+    end
+
+    local function measure(size)
+        local ws, sum = {}, 0
+        for i = 1, #TITLE do
+            local ch = TITLE:sub(i, i)
+            local w
+            if ch == " " then
+                w = size * 0.32
+            else
+                w = TextService:GetTextSize(ch, size, Enum.Font.GothamBlack, Vector2.new(1000, 1000)).X
+            end
+            ws[i] = w
+            sum = sum + w
+        end
+        return ws, sum
     end
 
     local function setupTitle(label)
         label:SetAttribute("AFO", true)
-        label.RichText = true
-        label.Font = Enum.Font.GothamBlack
-        label.TextSize = 20
-        label.TextColor3 = WHITE
-        label.TextWrapped = false
-        label.TextTruncate = Enum.TextTruncate.None
-        label.AutomaticSize = Enum.AutomaticSize.X
-        label.Text = TITLE_RICH
+        local bar = findSideBar()
+        local target = bar and bar.AbsoluteSize.X or math.clamp(Root.AbsoluteSize.X * 0.25, 150, 240)
 
-        local function ghost(color)
-            local g = label:Clone()
-            for _, c in ipairs(g:GetChildren()) do
-                if c:IsA("UIGradient") or c:IsA("UIStroke") then c:Destroy() end
-            end
-            g:SetAttribute("AFO", true)
-            g.RichText = false
-            g.Text = TITLE_PLAIN
-            g.TextColor3 = color
-            g.TextTransparency = 1
-            g.ZIndex = label.ZIndex - 1
-            g.Parent = label.Parent
-            return g
+        label.AutomaticSize = Enum.AutomaticSize.None
+        label.RichText = false
+        label.Text = TITLE
+        label.TextTransparency = 1
+        label.TextStrokeTransparency = 1
+        local h = math.max(label.AbsoluteSize.Y, 30)
+        label.Size = UDim2.fromOffset(target, h)
+        if bar then
+            local dx = bar.AbsolutePosition.X - label.AbsolutePosition.X
+            if math.abs(dx) > 1 then label.Position = label.Position + UDim2.fromOffset(dx, 0) end
         end
-        ghostA = ghost(Theme.Crimson)
-        ghostB = ghost(Theme.GlowColor)
-        ghostBase = label.Position
+        titleTarget = target
 
-        titleGradient = Instance.new("UIGradient")
-        titleGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(215, 195, 245)),
-            ColorSequenceKeypoint.new(0.5, WHITE),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(215, 195, 245)),
-        })
-        titleGradient.Parent = label
+        local size = 14
+        for s = 30, 14, -1 do
+            local _, sum = measure(s)
+            if sum + (#TITLE - 1) * 1.5 <= target then size = s break end
+        end
+        local ws, sum = measure(size)
+        local extra = math.max(0, (target - sum) / (#TITLE - 1))
 
-        titleStroke = Instance.new("UIStroke")
-        titleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-        titleStroke.Color = Theme.GlowColor
-        titleStroke.Thickness = 1
-        titleStroke.Transparency = 0.55
-        titleStroke.Parent = label
+        local box = newFrame(label, label.ZIndex + 1)
+        box.Name = "AFO_Letters"
+        local x = 0
+        for i = 1, #TITLE do
+            local ch = TITLE:sub(i, i)
+            if ch ~= " " then
+                local l = Instance.new("TextLabel")
+                l:SetAttribute("AFO", true)
+                l.BackgroundTransparency = 1
+                l.Font = Enum.Font.GothamBlack
+                l.TextSize = size
+                l.Text = ch
+                l.TextColor3 = TITLE_BASE
+                l.TextXAlignment = Enum.TextXAlignment.Center
+                l.TextYAlignment = Enum.TextYAlignment.Center
+                l.Size = UDim2.new(0, ws[i] + 2, 1, 0)
+                l.Position = UDim2.fromOffset(x, 0)
+                local st = Instance.new("UIStroke")
+                st.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+                st.Color = Color3.fromRGB(50, 6, 85)
+                st.Thickness = 1.3
+                st.Transparency = 0.25
+                st.Parent = l
+                l.Parent = box
+                letters[#letters + 1] = { l = l, x = x, u = (x + ws[i] / 2) / target }
+            end
+            x = x + ws[i] + extra
+        end
 
         label:GetPropertyChangedSignal("Text"):Connect(function()
-            if label.Text ~= TITLE_RICH then label.Text = TITLE_RICH end
+            if label.Text ~= TITLE then label.Text = TITLE end
         end)
         titleLabel = label
     end
 
-    local function prefixName(l)
-        if l:GetAttribute("AFO_Name") then return end
-        l:SetAttribute("AFO_Name", true)
-        l.Text = "@" .. lp.Name
-        l:GetPropertyChangedSignal("Text"):Connect(function()
-            if l.Text == lp.Name then l.Text = "@" .. lp.Name end
+    local function setupBadge(lbl)
+        lbl:SetAttribute("AFO", true)
+        local p = lbl
+        local par = lbl.Parent
+        if lbl.BackgroundTransparency >= 1 and par and par:IsA("GuiObject") and par ~= Root and par.BackgroundTransparency < 1 then
+            p = par
+        end
+        p:SetAttribute("AFO", true)
+        local sz = p.AbsoluteSize
+        p.AnchorPoint = Vector2.new(0, 0)
+        p.Size = UDim2.fromOffset(math.max(sz.X, 34), math.max(sz.Y, 18))
+        p.BackgroundColor3 = Theme.Crimson
+        if lbl ~= p and lbl.BackgroundTransparency < 1 then lbl.BackgroundColor3 = Theme.Crimson end
+        lbl.TextColor3 = WHITE
+        for _, d in ipairs(p:GetDescendants()) do
+            if d:IsA("UIStroke") then d.Color = Theme.Crimson end
+            if d:IsA("GuiObject") then d.ZIndex = 63 end
+        end
+        p.ZIndex = 62
+        p.Parent = badgeLayer
+        pill = p
+    end
+
+    -- Tarjeta de usuario: arriba nombre visible, abajo @usuario. Oculto: Villain / @******
+    local userTop, userBottom
+    local userHidden = false
+    local function renderUser()
+        if not (userTop and userBottom) then return end
+        local topT = userHidden and "Villain" or lp.DisplayName
+        local botT = userHidden and "@******" or ("@" .. lp.Name)
+        if userTop.Text ~= topT then userTop.Text = topT end
+        if userBottom.Text ~= botT then userBottom.Text = botT end
+    end
+
+    local function setupUser(top, bottom)
+        userTop, userBottom = top, bottom
+        top:SetAttribute("AFO", true)
+        bottom:SetAttribute("AFO", true)
+        top.TextTruncate = Enum.TextTruncate.AtEnd
+        local tt = top.Text
+        local raw = (bottom.Text:gsub("^@", ""))
+        userHidden = (tt == "Anonymous" or tt == "Villain" or raw:match("^%*+$") ~= nil)
+        top:GetPropertyChangedSignal("Text"):Connect(function()
+            local tx = top.Text
+            if tx == "Villain" then return end
+            userHidden = (tx == "Anonymous")
+            renderUser()
         end)
+        bottom:GetPropertyChangedSignal("Text"):Connect(function()
+            local r = (bottom.Text:gsub("^@", ""))
+            if r:match("^%*+$") then userHidden = true
+            elseif r == lp.Name then userHidden = false end
+            renderUser()
+        end)
+        renderUser()
     end
 
     local function applyTexts()
         if not alive or not Root.Parent then return end
         local rootY = Root.AbsolutePosition.Y
-        local candidates, nameLabels = {}, {}
+        local titleCands, badgeCands = {}, {}
+        local bottomCand
 
         for _, obj in ipairs(Root:GetDescendants()) do
             if obj:IsA("Frame") and obj.Size == UDim2.new(0, 6, 0, 6) then
@@ -632,36 +818,32 @@ Theme.BuildDesign = function(Window)
             end
             if obj:IsA("TextLabel") and not obj:GetAttribute("AFO") then
                 local txt = obj.Text
-                local inTitleBar = obj.AbsolutePosition.Y - rootY < 52
-                if inTitleBar and isTitleText(txt) then
-                    candidates[#candidates + 1] = obj
-                elseif inTitleBar then
-                    local c = obj.TextColor3
-                    if c.G > c.R + 0.15 and c.G > c.B + 0.15 then obj.TextColor3 = Theme.Crimson end
+                local rel = obj.AbsolutePosition.Y - rootY
+                if rel < 52 then
+                    local l = txt:lower()
+                    if l:find("all for one", 1, true) or l:find("todo para uno", 1, true) then
+                        titleCands[#titleCands + 1] = obj
+                    elseif txt:match("^%s*%(?%s*[vV]?%d+%.%d+%s*%)?%s*$") then
+                        badgeCands[#badgeCands + 1] = obj
+                    end
+                elseif not bottomCand and not userTop then
+                    local raw = (txt:gsub("^@", ""))
+                    if raw == lp.Name or raw:match("^%*+$") then bottomCand = obj end
                 end
-                if txt == "Anonymous" and not obj:GetAttribute("AFO_Villain") then
-                    obj:SetAttribute("AFO_Villain", true)
-                    obj.Text = "Villain"
-                    obj.TextSize = 14
-                    obj.Font = Enum.Font.GothamBold
-                    obj:GetPropertyChangedSignal("Text"):Connect(function()
-                        if obj.Text == "Anonymous" then obj.Text = "Villain" end
-                    end)
-                end
-                if txt == lp.Name then nameLabels[#nameLabels + 1] = obj end
             end
         end
 
-        if #candidates > 0 then
+        -- Título
+        if #titleCands > 0 then
             local main = titleLabel
             if not main then
-                main = candidates[1]
-                for _, c in ipairs(candidates) do
+                main = titleCands[1]
+                for _, c in ipairs(titleCands) do
                     if c.Text:lower():find("all for one", 1, true) then main = c break end
                 end
                 setupTitle(main)
             end
-            for _, c in ipairs(candidates) do
+            for _, c in ipairs(titleCands) do
                 if c ~= main then
                     c.Visible = false
                     c:SetAttribute("AFO", true)
@@ -669,16 +851,23 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        if #nameLabels > 0 then
-            local list = nameLabels
-            if lp.DisplayName == lp.Name then
-                local target = nameLabels[1]
-                for _, l in ipairs(nameLabels) do
-                    if l.AbsolutePosition.Y > target.AbsolutePosition.Y then target = l end
+        -- Badge de versión (el "2.0")
+        if not pill and #badgeCands > 0 then setupBadge(badgeCands[1]) end
+
+        -- Tarjeta de usuario
+        if bottomCand and not userTop then
+            local top
+            local bestDy = math.huge
+            for _, obj in ipairs(Root:GetDescendants()) do
+                if obj:IsA("TextLabel") and obj ~= bottomCand and not obj:GetAttribute("AFO") then
+                    local dy = bottomCand.AbsolutePosition.Y - obj.AbsolutePosition.Y
+                    local dx = math.abs(bottomCand.AbsolutePosition.X - obj.AbsolutePosition.X)
+                    if dy > 0 and dy < 40 and dx < 40 and dy < bestDy then
+                        top, bestDy = obj, dy
+                    end
                 end
-                list = { target }
             end
-            for _, l in ipairs(list) do prefixName(l) end
+            if top then setupUser(top, bottomCand) end
         end
     end
 
@@ -689,7 +878,9 @@ Theme.BuildDesign = function(Window)
         applyTexts()
     end)
     local pending = false
-    Root.DescendantAdded:Connect(function()
+    Root.DescendantAdded:Connect(function(d)
+        if not (d:IsA("TextLabel") or d:IsA("TextBox")) then return end
+        if d:IsDescendantOf(art) or d:IsDescendantOf(titleFX) or d:IsDescendantOf(spill) then return end
         if pending then return end
         pending = true
         task.delay(0.3, function()
@@ -699,7 +890,7 @@ Theme.BuildDesign = function(Window)
     end)
 
     ---------------------------------------------------------------------
-    -- 8) BUCLE PRINCIPAL
+    -- 9) BUCLE PRINCIPAL
     ---------------------------------------------------------------------
     local hb
     local titleAcc = 0
@@ -716,6 +907,16 @@ Theme.BuildDesign = function(Window)
         S.tglitch = math.max(0, S.tglitch - dt)
         local sg = S.surge
 
+        -- Parallax con el mouse (profundidad de las nubes)
+        local rs = Root.AbsoluteSize
+        local rc = Root.AbsolutePosition + rs / 2
+        local mouse = UserInputService:GetMouseLocation()
+        local tx = math.clamp((mouse.X - rc.X) / math.max(rs.X, 1), -1, 1)
+        local ty = math.clamp((mouse.Y - rc.Y) / math.max(rs.Y, 1), -1, 1)
+        local k = math.min(1, dt * 3)
+        S.px = S.px + (tx - S.px) * k
+        S.py = S.py + (ty - S.py) * k
+
         -- Luz ambiental exterior
         ambientGradient.Rotation = (t * 30) % 360
         ambientLight.ImageTransparency = math.clamp(0.42 + math.sin(t * 2) * 0.12 - sg * 0.3, 0, 1)
@@ -724,22 +925,33 @@ Theme.BuildDesign = function(Window)
         ambientLight.Size = UDim2.new(1, grow * 2, 1, grow * 2)
         ambientLight.Position = UDim2.new(0, -grow, 0, -grow)
 
-        -- Flash y bruma
         flash.BackgroundColor3 = S.flashColor
         flash.BackgroundTransparency = 1 - sg * 0.16
-        mist.BackgroundColor3 = Color3.fromRGB(90, 20, 140):Lerp(S.flashColor, sg * 0.5)
+        mist.BackgroundColor3 = Color3.fromRGB(80, 16, 130):Lerp(S.flashColor, sg * 0.5)
         mist.BackgroundTransparency = 0.08 + math.sin(t * 0.6) * 0.06 - sg * 0.08
 
-        -- Niebla
+        -- Nubes volumétricas
         for _, f in ipairs(fog) do
             f.lit = f.lit * math.exp(-dt * 3.2)
-            f.obj.Position = UDim2.fromScale(
-                f.ax + math.sin(t * f.sp + f.ph) * f.amp,
-                f.ay + math.cos(t * f.sp * 0.8 + f.ph) * f.amp * 0.7
-            )
-            f.obj.Rotation = (t * f.rs) % 360
-            f.obj.ImageTransparency = math.clamp(f.bt + math.sin(t * 0.4 + f.ph) * 0.03 - f.lit * 0.5, 0.2, 1)
-            f.obj.ImageColor3 = f.base:Lerp(S.flashColor, math.clamp(f.lit, 0, 1) * 0.85)
+            local x = f.ax + math.sin(t * f.sp + f.ph) * f.amp
+            local y = f.ay + math.cos(t * f.sp * 0.8 + f.ph) * f.amp * 0.7
+            f.cx, f.cy = x, y
+            local bil = 1 + 0.04 * math.sin(t * 0.3 + f.ph)
+            local L = math.clamp(f.lit, 0, 1)
+            local ox, oy = S.px * f.par, S.py * f.par
+            local rot = (t * f.rs) % 360
+
+            f.body.Position = UDim2.new(x, ox, y, oy)
+            f.body.Size = UDim2.fromScale(f.sz * bil, f.sz * bil)
+            f.body.Rotation = rot
+            f.body.ImageTransparency = math.clamp(f.bt + math.sin(t * 0.4 + f.ph) * 0.03 - L * 0.35, 0.15, 1)
+            f.body.ImageColor3 = f.base:Lerp(S.flashColor, L * 0.6)
+
+            f.rim.Position = UDim2.new(x - 0.012, ox * 1.25, y - 0.02, oy * 1.25)
+            f.rim.Size = UDim2.fromScale(f.sz * 0.85 * bil, f.sz * 0.85 * bil)
+            f.rim.Rotation = rot + 8
+            f.rim.ImageTransparency = math.clamp(f.bt + 0.1 - L * 0.5, 0.1, 1)
+            f.rim.ImageColor3 = f.rimC:Lerp(S.flashColor, L * 0.9)
         end
 
         -- Glows de rayos
@@ -754,33 +966,48 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Borde vivo
+        -- Borde: crepita (no lineal), con onda de energía en el impacto
         local noise = math.noise(t * 1.3, 0, 0)
-        stroke.Thickness = 2.2 + math.abs(noise) * 2 + math.sin(t * 2.5) * 0.6 + sg * 5
-        strokeGradient.Rotation = (t * (45 + sg * 400)) % 360
-        haloStroke.Thickness = 5 + math.abs(math.noise(t * 0.9, 3, 0)) * 5 + sg * 14
-        haloStroke.Transparency = math.clamp(0.68 - sg * 0.45 + math.sin(t * 1.7) * 0.06, 0, 1)
-        haloGradient.Rotation = (-t * (30 + sg * 250)) % 360
+        local crack = sg * sg
+        stroke.Thickness = 2.2 + math.abs(noise) * 2 + math.sin(t * 2.5) * 0.6 + crack * (1.5 + rand() * 3.5)
+        strokeGradient.Rotation = (t * (45 + sg * 250)) % 360
+        haloStroke.Thickness = 5 + math.abs(math.noise(t * 0.9, 3, 0)) * 5 + crack * rand() * 10
+        haloStroke.Transparency = math.clamp(0.68 - sg * 0.4 + math.sin(t * 1.7) * 0.06 + (rand() - 0.5) * crack * 0.2, 0, 1)
+        haloGradient.Rotation = (-t * (30 + sg * 200)) % 360
+
+        if S.wave < 1 then
+            S.wave = math.min(1, S.wave + dt * 1.7)
+            energyGradient.Offset = Vector2.new(-1 + 2 * S.wave, 0)
+            energyStroke.Thickness = 2.5 + rand() * 4
+            energyStroke.Transparency = 0.05 + rand() * 0.25
+        else
+            energyStroke.Transparency = 1
+        end
+
         for _, o in ipairs(orbs) do
             local s = 6 + math.sin(t * 3 + o.ph) * 1.5 + sg * 9
             o.o.Size = UDim2.fromOffset(s, s)
         end
 
-        -- Título
-        if titleLabel and titleLabel.Parent then
-            titleGradient.Offset = Vector2.new(((t * 0.35) % 2) - 1, 0)
-            titleStroke.Thickness = 1 + sg * 1.5
-            titleStroke.Color = Theme.GlowColor:Lerp(S.flashColor, sg)
-
-            if S.tglitch <= 0 and rand() < 0.004 then S.tglitch = 0.12 end
+        -- Título: barrido de luz, glitch por letra, emisor de chispas
+        if titleLabel and titleLabel.Parent and #letters > 0 then
+            local sweep = (t * 0.5) % 1.6 - 0.3
             local gl = S.tglitch > 0
-            local off = gl and (1 + sg * 3) or 0
-            ghostA.Position = ghostBase + UDim2.fromOffset(-off - 1, 0)
-            ghostB.Position = ghostBase + UDim2.fromOffset(off + 1, 0)
-            ghostA.TextTransparency = gl and (0.35 + rand() * 0.4) or 1
-            ghostB.TextTransparency = gl and (0.35 + rand() * 0.4) or 1
+            if not gl and rand() < 0.004 then S.tglitch = 0.12 end
+            for _, L in ipairs(letters) do
+                local kk = math.clamp(1 - math.abs(L.u - sweep) * 4.5, 0, 1)
+                local c = TITLE_BASE:Lerp(Color3.fromRGB(255, 225, 190), kk):Lerp(S.flashColor, sg * 0.75)
+                if gl then
+                    L.l.Position = UDim2.new(0, L.x + rand(-2, 2), 0, rand(-2, 2))
+                    if rand() < 0.35 then c = (rand() < 0.5) and Theme.Crimson or VIOLET end
+                    L.dirty = true
+                elseif L.dirty then
+                    L.l.Position = UDim2.fromOffset(L.x, 0)
+                    L.dirty = false
+                end
+                L.l.TextColor3 = c
+            end
 
-            -- Emisor de chispas sobre el título
             titleAcc = titleAcc + dt * 16
             local rp, ap = Root.AbsolutePosition, titleLabel.AbsolutePosition
             local sz = titleLabel.AbsoluteSize
@@ -799,6 +1026,17 @@ Theme.BuildDesign = function(Window)
                     paint(p, pickColor(), 1.5 + rand() * 1.8)
                 end
             end
+        end
+
+        -- Badge de versión: a la derecha del título, sin solaparse con los controles
+        if pill and pill.Parent == badgeLayer and titleLabel and titleLabel.Parent then
+            local rp = Root.AbsolutePosition
+            local ap, asz = titleLabel.AbsolutePosition, titleLabel.AbsoluteSize
+            pill.Position = UDim2.fromOffset(
+                (ap.X - rp.X) + (titleTarget or asz.X) + 10,
+                (ap.Y - rp.Y) + asz.Y / 2 - pill.AbsoluteSize.Y / 2
+            )
+            pill.BackgroundColor3 = Theme.Crimson:Lerp(Color3.fromRGB(255, 80, 110), math.clamp(sg * 0.8 + 0.08 * math.sin(t * 3), 0, 1))
         end
 
         -- Partículas
