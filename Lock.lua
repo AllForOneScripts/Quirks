@@ -640,19 +640,58 @@ function M.GetLockKey()  return L.lockKey   end
 function M.IsActive()    return L.lockActive end
 function M.GetTarget()   return L.lockedTarget end
 
-function M.IsLockActive()
+-- =========================================================
+-- API SIMPLIFICADA DE LECTURA DE OBJETIVOS (NUEVA)
+-- =========================================================
+
+-- Retorna 'true' si el lock está activo y apuntando a un jugador válido.
+function M.HasTarget()
     return L.lockActive == true
         and L.lockedTarget ~= nil
         and isTargetValidForLock(L.lockedTarget)
 end
 
+-- Obtiene el jugador objetivo (Player) de forma segura. Retorna nil si no hay.
+function M.GetTargetPlayer()
+    if M.HasTarget() then
+        return L.lockedTarget
+    end
+    return nil
+end
+
+-- Obtiene el modelo (Character) del objetivo. Retorna nil si no hay.
+function M.GetTargetCharacter()
+    local target = M.GetTargetPlayer()
+    if target then
+        return target.Character
+    end
+    return nil
+end
+
+-- Obtiene el HumanoidRootPart del objetivo. Retorna nil si no hay.
+function M.GetTargetRootPart()
+    local char = M.GetTargetCharacter()
+    if char then
+        return char:FindFirstChild("HumanoidRootPart")
+    end
+    return nil
+end
+
+-- =========================================================
+-- MÉTODOS DE COMPATIBILIDAD (LEGACY)
+-- =========================================================
+
+function M.IsLockActive()
+    return M.HasTarget()
+end
+
 function M.GetTargetInfo()
-    if not M.IsLockActive() then return nil end
+    if not M.HasTarget() then return nil end
     return L.lockedTarget
 end
 
 function M.GetTargetHealth()
-    if not M.IsLockActive() then return 0, 0 end
+    if not M.HasTarget() then return 0, 0 end
     local char = L.lockedTarget.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return 0, 0 end
@@ -660,11 +699,10 @@ function M.GetTargetHealth()
 end
 
 function M.GetTargetDistance()
-    if not M.IsLockActive() then return nil end
+    if not M.HasTarget() then return nil end
     local myChar = lplr and lplr.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local tChar  = L.lockedTarget.Character
-    local tRoot  = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    local tRoot  = M.GetTargetRootPart()
     if not myRoot or not tRoot then return nil end
     local dist = (myRoot.Position - tRoot.Position).Magnitude
     if isnan(dist) then return nil end
@@ -672,7 +710,7 @@ function M.GetTargetDistance()
 end
 
 function M.GetStatus()
-    local active = M.IsLockActive()
+    local active = M.HasTarget()
     local health, maxHealth = M.GetTargetHealth()
     return {
         lockActive = active,
