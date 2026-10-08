@@ -9,11 +9,6 @@ local function isnan(v)
     return v ~= v
 end
 
-local function safepos(v3)
-    if not v3 then return false end
-    return not (isnan(v3.X) or isnan(v3.Y) or isnan(v3.Z))
-end
-
 local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
 end
@@ -341,7 +336,7 @@ local function destroyLockInfoGui()
 end
 
 local function clearLock()
-    L.avatarRequestId += 1
+    L.avatarRequestId = L.avatarRequestId + 1
     L.lockActive   = false
     L.lockedTarget = nil
     removeLockIcon()
@@ -473,7 +468,6 @@ local function updateExposedCharacterData()
     if not lplr or not lplr.Character then return end
     local char = lplr.Character
 
-    -- Valor booleano: ¿Hay un objetivo activo y válido?
     local activeVal = char:FindFirstChild("AFO_LockActive")
     if not activeVal then
         activeVal = Instance.new("BoolValue")
@@ -481,7 +475,6 @@ local function updateExposedCharacterData()
         activeVal.Parent = char
     end
 
-    -- Valor de objeto: ¿Quién es el objetivo? (Instancia del Jugador)
     local targetVal = char:FindFirstChild("AFO_LockedTarget")
     if not targetVal then
         targetVal = Instance.new("ObjectValue")
@@ -489,10 +482,19 @@ local function updateExposedCharacterData()
         targetVal.Parent = char
     end
 
-    local isValid = L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget)
+    -- Se evita estrictamente que isValid sea 'nil' asegurando que dé 'true' o 'false'
+    local isValid = false
+    if L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget) then
+        isValid = true
+    end
 
     activeVal.Value = isValid
-    targetVal.Value = isValid and L.lockedTarget or nil
+    
+    if isValid then
+        targetVal.Value = L.lockedTarget
+    else
+        targetVal.Value = nil
+    end
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -530,13 +532,13 @@ local function startLockSystem()
         updateLockInfoGui()
         updateLockCamera()
         updateLockHighlight()
-        updateExposedCharacterData() -- Se mantiene actualizado el sistema de monitoreo en tiempo real
+        updateExposedCharacterData()
     end)
 end
 
 local function stopLockSystem()
     L.systemEnabled = false
-    L.avatarRequestId += 1
+    L.avatarRequestId = L.avatarRequestId + 1
     if L.lockConn       then L.lockConn:Disconnect();       L.lockConn       = nil end
     if L.lockRenderConn then L.lockRenderConn:Disconnect(); L.lockRenderConn = nil end
     clearLock()
