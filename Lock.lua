@@ -9,6 +9,11 @@ local function isnan(v)
     return v ~= v
 end
 
+local function safepos(v3)
+    if not v3 then return false end
+    return not (isnan(v3.X) or isnan(v3.Y) or isnan(v3.Z))
+end
+
 local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
 end
@@ -53,7 +58,7 @@ local LOCK_ICON_ID = "rbxassetid://82817965256191"
 
 local L = {
     lockKey        = Enum.KeyCode.X,
-    -- Estado del módulo; distinto de tener un objetivo seleccionado.
+    -- Estado del módulo; es distinto de tener un objetivo seleccionado.
     systemEnabled  = false,
     lockActive     = false,
     lockedTarget   = nil,
@@ -71,6 +76,12 @@ local L = {
     lockRenderConn = nil,
 
     lockCameraLerp = 0.18,
+
+    -- Slots reservados para compatibilidad con la API previa.
+    -- Fly puede seguir leyendo/escribiendo estos valores sin romper.
+    softBodyRotation   = true,
+    straightLineActive = false,
+    onPreTeleportHeight = nil,
 }
 
 local lplr   = nil
@@ -446,7 +457,6 @@ local function updateLockCamera()
 
     local myChar     = lplr and lplr.Character
     local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
 
     local targetPart = targetChar:FindFirstChild("UpperTorso")
         or targetChar:FindFirstChild("HumanoidRootPart")
@@ -571,11 +581,30 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [10] API PÚBLICA
+-- [10] HOOKS PARA FLY (API pública — stubs de compatibilidad)
+-- Estas funciones mantienen la FORMA de la API previa para que Fly
+-- pueda seguir llamándolas sin romper. Internamente son no-ops.
+-- ──────────────────────────────────────────────────────────────────
+
+-- Hook de rotación (pitch hacia el target) — stub. Devuelve nil
+-- para indicar a Fly que no hay CFrame de lock que aplicar.
+local function getAimCFrame(_rootPosition)
+    return nil
+end
+
+-- Hook anti-orbiting + TP turbo — stub. Devuelve `move` sin modificar.
+local function applyAntiOrbit(_root2, move, _mode, _wD)
+    L.straightLineActive = false
+    return move
+end
+
+-- ──────────────────────────────────────────────────────────────────
+-- [11] API PÚBLICA
 -- ──────────────────────────────────────────────────────────────────
 local M = {}
 
 function M.Start(lplrRef, lockKeyCode)
+    -- Nota: ya no acepta flyModuleRef — Lock es autónomo.
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
     if lockKeyCode then L.lockKey = lockKeyCode end
@@ -655,6 +684,29 @@ function M.GetStatus()
     }
 end
 
+-- OmniBlock (stub — se conserva la forma de la API)
+function M.SetOmniBlockProvider(_fn)
+    -- no-op: la integración con OmniBlock fue removida del núcleo.
+end
+
+function M.IsOmniBlockActive()
+    return false
+end
+
+-- Callbacks (stubs — se conserva la forma de la API)
+function M.SetPreTeleportHeightCallback(fn)
+    -- Se guarda por compatibilidad, pero Lock ya no realiza teleports.
+    if type(fn) == "function" or fn == nil then
+        L.onPreTeleportHeight = fn
+    end
+end
+
+function M.SetSoftBodyRotation(enabled)
+    -- Se guarda por compatibilidad, pero Lock ya no rota el HRP.
+    L.softBodyRotation = (enabled == true or enabled == nil)
+end
+function M.GetSoftBodyRotation() return L.softBodyRotation end
+
 -- GUI
 M.CreateInfoGui = function(parentFrame)
     if L.systemEnabled and L.lockActive and L.lockedTarget then
@@ -664,5 +716,11 @@ end
 M.DestroyInfoGui      = destroyLockInfoGui
 M.BuildHUDLockSection = buildHUDLockSection
 M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
+
+-- Hooks externos (stubs — se conserva la forma de la API)
+M.GetAimCFrame   = getAimCFrame
+M.ApplyAntiOrbit = applyAntiOrbit
+
+function M.IsStraightLineActive() return false end
 
 return M
