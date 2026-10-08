@@ -58,11 +58,9 @@ local LOCK_ICON_ID = "rbxassetid://82817965256191"
 
 local L = {
     lockKey        = Enum.KeyCode.X,
-    -- Estado del módulo; es distinto de tener un objetivo seleccionado.
     systemEnabled  = false,
     lockActive     = false,
     lockedTarget   = nil,
-    -- Invalida cargas de avatar que terminan después de apagar/cambiar objetivo.
     avatarRequestId = 0,
 
     lockIconGui    = nil,
@@ -76,12 +74,6 @@ local L = {
     lockRenderConn = nil,
 
     lockCameraLerp = 0.18,
-
-    -- Slots reservados para compatibilidad con la API previa.
-    -- Fly puede seguir leyendo/escribiendo estos valores sin romper.
-    softBodyRotation   = true,
-    straightLineActive = false,
-    onPreTeleportHeight = nil,
 }
 
 local lplr   = nil
@@ -203,7 +195,6 @@ local function loadAvatarImage()
             )
         end)
 
-        -- La respuesta solo se aplica si sigue perteneciendo al Lock actual.
         if success and content
             and L.systemEnabled
             and L.lockActive
@@ -217,7 +208,6 @@ local function loadAvatarImage()
 end
 
 local function createLockInfoGui(parentFrame)
-    -- No permitir que la API o una coroutine genere GUI estando apagado.
     if not L.systemEnabled or not L.lockActive or not L.lockedTarget then return end
 
     if L.lockInfoGui then
@@ -472,13 +462,41 @@ local function updateLockCamera()
     elseif worldDist < 20 then lerpFactor = lerpFactor * 0.6 end
     lerpFactor = math.clamp(lerpFactor, 0, 1)
 
-    -- Apuntar al target completo
     local desiredCF = CFrame.new(currentPos, targetPart.Position)
     pcall(function() camera.CFrame = camera.CFrame:Lerp(desiredCF, lerpFactor) end)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [8]  TOGGLE / START / STOP
+-- [8]  EXPOSICIÓN DE DATOS (MONITOREO EXTERNO)
+-- ──────────────────────────────────────────────────────────────────
+local function updateExposedCharacterData()
+    if not lplr or not lplr.Character then return end
+    local char = lplr.Character
+
+    -- Valor booleano: ¿Hay un objetivo activo y válido?
+    local activeVal = char:FindFirstChild("AFO_LockActive")
+    if not activeVal then
+        activeVal = Instance.new("BoolValue")
+        activeVal.Name = "AFO_LockActive"
+        activeVal.Parent = char
+    end
+
+    -- Valor de objeto: ¿Quién es el objetivo? (Instancia del Jugador)
+    local targetVal = char:FindFirstChild("AFO_LockedTarget")
+    if not targetVal then
+        targetVal = Instance.new("ObjectValue")
+        targetVal.Name = "AFO_LockedTarget"
+        targetVal.Parent = char
+    end
+
+    local isValid = L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget)
+
+    activeVal.Value = isValid
+    targetVal.Value = isValid and L.lockedTarget or nil
+end
+
+-- ──────────────────────────────────────────────────────────────────
+-- [9]  TOGGLE / START / STOP
 -- ──────────────────────────────────────────────────────────────────
 local function toggleLock()
     if not L.systemEnabled then return end
@@ -512,11 +530,11 @@ local function startLockSystem()
         updateLockInfoGui()
         updateLockCamera()
         updateLockHighlight()
+        updateExposedCharacterData() -- Se mantiene actualizado el sistema de monitoreo en tiempo real
     end)
 end
 
 local function stopLockSystem()
-    -- Cambiar el estado antes de desconectar: bloquea trabajo ya en cola.
     L.systemEnabled = false
     L.avatarRequestId += 1
     if L.lockConn       then L.lockConn:Disconnect();       L.lockConn       = nil end
@@ -526,10 +544,11 @@ local function stopLockSystem()
         pcall(function() L.lockHighlight:Destroy() end)
         L.lockHighlight = nil
     end
+    updateExposedCharacterData()
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [9]  GUI EMBEBIBLE — sección "LOCK" del HUD externo
+-- [10] GUI EMBEBIBLE — sección "LOCK" del HUD externo
 -- ──────────────────────────────────────────────────────────────────
 local HUD_SECTION_HEIGHT = 38
 
@@ -581,30 +600,11 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
 end
 
 -- ──────────────────────────────────────────────────────────────────
--- [10] HOOKS PARA FLY (API pública — stubs de compatibilidad)
--- Estas funciones mantienen la FORMA de la API previa para que Fly
--- pueda seguir llamándolas sin romper. Internamente son no-ops.
--- ──────────────────────────────────────────────────────────────────
-
--- Hook de rotación (pitch hacia el target) — stub. Devuelve nil
--- para indicar a Fly que no hay CFrame de lock que aplicar.
-local function getAimCFrame(_rootPosition)
-    return nil
-end
-
--- Hook anti-orbiting + TP turbo — stub. Devuelve `move` sin modificar.
-local function applyAntiOrbit(_root2, move, _mode, _wD)
-    L.straightLineActive = false
-    return move
-end
-
--- ──────────────────────────────────────────────────────────────────
 -- [11] API PÚBLICA
 -- ──────────────────────────────────────────────────────────────────
 local M = {}
 
 function M.Start(lplrRef, lockKeyCode)
-    -- Nota: ya no acepta flyModuleRef — Lock es autónomo.
     lplr   = lplrRef or Players.LocalPlayer
     camera = workspace.CurrentCamera
     if lockKeyCode then L.lockKey = lockKeyCode end
@@ -627,7 +627,6 @@ function M.SetLockKey(keyCode)
         L.lockLabels.label.Text = FT.lock_label .. "  [" .. keyCode.Name .. "]"
         L.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
     end
-    -- Estando apagado solo se guarda la tecla; no se crea un listener oculto.
     if not L.systemEnabled then return end
     if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
     L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
@@ -640,58 +639,19 @@ function M.GetLockKey()  return L.lockKey   end
 function M.IsActive()    return L.lockActive end
 function M.GetTarget()   return L.lockedTarget end
 
--- =========================================================
--- API SIMPLIFICADA DE LECTURA DE OBJETIVOS (NUEVA)
--- =========================================================
-
--- Retorna 'true' si el lock está activo y apuntando a un jugador válido.
-function M.HasTarget()
+function M.IsLockActive()
     return L.lockActive == true
         and L.lockedTarget ~= nil
         and isTargetValidForLock(L.lockedTarget)
 end
 
--- Obtiene el jugador objetivo (Player) de forma segura. Retorna nil si no hay.
-function M.GetTargetPlayer()
-    if M.HasTarget() then
-        return L.lockedTarget
-    end
-    return nil
-end
-
--- Obtiene el modelo (Character) del objetivo. Retorna nil si no hay.
-function M.GetTargetCharacter()
-    local target = M.GetTargetPlayer()
-    if target then
-        return target.Character
-    end
-    return nil
-end
-
--- Obtiene el HumanoidRootPart del objetivo. Retorna nil si no hay.
-function M.GetTargetRootPart()
-    local char = M.GetTargetCharacter()
-    if char then
-        return char:FindFirstChild("HumanoidRootPart")
-    end
-    return nil
-end
-
--- =========================================================
--- MÉTODOS DE COMPATIBILIDAD (LEGACY)
--- =========================================================
-
-function M.IsLockActive()
-    return M.HasTarget()
-end
-
 function M.GetTargetInfo()
-    if not M.HasTarget() then return nil end
+    if not M.IsLockActive() then return nil end
     return L.lockedTarget
 end
 
 function M.GetTargetHealth()
-    if not M.HasTarget() then return 0, 0 end
+    if not M.IsLockActive() then return 0, 0 end
     local char = L.lockedTarget.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return 0, 0 end
@@ -699,10 +659,11 @@ function M.GetTargetHealth()
 end
 
 function M.GetTargetDistance()
-    if not M.HasTarget() then return nil end
+    if not M.IsLockActive() then return nil end
     local myChar = lplr and lplr.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local tRoot  = M.GetTargetRootPart()
+    local tChar  = L.lockedTarget.Character
+    local tRoot  = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not myRoot or not tRoot then return nil end
     local dist = (myRoot.Position - tRoot.Position).Magnitude
     if isnan(dist) then return nil end
@@ -710,7 +671,7 @@ function M.GetTargetDistance()
 end
 
 function M.GetStatus()
-    local active = M.HasTarget()
+    local active = M.IsLockActive()
     local health, maxHealth = M.GetTargetHealth()
     return {
         lockActive = active,
@@ -722,29 +683,6 @@ function M.GetStatus()
     }
 end
 
--- OmniBlock (stub — se conserva la forma de la API)
-function M.SetOmniBlockProvider(_fn)
-    -- no-op: la integración con OmniBlock fue removida del núcleo.
-end
-
-function M.IsOmniBlockActive()
-    return false
-end
-
--- Callbacks (stubs — se conserva la forma de la API)
-function M.SetPreTeleportHeightCallback(fn)
-    -- Se guarda por compatibilidad, pero Lock ya no realiza teleports.
-    if type(fn) == "function" or fn == nil then
-        L.onPreTeleportHeight = fn
-    end
-end
-
-function M.SetSoftBodyRotation(enabled)
-    -- Se guarda por compatibilidad, pero Lock ya no rota el HRP.
-    L.softBodyRotation = (enabled == true or enabled == nil)
-end
-function M.GetSoftBodyRotation() return L.softBodyRotation end
-
 -- GUI
 M.CreateInfoGui = function(parentFrame)
     if L.systemEnabled and L.lockActive and L.lockedTarget then
@@ -754,11 +692,5 @@ end
 M.DestroyInfoGui      = destroyLockInfoGui
 M.BuildHUDLockSection = buildHUDLockSection
 M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
-
--- Hooks externos (stubs — se conserva la forma de la API)
-M.GetAimCFrame   = getAimCFrame
-M.ApplyAntiOrbit = applyAntiOrbit
-
-function M.IsStraightLineActive() return false end
 
 return M
