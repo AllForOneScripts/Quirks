@@ -1,4 +1,4 @@
-print("why?")
+print("Nya")
 
 -- ──────────────────────────────────────────────────────────────────
 -- [1]  SERVICIOS Y UTILIDADES GENÉRICAS
@@ -40,8 +40,10 @@ local FT = LockLang["ES"]
 local function _reloadFT()
     local lang = "ES"
     pcall(function()
-        local data = readfile("AllForOne/lang.txt")
-        if data == "EN" or data == "ES" then lang = data end
+        if type(readfile) == "function" then
+            local data = readfile("AllForOne/lang.txt")
+            if data == "EN" or data == "ES" then lang = data end
+        end
     end)
     FT = LockLang[lang]
 end
@@ -183,7 +185,9 @@ local function loadAvatarImage()
     local requestId = L.avatarRequestId
     local userId = target.UserId
 
-    task.spawn(function()
+    -- Reemplazo seguro compatible con versiones que no incluyan task.spawn
+    local spawnFunc = (typeof(task) == "table" and typeof(task.spawn) == "function") and task.spawn or function(f) coroutine.wrap(f)() end
+    spawnFunc(function()
         local success, content = pcall(function()
             return Players:GetUserThumbnailAsync(
                 userId,
@@ -484,7 +488,6 @@ local function updateExposedCharacterData()
         targetVal.Parent = char
     end
 
-    -- Se evita estrictamente que isValid sea 'nil' asegurando que dé 'true' o 'false'
     local isValid = false
     if L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget) then
         isValid = true
@@ -557,6 +560,8 @@ end
 local HUD_SECTION_HEIGHT = 38
 
 local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
+    if typeof(makeSection) ~= "function" or typeof(makeRow) ~= "function" then return end
+    
     local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
         colors.SEC1, colors.ACCENT, colors.GOLD, colors.TEXT, colors.SUBTEXT
 
@@ -697,4 +702,9 @@ M.DestroyInfoGui      = destroyLockInfoGui
 M.BuildHUDLockSection = buildHUDLockSection
 M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
 
-return M
+-- Se aplica un metamétodo para evitar el error si se llama al script como "Lock()" directamente en vez de "Lock.Start()"
+return setmetatable(M, {
+    __call = function(self, ...)
+        return self.Start(...)
+    end
+})
