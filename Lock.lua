@@ -1,5 +1,3 @@
-print("Nya")
-
 -- ──────────────────────────────────────────────────────────────────
 -- [1]  SERVICIOS Y UTILIDADES GENÉRICAS
 -- ──────────────────────────────────────────────────────────────────
@@ -40,6 +38,7 @@ local FT = LockLang["ES"]
 local function _reloadFT()
     local lang = "ES"
     pcall(function()
+        -- FIX 1: Validar que el ejecutor posea la función readfile antes de llamarla
         if type(readfile) == "function" then
             local data = readfile("AllForOne/lang.txt")
             if data == "EN" or data == "ES" then lang = data end
@@ -185,9 +184,7 @@ local function loadAvatarImage()
     local requestId = L.avatarRequestId
     local userId = target.UserId
 
-    -- Reemplazo seguro compatible con versiones que no incluyan task.spawn
-    local spawnFunc = (typeof(task) == "table" and typeof(task.spawn) == "function") and task.spawn or function(f) coroutine.wrap(f)() end
-    spawnFunc(function()
+    task.spawn(function()
         local success, content = pcall(function()
             return Players:GetUserThumbnailAsync(
                 userId,
@@ -560,8 +557,12 @@ end
 local HUD_SECTION_HEIGHT = 38
 
 local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
-    if typeof(makeSection) ~= "function" or typeof(makeRow) ~= "function" then return end
-    
+    -- FIX 2: Validar que la hub pase correctamente las funciones generadoras de interfaz.
+    if type(makeSection) ~= "function" or type(makeRow) ~= "function" then
+        warn("[Lock.lua] ⚠️ ERROR: 'makeSection' o 'makeRow' son nil. Verifica los argumentos enviados desde la hub principal.")
+        return nil
+    end
+
     local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
         colors.SEC1, colors.ACCENT, colors.GOLD, colors.TEXT, colors.SUBTEXT
 
@@ -702,9 +703,14 @@ M.DestroyInfoGui      = destroyLockInfoGui
 M.BuildHUDLockSection = buildHUDLockSection
 M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
 
--- Se aplica un metamétodo para evitar el error si se llama al script como "Lock()" directamente en vez de "Lock.Start()"
-return setmetatable(M, {
-    __call = function(self, ...)
-        return self.Start(...)
+-- FIX 3: Interceptor de errores. Atrapa las funciones faltantes llamadas desde la hub.
+setmetatable(M, {
+    __index = function(t, key)
+        warn("[Lock.lua] ⚠️ ADVERTENCIA: Se intentó acceder a la propiedad o función inexistente 'M." .. tostring(key) .. "'")
+        return function(...)
+            warn("[Lock.lua] ⚠️ CRASH EVITADO: La hub intentó llamar a la función 'M." .. tostring(key) .. "()' pero no está definida en Lock.lua.")
+        end
     end
 })
+
+return M
