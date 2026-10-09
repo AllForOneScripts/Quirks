@@ -1,3 +1,5 @@
+-- You can create your own designs!
+
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
