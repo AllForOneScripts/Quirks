@@ -1,3 +1,5 @@
+-- I will leave this script free so that those who like mods can understand the way in which everything is structured.
+
 -- ──────────────────────────────────────────────────────────────────
 -- [1]  SERVICIOS Y UTILIDADES GENÉRICAS
 -- ──────────────────────────────────────────────────────────────────
