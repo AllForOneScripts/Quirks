@@ -9,6 +9,11 @@ local function isnan(v)
     return v ~= v
 end
 
+local function safepos(v3)
+    if not v3 then return false end
+    return not (isnan(v3.X) or isnan(v3.Y) or isnan(v3.Z))
+end
+
 local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
 end
@@ -96,6 +101,7 @@ local function getClosestLockTarget()
     local myChar = lplr and lplr.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not camera then return nil end
+    
     for _, player in ipairs(Players:GetPlayers()) do
         if player == lplr then continue end
         if not isTargetValidForLock(player) then continue end
@@ -103,17 +109,24 @@ local function getClosestLockTarget()
         if not targetChar then continue end
         local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
         if not targetRoot then continue end
+        
         local ok3, screenPos, onScreen = pcall(function()
             return camera:WorldToScreenPoint(targetRoot.Position)
         end)
+        
         if not ok3 or not onScreen then continue end
         local mousePos   = UserInputService:GetMouseLocation()
         local screenDist = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+        
         if isnan(screenDist) or screenDist > 300 then continue end
         local worldDist  = myRoot and (myRoot.Position - targetRoot.Position).Magnitude or 0
         if isnan(worldDist) then continue end
+        
         local score = screenDist + (worldDist * 0.2)
-        if score < bestScore then bestScore = score; closestPlayer = player end
+        if score < bestScore then 
+            bestScore = score
+            closestPlayer = player 
+        end
     end
     return closestPlayer
 end
@@ -236,8 +249,9 @@ local function createLockInfoGui(parentFrame)
     local infoFrame = Instance.new("Frame")
     infoFrame.Name                  = "LockInfoPanel"
     infoFrame.Size                  = UDim2.new(0, 220, 0, 95)
-    -- FIX: Reemplazo de -232 por (0 - 232)
-    infoFrame.Position              = UDim2.new(1, (0 - 232), 0, 80)
+    
+    -- CORRECCIÓN APLICADA: Se devuelven los valores negativos estándar.
+    infoFrame.Position              = UDim2.new(1, -232, 0, 80)
     infoFrame.AnchorPoint           = Vector2.new(0, 0)
     infoFrame.BackgroundColor3      = C_BLACK
     infoFrame.BackgroundTransparency = 0.15
@@ -254,8 +268,7 @@ local function createLockInfoGui(parentFrame)
 
     local iconLbl = Instance.new("TextLabel", infoFrame)
     iconLbl.Size                 = UDim2.new(0, 28, 0, 28)
-    -- FIX: Reemplazo de -14 por (0 - 14)
-    iconLbl.Position             = UDim2.new(0, 6, 0.5, (0 - 14))
+    iconLbl.Position             = UDim2.new(0, 6, 0.5, -14)
     iconLbl.BackgroundTransparency = 1
     iconLbl.Font                 = Enum.Font.Legacy
     iconLbl.TextSize             = 20
@@ -309,8 +322,7 @@ local function createLockInfoGui(parentFrame)
     local playerImgContainer = Instance.new("Frame", infoFrame)
     playerImgContainer.Name               = "PlayerImgContainer"
     playerImgContainer.Size               = UDim2.new(0, 55, 0, 55)
-    -- FIX: Reemplazo de -65 por (0 - 65)
-    playerImgContainer.Position           = UDim2.new(1, (0 - 65), 0, 20)
+    playerImgContainer.Position           = UDim2.new(1, -65, 0, 20)
     playerImgContainer.BackgroundColor3   = Color3.fromRGB(20, 10, 40)
     playerImgContainer.BackgroundTransparency = 0.3
     playerImgContainer.BorderSizePixel    = 0
@@ -383,12 +395,14 @@ local function updateLockInfoGui()
         local maxHealth = math.max(humanoid.MaxHealth, 1)
         local healthStr
         local intPart = math.floor(rawHealth)
+        
         if intPart == 0 and rawHealth > 0 then
             local rounded = math.floor(rawHealth * 100 + 0.5) / 100
             healthStr = string.format("%.2f", rounded)
         else
             healthStr = tostring(math.floor(rawHealth + 0.5))
         end
+        
         local pct = rawHealth / maxHealth
         local heartEmoji
         if rawHealth <= 0 then
@@ -404,6 +418,7 @@ local function updateLockInfoGui()
         end
         healthLabel.Font = Enum.Font.Legacy
         healthLabel.Text = heartEmoji .. " " .. healthStr .. "/" .. tostring(math.floor(maxHealth + 0.5))
+        
         if rawHealth <= 0 then
             healthLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
         elseif pct > 0.75 then
@@ -418,9 +433,10 @@ local function updateLockInfoGui()
     end
 
     local heightLabel = L.lockInfoGui:FindFirstChild("HeightLabel")
-    if heightLabel and myRoot then
+    if heightLabel and myRoot and safepos(myRoot.Position) and safepos(root.Position) then
         local heightDiff = math.floor(myRoot.Position.Y - root.Position.Y)
         if isnan(heightDiff) then heightDiff = 0 end
+        
         if heightDiff > 0 then
             heightLabel.Text      = "▼ " .. heightDiff .. " " .. FT.height_below
             heightLabel.TextColor3 = Color3.fromRGB(150, 220, 255)
@@ -591,8 +607,7 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     lockLabel.TextYAlignment       = Enum.TextYAlignment.Center
 
     local lockHint = Instance.new("TextLabel", lockRow)
-    -- FIX: Reemplazo de -128 por (0 - 128)
-    lockHint.Size                 = UDim2.new(1, (0 - 128), 1, 0)
+    lockHint.Size                 = UDim2.new(1, -128, 1, 0)
     lockHint.Position             = UDim2.new(0, 124, 0, 0)
     lockHint.BackgroundTransparency = 1
     lockHint.Font                 = Enum.Font.Gotham
@@ -672,6 +687,7 @@ function M.GetTargetDistance()
     local tChar  = L.lockedTarget.Character
     local tRoot  = tChar and tChar:FindFirstChild("HumanoidRootPart")
     if not myRoot or not tRoot then return 0 end
+    
     local dist = (myRoot.Position - tRoot.Position).Magnitude
     if isnan(dist) then return 0 end
     return dist
