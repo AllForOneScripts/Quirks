@@ -130,7 +130,6 @@ local function selectPassiveTarget(myRoot)
     return bestRoot, bestPlayer
 end
 
--- CORRECCIÓN: Resolución de objetivos robusta adaptada del script antiguo
 local function resolveTargetValue(val)
     if not val then return nil, nil end
     
@@ -164,7 +163,6 @@ local function getLockAPIState()
     local lplr = _lplr or Players.LocalPlayer
     local char = lplr and lplr.Character
     
-    -- Método 1: Leer desde ObjectValues en el Character (Nuevo)
     if char then
         local activeVal = char:FindFirstChild("AFO_LockActive")
         local targetVal = char:FindFirstChild("AFO_LockedTarget")
@@ -177,7 +175,6 @@ local function getLockAPIState()
         end
     end
 
-    -- Método 2: Fallback a getgenv() (Mantiene compatibilidad con la versión anterior)
     local api = rawget(getgenv(), "AFO_LOCK_API")
     if type(api) == "table" and type(api.GetStatus) == "function" then
         local ok, status = pcall(api.GetStatus)
@@ -202,7 +199,6 @@ local function getLockTarget()
     local lockData = getLockAPIState()
     
     if lockData.success and lockData.isLocked and lockData.target then
-        -- Utilizamos la resolución robusta que previene los fallos
         local player, root = resolveTargetValue(lockData.target)
         if player and root then
             return player, root
@@ -251,11 +247,12 @@ local function getGroundBelow(position, ignored)
     return workspace:Raycast(position + Vector3.new(0, 3, 0), Vector3.new(0, -10000, 0), params)
 end
 
-local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
+local function doFallingTeleport(myRoot, myHumanoid, targetRoot, predictedPos)
     local now = tick()
+    predictedPos = predictedPos or targetRoot.Position
 
     if _dropCompletedFor == targetRoot then
-        myRoot.CFrame = CFrame.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+        myRoot.CFrame = CFrame.new(predictedPos.X, myRoot.Position.Y, predictedPos.Z)
         myRoot.AssemblyLinearVelocity = Vector3.new(0, myRoot.AssemblyLinearVelocity.Y, 0)
         return true
     end
@@ -290,12 +287,12 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
             )
         end
 
-        myRoot.CFrame = CFrame.new(targetRoot.Position.X, entryY, targetRoot.Position.Z)
+        myRoot.CFrame = CFrame.new(predictedPos.X, entryY, predictedPos.Z)
         myRoot.AssemblyLinearVelocity = Vector3.new(0, PB.FALL_STICK_VELOCITY, 0)
         return true
     end
 
-    myRoot.CFrame = CFrame.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+    myRoot.CFrame = CFrame.new(predictedPos.X, myRoot.Position.Y, predictedPos.Z)
     myRoot.AssemblyLinearVelocity = Vector3.new(0, PB.FALL_RELEASE_VELOCITY, 0)
     _dropCompletedFor = targetRoot
     _dropTargetRoot = nil
@@ -398,13 +395,15 @@ function M.Start(lplr)
                 pcall(fly.Bypass, 0.1, "passivebang")
             end
 
-            local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP)
+            local doingFallTP = doFallingTeleport(myRoot, myHumanoid, _targetHRP, predicted)
             if not doingFallTP and isSafeVector(predicted) then
                 local behind = _targetHRP.CFrame.LookVector * -2.8
                 local vertical = velocity.Y < -10 and -2 or 0
+                
+                -- Se eliminó el modificador adicional `targetPosition += Vector3.new(0, 2.5, 0)` 
+                -- para alinear perfectamente las coordenadas Y.
                 local targetPosition = predicted + behind + lead
                 targetPosition = Vector3.new(targetPosition.X, _targetHRP.Position.Y + vertical, targetPosition.Z)
-                if isLocked then targetPosition += Vector3.new(0, 2.5, 0) end
                 
                 if (targetPosition - predicted).Magnitude > 0.05 then
                     myRoot.CFrame = CFrame.lookAt(targetPosition, predicted)
@@ -443,7 +442,6 @@ function M.Stop()
 end
 
 function M.SetLockModule(module)
-    -- Corrección: Restaurada la compatibilidad con inyección de módulo por Hub
     if type(module) == "table" then
         rawset(getgenv(), "AFO_LOCK_API", module)
     end
