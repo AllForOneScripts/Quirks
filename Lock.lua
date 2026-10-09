@@ -250,7 +250,6 @@ local function createLockInfoGui(parentFrame)
     infoFrame.Name                  = "LockInfoPanel"
     infoFrame.Size                  = UDim2.new(0, 220, 0, 95)
     
-    -- CORRECCIÓN APLICADA: Se devuelven los valores negativos estándar.
     infoFrame.Position              = UDim2.new(1, -232, 0, 80)
     infoFrame.AnchorPoint           = Vector2.new(0, 0)
     infoFrame.BackgroundColor3      = C_BLACK
@@ -706,7 +705,6 @@ function M.GetStatus()
     }
 end
 
--- GUI
 M.CreateInfoGui = function(parentFrame)
     if L.systemEnabled and L.lockActive and L.lockedTarget then
         createLockInfoGui(parentFrame)
