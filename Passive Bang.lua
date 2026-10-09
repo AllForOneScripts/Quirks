@@ -1,6 +1,6 @@
 -- PassiveBang_lock_reader.lua
 -- Requiere que el lector de Lock se haya ejecutado primero y haya inyectado
--- los valores AFO_LockActive y AFO_LockedTarget en el Character.
+-- los valores AFO_LockActive y AFO_LockedTarget en el Character o getgenv().
 
 local M = {}
 
@@ -27,7 +27,6 @@ local function dLog(msg)
 end
 
 local function dError(msg)
-    -- Evitar spam de 60 errores por segundo en la consola
     if msg ~= _lastError then
         warn("[PassiveBang ERROR CRÍTICO] " .. tostring(msg))
         _lastError = msg
@@ -131,37 +130,82 @@ local function selectPassiveTarget(myRoot)
     return bestRoot, bestPlayer
 end
 
+-- CORRECCIÓN: Resolución de objetivos robusta adaptada del script antiguo
+local function resolveTargetValue(val)
+    if not val then return nil, nil end
+    
+    if typeof(val) == "Instance" then
+        if val:IsA("Player") then
+            return val, getLiveRoot(val)
+        elseif val:IsA("Model") then
+            local plr = Players:GetPlayerFromCharacter(val)
+            return plr, getLiveRoot(plr)
+        elseif val:IsA("BasePart") then
+            local model = val:FindFirstAncestorOfClass("Model")
+            local plr = model and Players:GetPlayerFromCharacter(model)
+            return plr, getLiveRoot(plr)
+        end
+    elseif type(val) == "string" then
+        local targetName = val:gsub("^@", ""):lower()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower() == targetName or p.DisplayName:lower() == targetName then
+                return p, getLiveRoot(p)
+            end
+        end
+    elseif type(val) == "table" then
+        local nested = val.player or val.targetPlayer or val.character or val.targetCharacter or val.root or val.targetRoot or val.target
+        return resolveTargetValue(nested)
+    end
+    
+    return nil, nil
+end
+
 local function getLockAPIState()
     local lplr = _lplr or Players.LocalPlayer
     local char = lplr and lplr.Character
     
-    if not char then
-        return { success = false, isLocked = false, target = nil }
+    -- Método 1: Leer desde ObjectValues en el Character (Nuevo)
+    if char then
+        local activeVal = char:FindFirstChild("AFO_LockActive")
+        local targetVal = char:FindFirstChild("AFO_LockedTarget")
+        if activeVal and targetVal then
+            return {
+                success = true,
+                isLocked = activeVal.Value == true,
+                target = targetVal.Value
+            }
+        end
     end
 
-    local activeVal = char:FindFirstChild("AFO_LockActive")
-    local targetVal = char:FindFirstChild("AFO_LockedTarget")
-
-    if not activeVal or not targetVal then
-        return { success = false, isLocked = false, target = nil }
+    -- Método 2: Fallback a getgenv() (Mantiene compatibilidad con la versión anterior)
+    local api = rawget(getgenv(), "AFO_LOCK_API")
+    if type(api) == "table" and type(api.GetStatus) == "function" then
+        local ok, status = pcall(api.GetStatus)
+        if ok and type(status) == "table" then
+            local target = status.target or status.targetPlayer or status.targetCharacter or status.targetName
+            if type(api.GetTarget) == "function" then
+                local ok2, target2 = pcall(api.GetTarget)
+                if ok2 and target2 then target = target2 end
+            end
+            return {
+                success = true,
+                isLocked = status.lockActive == true,
+                target = target
+            }
+        end
     end
 
-    return {
-        success = true,
-        isLocked = activeVal.Value,
-        target = targetVal.Value
-    }
+    return { success = false, isLocked = false, target = nil }
 end
 
 local function getLockTarget()
     local lockData = getLockAPIState()
     
     if lockData.success and lockData.isLocked and lockData.target then
-        if typeof(lockData.target) == "Instance" and lockData.target:IsA("Player") then
-            local root = getLiveRoot(lockData.target)
-            if root then
-                return lockData.target, root
-            end
+        -- Utilizamos la resolución robusta que previene los fallos
+        local player, root = resolveTargetValue(lockData.target)
+        if player and root then
+            return player, root
         end
     end
     
@@ -259,12 +303,10 @@ local function doFallingTeleport(myRoot, myHumanoid, targetRoot)
 end
 
 function M.Start(lplr)
-    -- Corrección: Asegurarse de que el argumento pasado sea una instancia de Player
     if typeof(lplr) ~= "Instance" or not lplr:IsA("Player") then
         lplr = Players.LocalPlayer
     end
     
-    -- Corrección: Esperar al LocalPlayer en caso de que el script se ejecute prematuramente
     while not lplr do
         task.wait()
         lplr = Players.LocalPlayer
@@ -401,6 +443,10 @@ function M.Stop()
 end
 
 function M.SetLockModule(module)
+    -- Corrección: Restaurada la compatibilidad con inyección de módulo por Hub
+    if type(module) == "table" then
+        rawset(getgenv(), "AFO_LOCK_API", module)
+    end
 end
 
 function M.SetKeybind(keyCode)
