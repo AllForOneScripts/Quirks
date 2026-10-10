@@ -1,4 +1,11 @@
--- You can add other abilities here, so I'll leave the code free.
+-- MUI.lua (Optimizado y protegido para ofuscación)
+
+local _env = (type(getgenv) == "function" and getgenv()) or _G
+local _readfile = (type(_env.readfile) == "function" and _env.readfile) or (type(readfile) == "function" and readfile) or nil
+local _gethui = (type(_env.gethui) == "function" and _env.gethui) or (type(gethui) == "function" and gethui) or nil
+local _syn = _env.syn or syn or nil
+local _Drawing = _env.Drawing or Drawing or nil
+local _getgenv = (type(getgenv) == "function" and getgenv) or nil
 
 local M = {}
 
@@ -146,12 +153,14 @@ local MUIStrings = {
 
 local function _reloadLocale()
     pcall(function()
-        if type(readfile) == "function" then
-            local data = readfile("AllForOne/lang.txt")
-            if data == "EN" or data == "en" then
-                M.Config.Locale = "en"
-            elseif data == "ES" or data == "es" then
-                M.Config.Locale = "es"
+        if _readfile then
+            local ok, data = pcall(_readfile, "AllForOne/lang.txt")
+            if ok and data then
+                if data == "EN" or data == "en" then
+                    M.Config.Locale = "en"
+                elseif data == "ES" or data == "es" then
+                    M.Config.Locale = "es"
+                end
             end
         end
     end)
@@ -755,11 +764,13 @@ local function MUIBuildHud()
     MUIHudCards.Size = UDim2.fromScale(1, 1)
     MUIHudCards.Parent = MUIHud
 
-    if not MUIRealBodyLineDraw then
-        MUIRealBodyLineDraw = Drawing.new("Line")
-        MUIRealBodyLineDraw.Color = Color3.fromRGB(70, 185, 255)
-        MUIRealBodyLineDraw.Transparency = 0.42
-        MUIRealBodyLineDraw.Thickness = 3
+    if not MUIRealBodyLineDraw and _Drawing then
+        pcall(function()
+            MUIRealBodyLineDraw = _Drawing.new("Line")
+            MUIRealBodyLineDraw.Color = Color3.fromRGB(70, 185, 255)
+            MUIRealBodyLineDraw.Transparency = 0.42
+            MUIRealBodyLineDraw.Thickness = 3
+        end)
     end
 
     MUIHudDismissButton = Instance.new("TextButton")
@@ -884,10 +895,13 @@ local function MUICreateThreatCard(MUIThreat)
 end
 
 local function MUICreateLine(MUIThreat)
-    local gw = Drawing.new("Line"); gw.Transparency = 0.35
-    local ol = Drawing.new("Line"); ol.Transparency = 0.65; ol.Color = Color3.fromRGB(0, 0, 0)
-    local ln = Drawing.new("Line"); ln.Transparency = 1
-    MUIThreat.ESP = { line = ln, outline = ol, glow = gw }
+    if not _Drawing then return end
+    pcall(function()
+        local gw = _Drawing.new("Line"); gw.Transparency = 0.35
+        local ol = _Drawing.new("Line"); ol.Transparency = 0.65; ol.Color = Color3.fromRGB(0, 0, 0)
+        local ln = _Drawing.new("Line"); ln.Transparency = 1
+        MUIThreat.ESP = { line = ln, outline = ol, glow = gw }
+    end)
 end
 
 local function MUICreateFarLight(MUIThreat)
@@ -929,9 +943,11 @@ end
 
 local function MUIDestroyThreatVisuals(MUIThreat)
     if MUIThreat.ESP then
-        if MUIThreat.ESP.line then MUIThreat.ESP.line:Remove() end
-        if MUIThreat.ESP.outline then MUIThreat.ESP.outline:Remove() end
-        if MUIThreat.ESP.glow then MUIThreat.ESP.glow:Remove() end
+        pcall(function()
+            if MUIThreat.ESP.line then MUIThreat.ESP.line:Remove() end
+            if MUIThreat.ESP.outline then MUIThreat.ESP.outline:Remove() end
+            if MUIThreat.ESP.glow then MUIThreat.ESP.glow:Remove() end
+        end)
         MUIThreat.ESP = nil
     end
     if MUIThreat.Beacon then MUIThreat.Beacon:Destroy() end
@@ -1234,8 +1250,7 @@ local function MUIBegin(MUIDodge, MUISource)
     MUIVirtualRootPosition = MUIGroundPosition(MUIRoot.Position, MUICharacter)
     
     if MUIDodge.Style == "Dodge" then
-        -- Verificamos si Omniblock ya está activo en modo 4D para evitar clones duplicados
-        local omniApi = rawget(getgenv(), "AFO_OMNIBLOCK_API")
+        local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
         local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
 
         if not isOmniActive then
@@ -1285,7 +1300,7 @@ end
 MUIDeactivate = function(MUIReturnToClone)
     if not MUIDefenseActive then return end
     
-    local omniApi = rawget(getgenv(), "AFO_OMNIBLOCK_API")
+    local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
     local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
 
     MUIDefenseActive = false
@@ -1380,10 +1395,10 @@ local function MUIOpenTogaAlert(MUIDodge, MUIPlayer, MUIToken)
 
     local container = (function()
         local s, r = pcall(function()
-            if gethui then return gethui()
-            elseif syn and syn.protect_gui then
+            if _gethui then return _gethui()
+            elseif _syn and _syn.protect_gui then
                 local sg = Instance.new("ScreenGui")
-                syn.protect_gui(sg)
+                _syn.protect_gui(sg)
                 return sg
             else
                 return MUILocalPlayer:WaitForChild("PlayerGui")
@@ -1860,7 +1875,7 @@ local function MUIHeartbeat(MUIDeltaTime)
     if MUIActiveStyle == "Impulse" then MUIEnforceImpulseDistance(MUIRoot) end
     
     if MUINow >= MUIActiveUntil then
-        local omniApi = rawget(getgenv(), "AFO_OMNIBLOCK_API")
+        local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
         local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
         
         if isOmniActive then
@@ -1946,7 +1961,7 @@ function M.Stop()
     MUIInputConnection = nil
     for _, MUIThreat in pairs(MUIThreats) do MUIDismissThreat(MUIThreat) end
     if MUIHud then MUIHud:Destroy() end
-    if MUIRealBodyLineDraw then MUIRealBodyLineDraw.Remove(); MUIRealBodyLineDraw = nil end
+    if MUIRealBodyLineDraw then pcall(function() MUIRealBodyLineDraw:Remove() end) MUIRealBodyLineDraw = nil end
     MUIDestroyImpulseZone()
     if MUIImpulseFolder then MUIImpulseFolder:Destroy(); MUIImpulseFolder = nil end
     if MUIFallPlatform then MUIFallPlatform:Destroy(); MUIFallPlatform = nil end
@@ -2020,8 +2035,8 @@ M.API = {
     GetStatus = M.GetStatus,
 }
 
-if type(getgenv) == "function" then
-    pcall(function() getgenv().AFO_MUI_API = M end)
+if _getgenv then
+    pcall(function() _getgenv().AFO_MUI_API = M end)
 end
 
 return M
