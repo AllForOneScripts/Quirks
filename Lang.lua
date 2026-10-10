@@ -75,7 +75,9 @@ return {
         notif_config_saved = "Configuración guardada correctamente.",
         notif_config_loaded = "Configuración cargada con éxito.",
         notif_hub_deleted = "Hub eliminado correctamente.",
-        notif_avatar_copied = "Avatar copiado con éxito."
+        notif_avatar_copied = "Avatar copiado con éxito.",
+        mui_dialogue_step1 = "Puedes esquivar por\ntu cuenta si presionas\nel número 5 o si me\ndas click a mi",
+        mui_dialogue_step2 = "¡Bien hecho!, ahora\nhazlo otra vez para\ndesactivar tu estado\nde esquive"
     },
     EN = {
         subtitle = "All For One",
@@ -153,6 +155,8 @@ return {
         notif_config_saved = "Config successfully saved.",
         notif_config_loaded = "Config successfully loaded.",
         notif_hub_deleted = "Hub successfully deleted.",
-        notif_avatar_copied = "Avatar successfully copied."
+        notif_avatar_copied = "Avatar successfully copied.",
+        mui_dialogue_step1 = "You can dodge on your\nown if you press the\nnumber 5 or if you\nclick on me",
+        mui_dialogue_step2 = "Well done!, now do\nit again to disable\nyour dodge state"
     }
 }
