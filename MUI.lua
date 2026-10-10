@@ -1,4 +1,3 @@
-
 local _env = (type(getgenv) == "function" and getgenv()) or _G
 local _readfile = (type(_env.readfile) == "function" and _env.readfile) or (type(readfile) == "function" and readfile) or nil
 local _gethui = (type(_env.gethui) == "function" and _env.gethui) or (type(gethui) == "function" and gethui) or nil
