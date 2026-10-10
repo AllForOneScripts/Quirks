@@ -1,6 +1,6 @@
 return {
     ES = {
-        subtitle = "Todo para Uno",
+        subtitle = "All For One",
         tab_power = "Poder",
         tab_misc = "Misc",
         tab_defend = "Defensa",
@@ -9,19 +9,19 @@ return {
         tab_config = "Configuración",
         lbl_infiniteyield = "Infinite Yield",
         lbl_teleport = "Teleport",
-        lbl_tp_key = "Teleport Key",
+        lbl_tp_key = "Tecla de Teleport",
         lbl_lock = "Lock",
-        lbl_lock_key = "Lock Key",
+        lbl_lock_key = "Tecla de Lock",
         lbl_passivebang = "Bang Pasivo",
-        lbl_passivebang_key = "Bang Pasivo Key",
+        lbl_passivebang_key = "Tecla de Bang Pasivo",
         lbl_mui = "MUI",
         lbl_omniblock = "OmniBlock",
         lbl_unpredicaims = "Unpredictable Anims",
         lbl_softaim = "Soft Aim",
         lbl_gravattack = "Gravattack",
-        lbl_gravattack_key = "Tecla de Vuelo",
+        lbl_gravattack_key = "Tecla de suspensión",
         lbl_speedforce = "SpeedForce",
-        lbl_speedforce_key = "SpeedForce Key",
+        lbl_speedforce_key = "Tecla de SpeedForce",
         lbl_nocddash = "No CD Dash",
         lbl_misc_emote = "Your Emote, My Emote",
         lbl_misc_steal_key = "Tecla Robar",
@@ -40,7 +40,7 @@ return {
         lbl_saveconfig = "Guardar configuración",
         lbl_loadconfig = "Cargar configuración",
         lbl_autoload = "Auto Config",
-        notif_activated_title = "All for One",
+        notif_activated_title = "All For One",
         notif_activated_content = "Quirk 🟢",
         notif_rejoin_title = "Reconectando...",
         notif_rejoin_content = "Uniéndote al mismo servidor.",
@@ -77,7 +77,8 @@ return {
         notif_hub_deleted = "Hub eliminado correctamente.",
         notif_avatar_copied = "Avatar copiado con éxito.",
         mui_dialogue_step1 = "Puedes esquivar por\ntu cuenta si presionas\nel número 5 o si me\ndas click a mi",
-        mui_dialogue_step2 = "¡Bien hecho!, ahora\nhazlo otra vez para\ndesactivar tu estado\nde esquive"
+        mui_dialogue_step2 = "¡Bien hecho!, ahora\nhazlo otra vez para\ndesactivar tu estado\nde esquive",
+        lbl_emergency_mui_key = "Tecla de MUI de Emergencia"
     },
     EN = {
         subtitle = "All For One",
@@ -99,7 +100,7 @@ return {
         lbl_unpredicaims = "Unpredictable Anims",
         lbl_softaim = "Soft Aim",
         lbl_gravattack = "Gravattack",
-        lbl_gravattack_key = "Gravattack Key",
+        lbl_gravattack_key = "Suspension Key",
         lbl_speedforce = "SpeedForce",
         lbl_speedforce_key = "SpeedForce Key",
         lbl_nocddash = "No CD Dash",
@@ -120,7 +121,7 @@ return {
         lbl_saveconfig = "Save Config",
         lbl_loadconfig = "Load Config",
         lbl_autoload = "Auto Config",
-        notif_activated_title = "All for One",
+        notif_activated_title = "All For One",
         notif_activated_content = "Quirk 🟢",
         notif_rejoin_title = "Rejoining...",
         notif_rejoin_content = "Joining back to the same server.",
@@ -157,6 +158,7 @@ return {
         notif_hub_deleted = "Hub successfully deleted.",
         notif_avatar_copied = "Avatar successfully copied.",
         mui_dialogue_step1 = "You can dodge on your\nown if you press the\nnumber 5 or if you\nclick on me",
-        mui_dialogue_step2 = "Well done!, now do\nit again to disable\nyour dodge state"
+        mui_dialogue_step2 = "Well done!, now do\nit again to disable\nyour dodge state",
+        lbl_emergency_mui_key = "Emergency MUI Key"
     }
 }
