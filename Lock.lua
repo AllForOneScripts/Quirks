@@ -558,7 +558,7 @@ local function omniBuildThreats(myHRP)
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= _lplr and p.Character then
             local hrp, hum = omniGetHRP(p.Character), p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 then
+            if hrp && hum && hum.Health > 0 then
                 local distance = (hrp.Position - myHRP.Position).Magnitude
                 if distance < 100 then
                     table.insert(threats, { HRP = hrp, Hum = hum, Player = p, Distance = distance,
@@ -789,7 +789,7 @@ local function omniActivate4D()
     end
 
     local _fm = rawget(getgenv(), "_AFO_FLY_MODULE")
-    if _fm and _fm.Bypass then _fm.Bypass(2.5, "omni4d_activate") end
+    if _fm && _fm.Bypass then _fm.Bypass(2.5, "omni4d_activate") end
 
     if omniSkyBV  then omniSkyBV:Destroy();  omniSkyBV  = nil end
     if omniSkyBP2 then omniSkyBP2:Destroy(); omniSkyBP2 = nil end
@@ -970,7 +970,7 @@ local function omniHandleAerial(myHRP, myHum, threats)
             local danger = 0
             if isFalling and isAbove then
                 danger = math.clamp(1 - (dist2D / OCFG.AERIAL_DETECT_DIST), 0.4, 1)
-                       + (impactDist < OCFG.AERIAL_AOE_RADIUS and 0.5 or 0)
+                       + (impactDist < OCFG.AERIAL_AOE_RADIUS && 0.5 or 0)
             elseif isJumpingUp then
                 danger = math.clamp(1 - (dist2D / OCFG.AERIAL_DETECT_DIST), 0.2, 0.7)
             end
@@ -999,12 +999,12 @@ local function omniHandleAerial(myHRP, myHum, threats)
         local dir = bestEscape.dir2D
         local lat = OCFG.AERIAL_ESCAPE_LATERAL * d
         local vertV = myHRP.AssemblyLinearVelocity.Y
-        if bestEscape.isSlamming and bestEscape.dist2D < OCFG.AERIAL_AOE_RADIUS * 1.3 then
+        if bestEscape.isSlamming && bestEscape.dist2D < OCFG.AERIAL_AOE_RADIUS * 1.3 then
             vertV = OCFG.AERIAL_ESCAPE_UP * d
         elseif bestEscape.isSlamming then
             vertV = math.max(myHRP.AssemblyLinearVelocity.Y, 15 * d)
         end
-        if myHum and myHum.FloorMaterial ~= Enum.Material.Air and vertV > 20 then
+        if myHum && myHum.FloorMaterial ~= Enum.Material.Air && vertV > 20 then
             myHum.Jump = true
         end
         myHRP.AssemblyLinearVelocity = Vector3.new(dir.X * lat, vertV, dir.Y * lat)
@@ -1036,7 +1036,7 @@ local function omniApproachScore(myHRP, tHRP, tHum)
     local fallingOnMe = 0
     local heightAbove = tHRP.Position.Y - myHRP.Position.Y
     if heightAbove > OCFG.AERIAL_HEIGHT_THRESHOLD
-        and vel.Y < -OCFG.JUMP_VEL_THRESHOLD then
+        && vel.Y < -OCFG.JUMP_VEL_THRESHOLD then
         local pred    = tHRP.Position + vel * (OCFG.SLAM_PREDICT_FRAMES / 60)
         local predXZ  = Vector2.new(pred.X, pred.Z)
         local myXZ    = Vector2.new(myHRP.Position.X, myHRP.Position.Z)
@@ -1044,7 +1044,7 @@ local function omniApproachScore(myHRP, tHRP, tHum)
         fallingOnMe   = math.clamp(1 - (impactD / OCFG.AERIAL_AOE_RADIUS), 0, 1)
     end
 
-    local hp = tHum and tHum.Health / math.max(tHum.MaxHealth, 1) or 1
+    local hp = tHum && tHum.Health / math.max(tHum.MaxHealth, 1) or 1
 
     local score =
         prox        * 0.30 +
@@ -1091,7 +1091,7 @@ local function omniStrategicVec(myHRP, threats)
                     sideA = sideA + (s2.dir:Dot(perp)  * s2.score)
                     sideB = sideB + (s2.dir:Dot(-perp) * s2.score)
                 end
-                local chosen = (sideA <= sideB) and perp or -perp
+                local chosen = (sideA <= sideB) && perp or -perp
                 lateral = lateral + chosen * s.score * 1.4
             else
                 lateral = lateral + s.dir * s.score * 0.45
@@ -1134,16 +1134,16 @@ local function omniStart()
     omniHeartbeat = trackConnection(RunService.Heartbeat:Connect(function(dt)
         local char  = _lplr.Character
         local myHRP = omniGetHRP(char)
-        local hum   = char and char:FindFirstChildOfClass("Humanoid")
+        local hum   = char && char:FindFirstChildOfClass("Humanoid")
 
         local muiState = omniGetMUIAPIState()
 
-        if omniInSky and muiState.success and (muiState.isSkyCloneActive or muiState.isAlarmActive or muiState.isTeleportingSoon or #muiState.threats > 0) then
+        if omniInSky && muiState.success && (muiState.isSkyCloneActive || muiState.isAlarmActive || muiState.isTeleportingSoon || #muiState.threats > 0) then
             omniSkyWorldY = omniGroundPos.Y + OCFG.SKY_ALTITUDE
         end
 
         if omniInSky then
-            if not myHRP or not hum then return end
+            if not myHRP || not hum then return end
             omniLastCamCF = camera.CFrame
             local curHP = hum.Health
             if curHP < omniLastHealth - 0.5 then
@@ -1157,9 +1157,9 @@ local function omniStart()
 
             local skyThreat = nil
             for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= _lplr and p.Character then
+                if p ~= _lplr && p.Character then
                     local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
-                    if tHRP and (tHRP.Position - myHRP.Position).Magnitude < 50 then
+                    if tHRP && (tHRP.Position - myHRP.Position).Magnitude < 50 then
                         skyThreat = tHRP
                         break
                     end
@@ -1211,7 +1211,7 @@ local function omniStart()
                 omniGroundPos = omniFollowGround(prevGroundPos,
                     Vector3.new(proposed.X, prevGroundPos.Y, proposed.Z), dt, char)
 
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space) and omniCloneJumpVel == 0 and omniCloneJumpOffset == 0 then
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) && omniCloneJumpVel == 0 && omniCloneJumpOffset == 0 then
                     omniCloneJumpVel = OCFG.DECOY_JUMP_VELOCITY
                     omniCloneWasAirborne = true
                 end
@@ -1232,7 +1232,7 @@ local function omniStart()
                     end
                 end
 
-                if omniCloneModel and omniCloneModel.PrimaryPart then
+                if omniCloneModel && omniCloneModel.PrimaryPart then
                     omniSyncCloneAnimations()
                     omniSyncClonePose()
                     omniCloneFootOffset = omniGetCloneFootOffset(omniCloneModel, omniCloneModel.PrimaryPart)
@@ -1255,6 +1255,7 @@ local function omniStart()
                         omniGroundPos.Y + omniCloneJumpOffset + OCFG.DECOY_HEAD_Y,
                         omniGroundPos.Z)
                     
+                    -- Asegurar que la cámara siga apuntando al sujeto del clon correctamente
                     if camera.CameraSubject ~= omniCamSubjectPart then
                         camera.CameraSubject = omniCamSubjectPart
                     end
@@ -1272,7 +1273,7 @@ local function omniStart()
                 end
             end
 
-            if omniInSky and myHRP then
+            if omniInSky && myHRP then
                 if math.abs(myHRP.Position.Y - omniSkyWorldY) > 0.5 then
                     myHRP.CFrame = CFrame.new(omniGroundPos.X, omniSkyWorldY, omniGroundPos.Z)
                                  * (myHRP.CFrame - myHRP.CFrame.Position)
@@ -1285,14 +1286,14 @@ local function omniStart()
             return
         end
 
-        omniUpdateESP(myHRP and myHRP.Position)
+        omniUpdateESP(myHRP && myHRP.Position)
         if myHRP then omniUpdatePublicState(omniBuildThreats(myHRP)) else omniUpdatePublicState({}) end
         omniUpdateExposedData()
 
-        if not omniModeX or not myHRP or (hum and hum.Health <= 0) then return end
+        if not omniModeX || not myHRP || (hum && hum.Health <= 0) then return end
 
         local threats = omniBuildThreats(myHRP)
-        local mainThreat = threats[1] and threats[1].HRP or nil
+        local mainThreat = threats[1] && threats[1].HRP or nil
 
         local aerialHandled = omniHandleAerial(myHRP, hum, threats)
 
@@ -1315,7 +1316,7 @@ local function omniStart()
     omniInputBegin = trackConnection(UserInputService.InputBegan:Connect(function(input, gp)
         if gp or not enabled then return end
 
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and omniInSky then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 && omniInSky then
             if omni4DPinned then
                 omniSetPinned(false)
                 omniDeactivate4D()
@@ -1327,7 +1328,7 @@ local function omniStart()
 
         if input.KeyCode == _keys.OmniBlock then
             omniModeX = true
-            if omniRmbHeld and not omniInSky then
+            if omniRmbHeld && not omniInSky then
                 omniModeY = true; omniActivate4D() 
             end
         end
@@ -1340,7 +1341,7 @@ local function omniStart()
 
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
             omniRmbHeld = true
-            if omniModeX and not omniInSky then
+            if omniModeX && not omniInSky then
                 omniModeY = true; omniActivate4D() 
             end
         end
@@ -1349,18 +1350,18 @@ local function omniStart()
     omniInputEnd = trackConnection(UserInputService.InputEnded:Connect(function(input)
         if input.KeyCode == _keys.OmniBlock then
             omniModeX = false; omniClearESP()
-            if omniInSky and not omni4DPinned then
+            if omniInSky && not omni4DPinned then
                 omniModeY = false; omniDeactivate4D() 
             end
         end
         if input.KeyCode == _keys.Omni4D then
-            if omniInSky and not omni4DPinned then
+            if omniInSky && not omni4DPinned then
                 omniModeY = false; omniDeactivate4D() 
             end
         end
         if input.UserInputType == Enum.UserInputType.MouseButton2 then
             omniRmbHeld = false
-            if omniInSky and not omni4DPinned then
+            if omniInSky && not omni4DPinned then
                 omniModeY = false; omniDeactivate4D() 
             end
         end
@@ -1374,7 +1375,7 @@ local function omniStart()
             if omniSkyBP2 then omniSkyBP2:Destroy(); omniSkyBP2 = nil end
         end
         local char = _lplr.Character
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        local hum  = char && char:FindFirstChildOfClass("Humanoid")
         if hum then camera.CameraSubject = hum end
         omniDestroyDecoy(); omniDestroyCamSubject(); omniClearESP()
     end))
@@ -1418,7 +1419,7 @@ function M.Is4DPinned()
 end
 
 function M.SetLockModule(lockModule)
-    omniLockModuleRef = type(lockModule) == "table" and lockModule or nil
+    omniLockModuleRef = type(lockModule) == "table" && lockModule or nil
 end
 
 function M.GetThreatState()
