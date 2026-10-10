@@ -1,4 +1,3 @@
--- MUI.lua (Optimizado y protegido para ofuscación)
 
 local _env = (type(getgenv) == "function" and getgenv()) or _G
 local _readfile = (type(_env.readfile) == "function" and _env.readfile) or (type(readfile) == "function" and readfile) or nil
