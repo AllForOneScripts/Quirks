@@ -1677,6 +1677,28 @@ local function dumpBody(character, label)
 		end
 	end
 	print("  accesorios:", n)
+
+	print("  objetos NO estandar (candidatos a ser el holograma):")
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") and not isInsideAccessoryOrTool(part) then
+			for _, child in ipairs(part:GetChildren()) do
+				if not (child:IsA("Motor6D") or child:IsA("Decal") or child:IsA("Texture")
+					or child:IsA("SurfaceAppearance") or child:IsA("FaceControls")
+					or child:IsA("WrapTarget") or child:IsA("WrapLayer") or child:IsA("Bone")
+					or child:IsA("DataModelMesh") or child:IsA("Attachment")) then
+					print("   en " .. part.Name .. ":", child.ClassName, child.Name)
+				elseif child:IsA("Attachment") and not child.Name:find("Attachment$") then
+					print("   en " .. part.Name .. ":", child.ClassName, child.Name)
+				end
+			end
+		end
+	end
+	for _, c in ipairs(character:GetChildren()) do
+		if not (c:IsA("BasePart") or c:IsA("Accessory") or c:IsA("Humanoid") or c:IsA("BaseScript")
+			or c:IsA("Clothing") or c:IsA("BodyColors") or c:IsA("ShirtGraphic") or c:IsA("CharacterMesh")) then
+			print("   en el personaje:", c.ClassName, c.Name)
+		end
+	end
 end
 
 local function captureDefaultAnims(character)
@@ -1817,6 +1839,158 @@ local function runDescriptionMethod(humanoid, description)
 	return false
 end
 
+--------------------------------------------------------------------
+-- OBJETOS DEL JUEGO COLGADOS DEL CUERPO (ej: el holograma del kill streak)
+--
+-- No son accesorios: son BillboardGui / ParticleEmitter / Beam / Attachment /
+-- welds... que el juego mete DENTRO de las partes del cuerpo (Head, Torso...) o
+-- que apuntan a ellas (Adornee, Part0/Part1). Si ApplyDescription reemplaza
+-- una de esas partes, el motor destruye la parte vieja y todo lo que llevaba
+-- dentro, y los welds/guis que la apuntaban se quedan en nil.
+-- Solucion: antes de aplicar se sacan (sin destruirlos, asi los scripts del
+-- juego siguen teniendo la misma instancia) y despues se vuelven a colgar de
+-- la parte nueva del mismo nombre.
+--------------------------------------------------------------------
+local STANDARD_ATTACHMENTS = {
+	FaceCenterAttachment = true,
+	FaceFrontAttachment = true,
+	HairAttachment = true,
+	HatAttachment = true,
+	NeckAttachment = true,
+	BodyFrontAttachment = true,
+	BodyBackAttachment = true,
+	LeftCollarAttachment = true,
+	RightCollarAttachment = true,
+	WaistFrontAttachment = true,
+	WaistBackAttachment = true,
+	WaistCenterAttachment = true,
+	LeftShoulderAttachment = true,
+	RightShoulderAttachment = true,
+	LeftGripAttachment = true,
+	RightGripAttachment = true,
+	LeftFootAttachment = true,
+	RightFootAttachment = true,
+	RootAttachment = true,
+}
+
+-- Hijos que son del propio avatar / del rig (el motor los recrea): NO se tocan.
+local function isAppearanceOrRigChild(inst)
+	if inst:IsA("Motor6D")
+		or inst:IsA("Decal")
+		or inst:IsA("Texture")
+		or inst:IsA("SurfaceAppearance")
+		or inst:IsA("FaceControls")
+		or inst:IsA("WrapTarget")
+		or inst:IsA("WrapLayer")
+		or inst:IsA("Bone")
+		or inst:IsA("DataModelMesh")
+		or inst:IsA("BodyPartDescription") then
+		return true
+	end
+	if inst.Name == "OriginalSize" or inst.Name == "AvatarPartScaleType" then
+		return true
+	end
+	if inst:IsA("Attachment") then
+		return STANDARD_ATTACHMENTS[inst.Name] == true or inst.Name:find("RigAttachment$") ~= nil
+	end
+	return false
+end
+
+local function isBodyPart(part)
+	return part:IsA("BasePart")
+		and BODY_COLOR_MAP[part.Name] ~= nil
+		and not isInsideAccessoryOrTool(part)
+end
+
+local function bodyPartName(part)
+	if part and isBodyPart(part) then
+		return part.Name
+	end
+	return nil
+end
+
+local function stashExtras(character)
+	local extras = { children = {}, links = {}, adornees = {} }
+
+	-- 1) welds y guis que apuntan a partes del cuerpo (se anotan ANTES de mover nada)
+	for _, d in ipairs(character:GetDescendants()) do
+		if (d:IsA("JointInstance") and not d:IsA("Motor6D")) or d:IsA("WeldConstraint") then
+			local owner = d.Parent
+			if not (owner and owner:IsA("BasePart") and isInsideAccessoryOrTool(owner)) then
+				local n0, n1 = bodyPartName(d.Part0), bodyPartName(d.Part1)
+				if n0 or n1 then
+					table.insert(extras.links, { joint = d, n0 = n0, n1 = n1 })
+				end
+			end
+		elseif (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and d.Name ~= GRAY_NAME then
+			local name = bodyPartName(d.Adornee)
+			if name then
+				table.insert(extras.adornees, { gui = d, name = name })
+			end
+		end
+	end
+
+	-- 2) hijos "del juego" dentro de las partes del cuerpo
+	for _, part in ipairs(character:GetDescendants()) do
+		if isBodyPart(part) then
+			for _, child in ipairs(part:GetChildren()) do
+				if child.Name ~= GRAY_NAME
+					and not isAppearanceOrRigChild(child)
+					and not child:IsA("BaseScript") then
+					table.insert(extras.children, { inst = child, partName = part.Name })
+				end
+			end
+		end
+	end
+
+	for _, rec in ipairs(extras.children) do
+		dbg("objeto del juego apartado:", rec.partName .. "." .. rec.inst.Name, "(" .. rec.inst.ClassName .. ")")
+		rec.inst.Parent = nil
+	end
+
+	return extras
+end
+
+local function restoreExtras(character, extras)
+	local fallback = character:FindFirstChild("HumanoidRootPart")
+
+	for _, rec in ipairs(extras.children) do
+		local part = findPart(character, rec.partName) or fallback
+		if part then
+			pcall(function()
+				rec.inst.Parent = part
+			end)
+		end
+	end
+
+	for _, rec in ipairs(extras.links) do
+		local joint = rec.joint
+		if joint and joint.Parent then
+			pcall(function()
+				local p0 = rec.n0 and findPart(character, rec.n0)
+				local p1 = rec.n1 and findPart(character, rec.n1)
+				if p0 and joint.Part0 ~= p0 then
+					joint.Part0 = p0
+				end
+				if p1 and joint.Part1 ~= p1 then
+					joint.Part1 = p1
+				end
+			end)
+		end
+	end
+
+	for _, rec in ipairs(extras.adornees) do
+		if rec.gui and rec.gui.Parent then
+			local part = findPart(character, rec.name)
+			if part and rec.gui.Adornee ~= part then
+				pcall(function()
+					rec.gui.Adornee = part
+				end)
+			end
+		end
+	end
+end
+
 local function applyDescriptionInner(character, humanoid, description, isR15)
 	-- Algunos juegos ocultan las partes del rig (Transparency = 1) y dibujan
 	-- el cuerpo con otra cosa: se conserva esa transparencia por nombre.
@@ -1828,6 +2002,7 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 	end
 
 	local stash = PRESERVE_GAME_ACCESSORIES and stashProtectedAccessories(character) or {}
+	local extras = PRESERVE_GAME_ACCESSORIES and stashExtras(character) or nil
 	applyingChange = true
 
 	local done, okRun = false, false
@@ -1858,6 +2033,9 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 		end
 	end
 
+	if extras then
+		restoreExtras(character, extras)
+	end
 	restoreProtectedAccessories(character, stash, isR15)
 
 	return done and okRun
