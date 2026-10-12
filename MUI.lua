@@ -745,7 +745,7 @@ end
 
 local function MUIBuildHud()
     if MUIHud and MUIHud.Parent then return end
-    local MUIPlayerGui = MUILocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local MUIPlayerGui = MUILocalPlayer and MUILocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not MUIPlayerGui then return end
 
     MUIHud = Instance.new("ScreenGui")
@@ -1393,26 +1393,39 @@ local function MUIOpenTogaAlert(MUIDodge, MUIPlayer, MUIToken)
 
     local container = (function()
         local s, r = pcall(function()
-            if _gethui then return _gethui()
-            elseif _syn and _syn.protect_gui then
+            if _gethui then 
+                local h = _gethui()
+                if h then return h end
+            end
+            if _syn and _syn.protect_gui then
                 local sg = Instance.new("ScreenGui")
                 _syn.protect_gui(sg)
                 return sg
-            else
-                return MUILocalPlayer:WaitForChild("PlayerGui")
             end
+            if MUILocalPlayer then
+                local pg = MUILocalPlayer:FindFirstChild("PlayerGui") or MUILocalPlayer:WaitForChild("PlayerGui", 3)
+                if pg then return pg end
+            end
+            return game:GetService("CoreGui")
         end)
         return (s and r) and r or game:GetService("CoreGui")
     end())
 
-    local oldGui = container:FindFirstChild("TogaAlertUI")
-    if oldGui then oldGui:Destroy() end
+    pcall(function()
+        local oldGui = container:FindFirstChild("TogaAlertUI")
+        if oldGui then oldGui:Destroy() end
+    end)
 
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "TogaAlertUI"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.DisplayOrder = 80 
-    ScreenGui.Parent = container
+    pcall(function()
+        ScreenGui.Parent = container
+    end)
+    if not ScreenGui.Parent then
+        ScreenGui.Parent = game:GetService("CoreGui")
+    end
     TogaAlertGuiInstance = ScreenGui
 
     local isUIActive = true
@@ -1681,7 +1694,7 @@ local function MUIMoveClone(MUIDeltaTime, MUICharacter)
             MUICloneJumpOffset = MUINextOffset
         end
     end
-    MUIVirtualRootPosition = Vector3.new(MUIProposed.X, MUIVirtualRootPosition.Y + MUIYDelta, MUIProposed.Z)
+    MUIVirtualRootPosition = Vector3.new(MUIProposed.X, MUIVirtualRootPosition.Y + MUIYDelta, MUIVirtualRootPosition.Z)
 end
 
 local function MUIUpdateCloneAndCamera()
@@ -1924,8 +1937,10 @@ function M.Start(MUIOverrides)
     if MUIEnabled then M.Stop() end
     if typeof(MUIOverrides) == "Instance" and MUIOverrides:IsA("Player") then MUIOverrides = nil end
     if MUIOverrides then M.Configure(MUIOverrides) else MUIRebuildDodgeIndex() end
-    MUILocalPlayer = MUIPlayers.LocalPlayer
+    
+    MUILocalPlayer = MUIPlayers.LocalPlayer or MUIPlayers:GetPropertyChangedSignal("LocalPlayer"):Wait() and MUIPlayers.LocalPlayer
     assert(MUILocalPlayer, "MUI4DDodge must run on the client")
+    
     MUIEnabled = true
     MUIBuildHud()
     _reloadLocale()
