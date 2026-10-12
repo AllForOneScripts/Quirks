@@ -110,10 +110,11 @@ local KEEP_NAME_PATTERNS = { "crown", "corona" }
 local GUARD_SECONDS = 6
 local GUARD_INTERVAL = 0.35
 local MAX_REPAIRS = 3
--- (v6) Aplica el avatar con Humanoid:ApplyDescription (metodo oficial de Roblox).
--- Si falla, o si Humanoid.RigType no coincide con el rig real, se usa el metodo
--- manual de v5 como respaldo. Pon false para forzar siempre el metodo manual.
-local USE_APPLY_DESCRIPTION = true
+-- (v6) false (por defecto) = metodo "en sitio": modifica las partes que ya
+-- existen (malla/textura/colores) sin reemplazarlas ni borrar cosas del juego,
+-- como hacia el CopyAvatar original. true = experimental: usa el metodo oficial
+-- Humanoid:ApplyDescription (el motor puede reemplazar partes del cuerpo).
+local USE_APPLY_DESCRIPTION = false
 -- Segundos maximos que se espera a que ApplyDescription termine.
 local DESCRIPTION_TIMEOUT = 20
 -- Pon DEBUG = true para ver en consola que rig se detecta, el metodo usado y un
@@ -1038,6 +1039,10 @@ local function applyManualBodyColors(character, bodyColors)
 	end
 end
 
+-- Solo borra lo que pertenece al AVATAR: accesorios, ropa clasica y BodyColors
+-- (hijos directos del personaje) + cara/malla de la cabeza + SurfaceAppearance de
+-- las partes del cuerpo. Nada mas: lo que el juego cuelga del personaje (el
+-- holograma del kill streak, decals, mallas, efectos) NO se toca.
 local function wipeAppearance(character)
 	for _, child in ipairs(character:GetChildren()) do
 		if child:IsA("Accessory") then
@@ -1053,14 +1058,12 @@ local function wipeAppearance(character)
 	end
 
 	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") and not isInsideAccessoryOrTool(part) then
+		if part:IsA("BasePart") and BODY_COLOR_MAP[part.Name] and not isInsideAccessoryOrTool(part) then
+			local isHead = part.Name == "Head"
 			for _, sub in ipairs(part:GetChildren()) do
-				if sub:IsA("Decal")
-					or sub:IsA("SurfaceAppearance")
-					or sub:IsA("DataModelMesh")
-					or sub:IsA("FaceControls")
-					or sub:IsA("WrapTarget")
-					or sub:IsA("WrapLayer") then
+				if sub:IsA("SurfaceAppearance") then
+					sub:Destroy()
+				elseif isHead and (sub:IsA("Decal") or sub:IsA("DataModelMesh") or sub:IsA("FaceControls")) then
 					sub:Destroy()
 				end
 			end
@@ -1099,7 +1102,6 @@ local function copyVisual(part, donorPart)
 	part.Color = donorPart.Color
 	part.Material = donorPart.Material
 	part.Reflectance = donorPart.Reflectance
-	part.Transparency = donorPart.Transparency
 end
 
 local function copyPartChildren(part, donorPart)
@@ -1117,6 +1119,12 @@ local function copyPartChildren(part, donorPart)
 			or d:IsA("WrapLayer")
 			or d:IsA("Decal")
 			or d:IsA("DataModelMesh") then
+			-- reemplaza (no duplica) lo que ya hubiera del mismo tipo
+			for _, existing in ipairs(part:GetChildren()) do
+				if existing.ClassName == d.ClassName and (not d:IsA("Decal") or existing.Name == d.Name) then
+					existing:Destroy()
+				end
+			end
 			d:Clone().Parent = part
 		end
 	end
@@ -1160,6 +1168,13 @@ local function replaceBodyPart(character, oldPart, donorPart)
 	newPart.CanTouch = oldPart.CanTouch
 	newPart.CanQuery = oldPart.CanQuery
 	newPart.Massless = oldPart.Massless
+	newPart.Transparency = oldPart.Transparency
+
+	-- Si el juego (o este script) tenia oculta la parte vieja, la nueva hereda eso.
+	newPart.LocalTransparencyModifier = oldPart.LocalTransparencyModifier
+	if hideState and hideState.saved[oldPart] ~= nil then
+		hideState.saved[newPart] = hideState.saved[oldPart]
+	end
 
 	-- Mover a la parte nueva todo lo que NO es apariencia (uniones, attachments
 	-- propios del juego, luces, etc.).
@@ -1200,25 +1215,30 @@ local function syncR15Part(character, donorPart)
 		return nil
 	end
 
-	if part:IsA("MeshPart") and donorPart:IsA("MeshPart") and not needsFullReplace(donorPart) then
-		local same = part.MeshId == donorPart.MeshId
-		if not same then
+	-- Unica excepcion: la cabeza dinamica (FaceControls/Bone) no se puede copiar
+	-- en sitio. Cualquier otra parte se modifica donde esta, sin reemplazarla.
+	if donorPart.Name == "Head" and needsFullReplace(donorPart) then
+		return replaceBodyPart(character, part, donorPart)
+	end
+
+	if part:IsA("MeshPart") and donorPart:IsA("MeshPart") then
+		if part.MeshId ~= donorPart.MeshId then
 			pcall(function()
 				part:ApplyMesh(donorPart)
 			end)
-			same = part.MeshId == donorPart.MeshId
+			if part.MeshId ~= donorPart.MeshId then
+				pcall(function()
+					part.MeshId = donorPart.MeshId
+				end)
+			end
 		end
-
-		if same then
-			part.TextureID = donorPart.TextureID
-			part.Size = donorPart.Size
-			copyVisual(part, donorPart)
-			copyPartChildren(part, donorPart)
-			return part
-		end
+		part.TextureID = donorPart.TextureID
 	end
 
-	return replaceBodyPart(character, part, donorPart)
+	part.Size = donorPart.Size
+	copyVisual(part, donorPart)
+	copyPartChildren(part, donorPart)
+	return part
 end
 
 -- Adaptación forzada de Bundles R15 / UGC a R6
@@ -2120,7 +2140,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		-- Reset: se usa el aspecto que el personaje tenia al empezar (el que le dio
 		-- el juego); si no se pudo guardar, el avatar de tu cuenta.
 		local description
-		if isReset and originalDescriptions[character] then
+		if isReset and USE_APPLY_DESCRIPTION and originalDescriptions[character] then
 			description = originalDescriptions[character]:Clone()
 		else
 			description = getDescription(userId)
