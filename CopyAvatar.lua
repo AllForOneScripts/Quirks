@@ -1,4 +1,4 @@
-print("seriously?343")|
+print("seriously?343")
 
 local M = {}
 local Players = game:GetService("Players")
