@@ -1,4 +1,4 @@
-print("imthemorning34334333")
+print("dindsuaid")
 
 local M = {}
 
@@ -569,6 +569,14 @@ end
 --------------------------------------------------------------------
 -- LIMPIEZA Y ADAPTACION DE RIG (R15 / R6 / UGC)
 --------------------------------------------------------------------
+-- Ropa en capas (WrapLayer): solo se deforma sobre cuerpos R15. En R6 no hay
+-- "cage" donde ajustarse, asi que se dibuja como una malla rigida del tamano
+-- del molde (los bloques enormes rosas/negros alrededor del cuerpo).
+local function isLayeredAccessory(accessory)
+	local handle = accessory:FindFirstChild("Handle")
+	return handle ~= nil and handle:FindFirstChildWhichIsA("WrapLayer", true) ~= nil
+end
+
 local function applyManualBodyColors(character, bodyColors)
 	for _, part in ipairs(character:GetChildren()) do
 		if part:IsA("BasePart") then
@@ -852,6 +860,10 @@ local function applyDonorData(character, humanoid, donor)
 
 	local result = {}
 	for _, template in ipairs(donor:GetChildren()) do
+		if template:IsA("Accessory") and not isR15 and isLayeredAccessory(template) then
+			-- R6: no se puede deformar, se omite en vez de dibujarla rigida
+			continue
+		end
 		if template:IsA("Accessory") then
 			local accessory = template:Clone()
 			local handle = accessory:FindFirstChild("Handle")
@@ -871,7 +883,13 @@ local function applyDonorData(character, humanoid, donor)
 				manualAttachAccessory(accessory, character)
 			end
 
-			result[template] = accessory
+			handle = accessory:FindFirstChild("Handle")
+			if not isR15 and not (handle and handle:FindFirstChild("AccessoryWeld")) then
+				-- sin attachment en el cuerpo R6: se descarta en vez de dejarlo suelto
+				accessory:Destroy()
+			else
+				result[template] = accessory
+			end
 		end
 	end
 
