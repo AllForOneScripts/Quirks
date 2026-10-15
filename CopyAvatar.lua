@@ -1,4 +1,4 @@
-print("32143df")
+print("3214323434df")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -86,6 +86,13 @@ local MORPH_TIME = 0.55
 local HEIGHT_TIME = 0.8
 local HEIGHT_EPSILON = 0.02
 local HIP_FOLLOW_RATE = 10
+local DEBUG = true
+
+local function dbg(...)
+	if DEBUG then
+		print("[AFO]", ...)
+	end
+end
 
 local function clamp01(x)
 	return math.clamp(x, 0, 1)
@@ -2345,18 +2352,24 @@ function R15.readLiveAnimations(targetPlayer)
 	return live
 end
 
--- The Animate script reads script.<folder>.<Animation>.AnimationId (idle, walk, run, jump, fall, climb, swim)
--- and reloads a set whenever a child is added, removed or changed. Changing the id is enough for the NEXT
--- animation it picks, but the track that is already playing keeps the old one, so after editing the ids the
--- script is restarted to make the change show up right away.
+-- The Animate script reads script.<folder>.<Animation>.AnimationId (idle, walk, run, jump, fall, climb, swim).
+-- Editing the ids of the running script is not enough: it keeps the track that is already playing, and
+-- disabling/re-enabling it can leave it dead. So a fresh copy of the script gets the new ids written into it
+-- BEFORE it is parented, and then replaces the old one, which makes it start from zero with the right ids.
 function R15.applyAnimations(character, humanoid, description, targetPlayer)
 	local animate = character:FindFirstChild("Animate") or character:WaitForChild("Animate", 1)
 	if not animate then
+		dbg("no Animate script in the character, animations left as they are")
 		return
 	end
 	captureDefaultAnims(character)
 	local defaults = defaultAnims[character] or {}
 	local live = targetPlayer and R15.readLiveAnimations(targetPlayer) or {}
+	local fresh
+	pcall(function()
+		fresh = animate:Clone()
+	end)
+	local editable = fresh or animate
 	local touched = {}
 	local changed = false
 	for _, entry in ipairs(ANIM_MAP) do
@@ -2369,14 +2382,14 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer)
 		else
 			newId = live[key] or defaults[key]
 		end
-		local folder = animate:FindFirstChild(folderName)
+		local folder = editable:FindFirstChild(folderName)
 		local anim = folder and folder:FindFirstChild(animName)
 		if newId then
 			if not folder then
 				folder = Instance.new("StringValue")
 				folder.Name = folderName
 				folder:SetAttribute("AFO_Created", true)
-				folder.Parent = animate
+				folder.Parent = editable
 				changed = true
 			end
 			if not (anim and anim:IsA("Animation")) then
@@ -2399,7 +2412,11 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer)
 			changed = true
 		end
 	end
+	dbg("animations: changed =", changed, "slots =", #touched, "fresh copy =", fresh ~= nil)
 	if not changed then
+		if fresh then
+			fresh:Destroy()
+		end
 		return
 	end
 	if #touched > 0 then
@@ -2422,23 +2439,80 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer)
 			track:Stop(0)
 		end
 	end
-	setAnimateEnabled(animate, false)
-	task.wait()
-	setAnimateEnabled(animate, true)
+	if fresh then
+		setAnimateEnabled(animate, false)
+		animate:Destroy()
+		setAnimateEnabled(fresh, true)
+		fresh.Parent = character
+	else
+		setAnimateEnabled(animate, false)
+		task.wait(0.1)
+		setAnimateEnabled(animate, true)
+	end
+	local playing = 0
+	local waited = 0
+	while waited < 2 do
+		task.wait(0.1)
+		waited += 0.1
+		animator = humanoid:FindFirstChildOfClass("Animator")
+		playing = animator and #animator:GetPlayingAnimationTracks() or 0
+		if playing > 0 then
+			break
+		end
+	end
+	if playing == 0 then
+		local current = character:FindFirstChild("Animate")
+		dbg("no animation playing after the swap, kicking the Animate script once more")
+		if current then
+			setAnimateEnabled(current, false)
+			task.wait(0.15)
+			setAnimateEnabled(current, true)
+		end
+	else
+		dbg("animations running:", playing)
+	end
 end
 
--- Keeps the feet on the ground when the new body is taller/shorter without touching the game's own
--- HumanoidRootPart size: ground -> root centre must equal what the donor rig would have.
+-- Hip height measured from the rest pose of the body that is actually on the character, so the feet land
+-- on the ground whatever the donor reported. HipHeight = (root centre -> lowest sole) - root half height.
+function R15.measureHipHeight(character, root)
+	local poses = computePoses(character)
+	local lowest
+	for part, pose in pairs(poses) do
+		if part ~= root and part:IsA("BasePart") and not isInsideAccessoryOrTool(part) then
+			local low = pose.Position.Y - verticalExtent(pose, part.Size)
+			lowest = lowest and math.min(lowest, low) or low
+		end
+	end
+	if not lowest then
+		return nil
+	end
+	local hip = -lowest - root.Size.Y / 2
+	if hip < 0.3 or hip > 15 then
+		return nil
+	end
+	return hip
+end
+
 function R15.syncRoot(character, humanoid, donor)
 	local root = character:FindFirstChild("HumanoidRootPart")
-	local donorRoot = donor:FindFirstChild("HumanoidRootPart")
-	local donorHumanoid = donor:FindFirstChildOfClass("Humanoid")
-	if not (root and donorRoot and donorHumanoid) then
+	if not root then
 		return
 	end
-	pcall(function()
-		humanoid.HipHeight = math.max(donorHumanoid.HipHeight + donorRoot.Size.Y / 2 - root.Size.Y / 2, 0)
-	end)
+	local hip = R15.measureHipHeight(character, root)
+	if not hip then
+		local donorRoot = donor:FindFirstChild("HumanoidRootPart")
+		local donorHumanoid = donor:FindFirstChildOfClass("Humanoid")
+		if donorRoot and donorHumanoid then
+			hip = math.max(donorHumanoid.HipHeight + donorRoot.Size.Y / 2 - root.Size.Y / 2, 0)
+		end
+	end
+	if hip then
+		dbg("HipHeight", humanoid.HipHeight, "->", hip)
+		pcall(function()
+			humanoid.HipHeight = hip
+		end)
+	end
 end
 
 function R15.swap(character, humanoid, donor, description, targetPlayer)
@@ -3279,7 +3353,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	if defaultAvatar:lower() == localPlayer.Name:lower() then
 		loadAvatarImage(localPlayer.UserId, requestId)
 	else
-		applyAvatar(defaultAvatar, false, true, flashError)
+		applyAvatar(defaultAvatar, false, false, flashError)
 	end
 	return true
 end
