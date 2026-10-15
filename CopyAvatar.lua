@@ -1,5 +1,26 @@
-print("seriously?")
+print("seriously?2")
 
+--[[
+	AvatarChanger v7 (base: v6, referencia: CopyAvatar v2)
+
+	CAMBIOS v7
+	1) FANTASMA: el clon ya NO conserva uniones (Motor6D / Weld / WeldConstraint).
+	   En Roblox, asignar .CFrame a UNA parte mueve TODO su ensamblaje; con las
+	   uniones del clon cada parte arrastraba a las demas y quedaban a distancias
+	   incorrectas (cabeza en el estomago, brazos fuera de sitio). Ahora cada
+	   pieza se coloca por separado.
+	2) ANIMACIONES R15 (como v2): tras cambiar el cuerpo se detienen TODOS los
+	   tracks y se reinicia Animate siempre (v6 salia antes si los IDs no
+	   cambiaban y dejaba tracks huerfanos ligados a Motor6D ya destruidos ->
+	   personaje en pose rota / sin caminar bien). Sin script Animate, los tracks
+	   se reinician en su sitio.
+	3) METODO MANUAL R15 (respaldo): la geometria del cuerpo (tamanos, Motor6D,
+	   tamano de la raiz y HipHeight) se aplica TODA junta o NADA. Antes se
+	   copiaban unas piezas si y otras no (o el HipHeight no), y el personaje
+	   quedaba con partes desplazadas / flotando / hundido en el suelo.
+	   Si una malla no se puede aplicar en sitio, la pieza se reemplaza entera
+	   (como v2).
+]]
 local M = {}
 
 local Players = game:GetService("Players")
@@ -668,6 +689,9 @@ local function makeGhost(character, root)
 			gHum.BreakJointsOnDeath = false
 			gHum.AutoRotate = false
 			gHum.WalkSpeed = 0
+			pcall(function()
+				gHum.EvaluateStateMachine = false
+			end)
 		end
 	end)
 
@@ -699,6 +723,18 @@ local function makeGhost(character, root)
 				end
 				table.insert(items, item)
 			end
+		end
+	end
+
+	-- (v7) El fantasma no puede tener uniones: con ellas, mover una parte mueve
+	-- todo el ensamblaje y las demas piezas acaban en sitios incorrectos. Las
+	-- posiciones relativas ya se guardaron arriba (item.rel).
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("JointInstance")
+			or d:IsA("WeldConstraint")
+			or d:IsA("Constraint")
+			or d:IsA("Animator") then
+			d:Destroy()
 		end
 	end
 
@@ -1328,6 +1364,10 @@ local function syncR15Part(character, donorPart)
 		return replaceBodyPart(character, part, donorPart)
 	end
 
+	if donorPart:IsA("MeshPart") and not part:IsA("MeshPart") and not safeMode then
+		return replaceBodyPart(character, part, donorPart)
+	end
+
 	if part:IsA("MeshPart") and donorPart:IsA("MeshPart") then
 		if part.MeshId ~= donorPart.MeshId then
 			pcall(function()
@@ -1338,6 +1378,11 @@ local function syncR15Part(character, donorPart)
 					part.MeshId = donorPart.MeshId
 				end)
 			end
+		end
+		-- (v7, como v2) si la malla no se pudo cambiar en sitio, copiar solo el
+		-- tamano deformaria la pieza: se reemplaza entera.
+		if part.MeshId ~= donorPart.MeshId and not safeMode then
+			return replaceBodyPart(character, part, donorPart)
 		end
 		part.TextureID = donorPart.TextureID
 	end
@@ -1385,7 +1430,7 @@ end
 
 -- Aplica el avatar del donante. NO hace yields (todo ocurre en el mismo frame).
 -- Devuelve la lista de accesorios aplicados (para el guardian).
-local function applyDonorData(character, humanoid, donor, isR15)
+local function applyDonorData(character, humanoid, donor, isR15, syncBody)
 	-- Transparencia ORIGINAL de las partes del cuerpo. Algunos juegos ocultan
 	-- las partes del rig y dibujan el cuerpo con accesorios.
 	local keepTransparency = {}
@@ -1397,13 +1442,23 @@ local function applyDonorData(character, humanoid, donor, isR15)
 
 	wipeAppearance(character)
 
-	if isR15 and safeMode then
-		dbg("modo seguro: no se tocan partes/tamanos/uniones del cuerpo R15")
+	if isR15 and (safeMode or syncBody == false) then
+		dbg("no se tocan partes/tamanos/uniones del cuerpo R15 (modo seguro o geometria incompatible)")
 	elseif isR15 then
 		for _, donorPart in ipairs(donor:GetChildren()) do
 			if donorPart:IsA("BasePart") and donorPart.Name ~= "HumanoidRootPart" then
 				syncR15Part(character, donorPart)
 			end
+		end
+
+		-- (v7) La raiz forma parte de la geometria: su tamano, la union Root y el
+		-- HipHeight tienen que cambiar juntos (si no, flota o se hunde).
+		local donorRoot = donor:FindFirstChild("HumanoidRootPart")
+		local myRoot = character:FindFirstChild("HumanoidRootPart")
+		if donorRoot and donorRoot:IsA("BasePart") and myRoot and myRoot:IsA("BasePart") then
+			pcall(function()
+				myRoot.Size = donorRoot.Size
+			end)
 		end
 
 		for _, donorMotor in ipairs(donor:GetDescendants()) do
@@ -1538,16 +1593,50 @@ local function setAnimateEnabled(animate, enabled)
 	end
 end
 
--- Solo toca el script Animate si de verdad hay animaciones distintas, no
--- espera 5 s si el personaje no tiene Animate, y solo detiene los tracks que
--- pertenecian a las animaciones que cambian (no mata las del propio juego).
+-- (v7) Reinicia los tracks en su sitio (para juegos sin script Animate): tras
+-- cambiar el cuerpo, los tracks siguen ligados a Motor6D que ya no existen.
+local function restartTracks(animator)
+	if not animator then
+		return
+	end
+	local saved = {}
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		table.insert(saved, {
+			track = track,
+			time = track.TimePosition,
+			weight = track.WeightTarget,
+			speed = track.Speed,
+		})
+	end
+	for _, rec in ipairs(saved) do
+		pcall(function()
+			rec.track:Stop(0)
+		end)
+	end
+	RunService.Heartbeat:Wait()
+	for _, rec in ipairs(saved) do
+		pcall(function()
+			rec.track:Play(0.1, rec.weight > 0 and rec.weight or 1, rec.speed)
+			rec.track.TimePosition = rec.time
+		end)
+	end
+end
+
+-- Inyecta los IDs de animacion del avatar en el script Animate (R15):
+--   animate.walk.WalkAnim.AnimationId = "rbxassetid://..."  (idle/run/jump/fall/
+--   climb/swim igual) y luego se REINICIA Animate para que los lea.
+-- Siempre (como v2) se detienen TODOS los tracks y se reinicia Animate, aunque
+-- los IDs no cambien: el cuerpo se reconstruyo y los tracks viejos estaban
+-- ligados a uniones destruidas (pose rota / no camina bien).
 local function applyAnimations(character, humanoid, description, isR15)
 	if not isR15 then
 		return
 	end
 
+	local animator = humanoid:FindFirstChildOfClass("Animator")
 	local animate = character:FindFirstChild("Animate")
 	if not animate then
+		restartTracks(animator)
 		return
 	end
 
@@ -1564,8 +1653,6 @@ local function applyAnimations(character, humanoid, description, isR15)
 		defaultAnims[character] = defaults
 	end
 
-	local changed = false
-	local oldIds = {}
 	for _, entry in ipairs(ANIM_MAP) do
 		local folder = animate:FindFirstChild(entry[1])
 		local anim = folder and folder:FindFirstChild(entry[2])
@@ -1573,24 +1660,16 @@ local function applyAnimations(character, humanoid, description, isR15)
 			local id = description and description[entry[3]] or 0
 			local newId = (id and id ~= 0) and ("rbxassetid://" .. tostring(id)) or defaults[entry[1] .. "/" .. entry[2]]
 			if newId and anim.AnimationId ~= newId then
-				oldIds[anim.AnimationId] = true
 				anim.AnimationId = newId
-				changed = true
 			end
 		end
 	end
 
-	if not changed then
-		return
-	end
-
-	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if animator then
 		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-			local playing = track.Animation
-			if playing and oldIds[playing.AnimationId] then
+			pcall(function()
 				track:Stop(0)
-			end
+			end)
 		end
 	end
 
@@ -2468,31 +2547,65 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 
-		-- Metodo manual (solo respaldo): HipHeight en un unico cambio.
-		local function applyHip()
-			if not isR15 or not ADJUST_HIPHEIGHT or not donorHumanoid then
-				return
+		-- Metodo manual (solo respaldo). HipHeight objetivo del avatar nuevo.
+		local function hipTarget()
+			if not donorHumanoid then
+				return nil
 			end
+			if isReset and originalHip[character] ~= nil then
+				return originalHip[character]
+			end
+			return donorHumanoid.HipHeight
+		end
+
+		-- (v7) La geometria del cuerpo se aplica COMPLETA o no se aplica: tamanos
+		-- de partes + Motor6D + raiz + HipHeight. Si el avatar nuevo es demasiado
+		-- distinto, el cuerpo se deja como esta (solo cambia ropa, colores, cara y
+		-- accesorios) en vez de quedar a medias.
+		local function geometryCompatible()
+			if not isR15 or safeMode or not ADJUST_HIPHEIGHT or not donor or not donorHumanoid then
+				return false
+			end
+			local target = hipTarget()
+			if target and math.abs(humanoid.HipHeight - target) > 1.5 then
+				dbg("HipHeight demasiado distinto, el cuerpo no se modifica:", humanoid.HipHeight, "->", target)
+				return false
+			end
+			for _, donorPart in ipairs(donor:GetChildren()) do
+				if donorPart:IsA("BasePart") and donorPart.Name ~= "HumanoidRootPart" then
+					local mine = findPart(character, donorPart.Name)
+					if mine and mine.Size.X > 0 and mine.Size.Y > 0 and mine.Size.Z > 0 then
+						local r = donorPart.Size / mine.Size
+						if r.X > 2.2 or r.Y > 2.2 or r.Z > 2.2 or r.X < 0.45 or r.Y < 0.45 or r.Z < 0.45 then
+							dbg("proporciones demasiado distintas en", donorPart.Name, "-> el cuerpo no se modifica")
+							return false
+						end
+					end
+				end
+			end
+			return true
+		end
+
+		local function applyHip()
 			if originalHip[character] == nil then
 				originalHip[character] = humanoid.HipHeight
 			end
-			local target = isReset and originalHip[character] or donorHumanoid.HipHeight
-			if safeMode then
-				return
-			end
-			if target and math.abs(humanoid.HipHeight - target) > 1.5 then
-				dbg("HipHeight demasiado distinto, no se cambia:", humanoid.HipHeight, "->", target)
-			elseif target and math.abs(humanoid.HipHeight - target) > 0.001 then
+			local target = hipTarget()
+			if target and math.abs(humanoid.HipHeight - target) > 0.001 then
 				humanoid.HipHeight = target
 			end
 		end
 
 		local function doSwap()
 			local sizes = snapshotSizes(character)
-			local records = applyDonorData(character, humanoid, donor, isR15)
+			local syncBody = geometryCompatible()
+			local records = applyDonorData(character, humanoid, donor, isR15, syncBody)
 			sanitizeAccessories(character)
-			clampSizes(character, sizes)
-			applyHip()
+			if not syncBody then
+				clampSizes(character, sizes)
+			else
+				applyHip()
+			end
 			fixColorsDeferred(character, currentRequest)
 			guardAccessories(character, humanoid, records, isR15, currentRequest)
 			return records
