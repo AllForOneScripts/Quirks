@@ -1,9 +1,5 @@
--- AvatarChanger v9 (base: v8)
--- R15: sincroniza cuerpo con donor (estilo V3) en vez de ApplyDescription -> limbs, sin muertes/tirones.
--- R6 : piel R15 tambien para Rthro/proporciones; cara dinamica conservada en la cabeza-piel.
--- Efectos: particulas/luces de accesorios ya no se apagan; se reparan comparando con el donor.
--- Camara/FPS: ocultado sin GetDescendants por frame, sin fantasma en primera persona, FOV y CameraSubject protegidos.
--- UI: Tip: "Nickname"
+print("esdf")
+
 local M = {}
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
