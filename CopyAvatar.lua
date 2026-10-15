@@ -1,4 +1,4 @@
-print("seriously?2")
+print("seriously?3")
 
 --[[
 	AvatarChanger v7 (base: v6, referencia: CopyAvatar v2)
@@ -49,6 +49,9 @@ local toggleKey = Enum.KeyCode.F4
 local lastUsername = nil
 local requestId = 0
 local transforming = false
+-- (v8) hasta cuando NO se considera "del juego" un accesorio nuevo (los que llegan
+-- tarde por ApplyDescription se marcaban como protegidos y se quedaban para siempre)
+local quietUntil = 0
 
 local gray = nil
 local descriptionCache = {}
@@ -157,6 +160,13 @@ local DESCRIPTION_TIMEOUT = 20
 -- volcado de las partes del cuerpo antes/despues (util para reportar fallos).
 local DEBUG = false
 
+-- (v8) R6: si el avatar trae un cuerpo (bundle/UGC) SIN version R6 nativa
+-- (CharacterMesh), las piezas R15 se sueldan encima como "piel".
+local R6_SKIN_FALLBACK = true
+-- (v8) Tras ApplyDescription (R15) se comprueban las escalas del avatar
+-- (BodyType / Proportion / Height / Width / Depth / Head) y se corrigen.
+local COPY_BODY_SCALES = true
+
 local function dbg(...)
 	if DEBUG then
 		print("[CopyAvatar]", ...)
@@ -174,6 +184,21 @@ end
 local function easeSmooth(t)
 	t = clamp01(t)
 	return t * t * (3 - 2 * t)
+end
+
+-- (v8) Curvas de la V2: la pieza se infla un poco antes de encogerse y, al
+-- crecer, se pasa de largo y se asienta (efecto "masilla").
+local function easeInBack(t)
+	t = clamp01(t)
+	local c1 = 1.2
+	return (c1 + 1) * t ^ 3 - c1 * t ^ 2
+end
+
+local function easeOutBack(t)
+	t = clamp01(t)
+	local c1 = 1.70158
+	local c3 = c1 + 1
+	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
 end
 
 local function disconnectAll()
@@ -550,7 +575,12 @@ local function hideStep()
 			local parent = d.Parent
 			if not (parent and parent:IsA("Tool")) then
 				if saved[d] == nil then
-					saved[d] = d.LocalTransparencyModifier
+					-- (v8) BUG: una parte NUEVA (creada durante el cambio) podia llegar ya con
+					-- LocalTransparencyModifier = 1 (copiada de una oculta) y se guardaba ese 1
+					-- como "valor original": al terminar quedaba invisible para siempre.
+					-- Solo las partes que ya existian al empezar conservan su valor.
+					local init = state.initial[d]
+					saved[d] = (init ~= nil) and init or 0
 				end
 				d.LocalTransparencyModifier = 1
 			end
@@ -565,6 +595,27 @@ local function hideStep()
 			end
 			if d.Enabled then
 				d.Enabled = false
+			end
+		end
+	end
+end
+
+-- (v8) Red de seguridad: tras mostrar el cuerpo, cualquier parte del cuerpo o
+-- accesorio que siga con LocalTransparencyModifier = 1 SIN haber estado oculta
+-- al empezar se vuelve a mostrar (se repite unos segundos por si algo lo reoculta).
+local function ensureVisible(character, initial)
+	if not character or not character.Parent then
+		return
+	end
+	if hideState and hideState.character == character then
+		return
+	end
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") and d.LocalTransparencyModifier >= 0.99 then
+			local wasHidden = initial ~= nil and initial[d] ~= nil and initial[d] >= 0.99
+			if not wasHidden
+				and (BODY_COLOR_MAP[d.Name] ~= nil or d:FindFirstAncestorWhichIsA("Accessory") ~= nil) then
+				d.LocalTransparencyModifier = 0
 			end
 		end
 	end
@@ -594,6 +645,11 @@ local function showCharacter()
 				d.LocalTransparencyModifier = state.saved[d] or 0
 			end
 		end
+		for _, delayTime in ipairs({ 0.05, 0.4, 1.2 }) do
+			task.delay(delayTime, function()
+				ensureVisible(target, state.initial)
+			end)
+		end
 	end
 end
 
@@ -603,7 +659,13 @@ local function hideCharacter(character)
 		character = character,
 		saved = setmetatable({}, { __mode = "k" }),
 		fx = setmetatable({}, { __mode = "k" }),
+		initial = setmetatable({}, { __mode = "k" }),
 	}
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") then
+			hideState.initial[d] = d.LocalTransparencyModifier
+		end
+	end
 	hideStep()
 	pcall(function()
 		RunService:BindToRenderStep(HIDE_STEP, Enum.RenderPriority.Last.Value, hideStep)
@@ -643,7 +705,15 @@ local function makeGhost(character, root)
 	local hiddenPaths = {}
 	for _, d in ipairs(character:GetDescendants()) do
 		if d:IsA("BasePart") then
-			local ltm = (hideState and hideState.saved[d]) or d.LocalTransparencyModifier
+			local ltm
+			if hideState and hideState.character == character then
+				ltm = hideState.saved[d]
+				if ltm == nil then
+					ltm = hideState.initial[d] or 0
+				end
+			else
+				ltm = d.LocalTransparencyModifier
+			end
 			if ltm >= 0.95 then
 				hiddenPaths[relPath(d, character)] = true
 			end
@@ -680,20 +750,12 @@ local function makeGhost(character, root)
 		return nil
 	end
 
-	pcall(function()
-		local gHum = clone:FindFirstChildOfClass("Humanoid")
-		if gHum then
-			gHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-			gHum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-			gHum.RequiresNeck = false
-			gHum.BreakJointsOnDeath = false
-			gHum.AutoRotate = false
-			gHum.WalkSpeed = 0
-			pcall(function()
-				gHum.EvaluateStateMachine = false
-			end)
+	-- (v8) El fantasma es solo visual: sin Humanoid.
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("Humanoid") or d:IsA("Animator") then
+			d:Destroy()
 		end
-	end)
+	end
 
 	local rootCF = gRoot.CFrame
 	local items = {}
@@ -703,6 +765,7 @@ local function makeGhost(character, root)
 			d.CanCollide = false
 			d.CanTouch = false
 			d.CanQuery = false
+			d.Massless = true
 			d.LocalTransparencyModifier = 0
 			if hiddenPaths[relPath(d, clone)] then
 				d.Transparency = 1
@@ -768,8 +831,9 @@ local function poseGhostItem(g, item, k, sizeMul, followCF)
 			entry.mesh.Scale = entry.orig * sizeMul
 		end
 	end
-	local v = item.rel.Position - g.pivot
-	part.CFrame = followCF * CFrame.new(g.pivot + v * k) * item.rel.Rotation
+	-- (v8) Cada pieza se encoge/crece EN SU SITIO (alrededor de su propio centro).
+	-- Antes todas viajaban hacia los pies y luego "subian" de golpe.
+	part.CFrame = followCF * item.rel
 end
 
 local function animateGhost(g, root, grow, id, isValid)
@@ -780,13 +844,13 @@ local function animateGhost(g, root, grow, id, isValid)
 		local followCF = root.CFrame
 		for _, item in ipairs(g.items) do
 			local la = clamp01((t - item.delay) / dur)
-			local e = easeSmooth(la)
 			local k
 			if grow then
-				k = MIN_FACTOR + (1 - MIN_FACTOR) * e
+				k = MIN_FACTOR + (1 - MIN_FACTOR) * easeOutBack(la)
 			else
-				k = 1 - (1 - MIN_FACTOR) * e
+				k = 1 - (1 - MIN_FACTOR) * easeInBack(la)
 			end
+			k = math.max(k, MIN_FACTOR)
 			local w = 0
 			if la > 0 and la < 1 then
 				w = math.sin(la * 9 + item.seed) * 0.08 * math.sin(la * math.pi)
@@ -852,7 +916,8 @@ local function trackCharacter(character)
 	end)
 
 	table.insert(connections, character.ChildAdded:Connect(function(child)
-		if state.settled and not applyingChange and child:IsA("Accessory") and not ownedAccessories[child] then
+		if state.settled and not applyingChange and not transforming and os.clock() > quietUntil
+			and child:IsA("Accessory") and not ownedAccessories[child] then
 			protectedAccessories[child] = true
 			dbg("accesorio del juego protegido:", child.Name)
 		end
@@ -879,6 +944,11 @@ end
 -- Los handles de accesorios nunca deben tener masa ni colision.
 local function sanitizeAccessories(character)
 	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("BasePart") and child:GetAttribute("AFOSkin") then
+			child.CanCollide = false
+			child.CanTouch = false
+			child.Massless = true
+		end
 		if child:IsA("Accessory") then
 			local handle = child:FindFirstChild("Handle")
 			if handle and handle:IsA("BasePart") then
@@ -1173,11 +1243,36 @@ local function gameHidesRig(snap)
 	return hidden >= 3
 end
 
+-- (v8) Quita la "piel" R15 de un cambio anterior y devuelve la transparencia
+-- ORIGINAL a las piezas R6 que se habian ocultado. Hay que hacerlo ANTES de
+-- medir la visibilidad del cuerpo: si no, parecia que el juego ocultaba el rig
+-- y tras 2-3 cambios el cuerpo se quedaba invisible para siempre.
+local function removeSkin(character)
+	for _, child in ipairs(character:GetChildren()) do
+		if child:GetAttribute("AFOSkin") then
+			child:Destroy()
+		end
+	end
+	for _, p in ipairs(character:GetChildren()) do
+		if p:IsA("BasePart") then
+			local orig = p:GetAttribute("AFO_OrigTransparency")
+			if orig ~= nil then
+				p.Transparency = orig
+				p:SetAttribute("AFO_OrigTransparency", nil)
+			end
+			if p:GetAttribute("AFO_Skinned") then
+				p:SetAttribute("AFO_Skinned", nil)
+			end
+		end
+	end
+end
+
 -- Solo borra lo que pertenece al AVATAR: accesorios, ropa clasica y BodyColors
 -- (hijos directos del personaje) + cara/malla de la cabeza + SurfaceAppearance de
 -- las partes del cuerpo. Nada mas: lo que el juego cuelga del personaje (el
 -- holograma del kill streak, decals, mallas, efectos) NO se toca.
 local function wipeAppearance(character)
+	removeSkin(character)
 	for _, child in ipairs(character:GetChildren()) do
 		if child:IsA("Accessory") then
 			if not isProtectedAccessory(child) then
@@ -1392,45 +1487,250 @@ local function syncR15Part(character, donorPart)
 	return part
 end
 
--- R6: igual que el CopyAvatar original, el cuerpo (Torso/brazos/piernas) NO se
--- toca: su aspecto viene de BodyColors + Shirt/Pants + CharacterMesh. Copiar
--- Color/Material/hijos del donante a esas partes dejaba un "cuerpo cuadrado"
--- extra visible. Solo se adapta la CABEZA (malla, cara y attachments).
-local function adaptR15ToR6(character, donor)
-	local r6Part = findPart(character, "Head")
-	local donorHead = donor:FindFirstChild("Head")
-	if not r6Part or not donorHead or not donorHead:IsA("BasePart") then
+-- (v8) CARA ------------------------------------------------------------
+-- Antes, si el avatar no traia un Decal en la cabeza (cabezas dinamicas, caras
+-- nuevas) siempre se ponia la sonrisa basica. Ahora el orden es:
+--   1) la cara que ya tenga la cabeza, 2) el Decal del donante (R6 o R15),
+--   3) HumanoidDescription.Face, 4) solo si no hay NINGUNA, la cara por defecto.
+local function hasFaceDecal(head)
+	for _, c in ipairs(head:GetChildren()) do
+		if c:IsA("Decal") and c.Texture ~= "" then
+			return true
+		end
+	end
+	return false
+end
+
+local function isDynamicHead(head)
+	return head:FindFirstChildWhichIsA("FaceControls") ~= nil
+		or head:FindFirstChildWhichIsA("Bone", true) ~= nil
+end
+
+local function copyDecalsFrom(source, head)
+	local found = false
+	if source then
+		for _, c in ipairs(source:GetChildren()) do
+			if c:IsA("Decal") and c.Texture ~= "" then
+				c:Clone().Parent = head
+				found = true
+			end
+		end
+	end
+	return found
+end
+
+local function newFaceDecal(head, texture)
+	local face = Instance.new("Decal")
+	face.Name = "face"
+	face.Face = Enum.NormalId.Front
+	face.Texture = texture
+	face.Parent = head
+	return face
+end
+
+local function applyFace(head, donorHead, description, skinDonor, isR15)
+	if isR15 and isDynamicHead(head) then
+		-- cabeza dinamica: la cara va en FaceControls; un Decal solo estorba
+		for _, child in ipairs(head:GetChildren()) do
+			if child:IsA("Decal") then
+				child:Destroy()
+			end
+		end
 		return
 	end
+	if hasFaceDecal(head) then
+		return
+	end
+	if copyDecalsFrom(donorHead, head) then
+		return
+	end
+	if copyDecalsFrom(skinDonor and skinDonor:FindFirstChild("Head"), head) then
+		return
+	end
+	local faceId = description and description.Face
+	if faceId and faceId ~= 0 then
+		newFaceDecal(head, "rbxassetid://" .. tostring(faceId))
+		return
+	end
+	-- Ultimo recurso: el avatar realmente no tiene cara
+	newFaceDecal(head, "rbxasset://textures/face.png")
+end
 
-	for _, child in ipairs(r6Part:GetChildren()) do
-		if child:IsA("Decal") or child:IsA("DataModelMesh") then
-			child:Destroy()
-		end
+-- (v8) ESCALAS / TIPO DE CUERPO (R15) ---------------------------------------
+local SCALE_MAP = {
+	{ "BodyHeightScale", "HeightScale" },
+	{ "BodyWidthScale", "WidthScale" },
+	{ "BodyDepthScale", "DepthScale" },
+	{ "HeadScale", "HeadScale" },
+	{ "BodyTypeScale", "BodyTypeScale" },
+	{ "BodyProportionScale", "ProportionScale" },
+}
+
+local function verifyScales(humanoid, description)
+	if not description then
+		return
 	end
-	for _, child in ipairs(donorHead:GetChildren()) do
-		if child:IsA("Decal") or child:IsA("DataModelMesh") or child:IsA("SpecialMesh") then
-			child:Clone().Parent = r6Part
-		end
-	end
-	-- Que la cabeza R6 tenga SIEMPRE los attachments de accesorios
-	-- (en algunos juegos battleground no los tiene).
-	for _, att in ipairs(donorHead:GetChildren()) do
-		if att:IsA("Attachment") and not r6Part:FindFirstChild(att.Name) then
-			att:Clone().Parent = r6Part
-		end
-	end
-	if donorHead:IsA("MeshPart") and r6Part:IsA("MeshPart") then
-		pcall(function()
-			r6Part:ApplyMesh(donorHead)
+	for _, entry in ipairs(SCALE_MAP) do
+		local ok, wanted = pcall(function()
+			return description[entry[2]]
 		end)
-		r6Part.TextureID = donorHead.TextureID
+		local value = humanoid:FindFirstChild(entry[1])
+		if ok and type(wanted) == "number" and value and value:IsA("NumberValue") then
+			if math.abs(value.Value - wanted) > 0.001 then
+				dbg("escala corregida:", entry[1], value.Value, "->", wanted)
+				value.Value = wanted
+			end
+		end
+	end
+end
+
+-- (v8) R6 ---------------------------------------------------------------------
+-- Roblox ya trae versiones simplificadas R6 de las partes de cuerpo R15 (se
+-- aplican como CharacterMesh). El donante R6 (CreateHumanoidModelFromDescription
+-- con RigType R6) las trae hechas: se copian (ver "Ropa" mas abajo). Lo que NO
+-- tenga version R6 nativa (cuerpos UGC) se suelda como "piel" R15 encima de la
+-- pieza R6, que queda oculta (y se restaura al siguiente cambio).
+local R6_GROUPS = {
+	{ name = "Head", bodyPart = Enum.BodyPart.Head, descKey = "Head", skin = { "Head" } },
+	{ name = "Torso", bodyPart = Enum.BodyPart.Torso, descKey = "Torso", skin = { "UpperTorso", "LowerTorso" } },
+	{ name = "Left Arm", bodyPart = Enum.BodyPart.LeftArm, descKey = "LeftArm", skin = { "LeftUpperArm", "LeftLowerArm", "LeftHand" } },
+	{ name = "Right Arm", bodyPart = Enum.BodyPart.RightArm, descKey = "RightArm", skin = { "RightUpperArm", "RightLowerArm", "RightHand" } },
+	{ name = "Left Leg", bodyPart = Enum.BodyPart.LeftLeg, descKey = "LeftLeg", skin = { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" } },
+	{ name = "Right Leg", bodyPart = Enum.BodyPart.RightLeg, descKey = "RightLeg", skin = { "RightUpperLeg", "RightLowerLeg", "RightFoot" } },
+}
+
+local function hasCustomBody(description)
+	if not description then
+		return false
+	end
+	for _, group in ipairs(R6_GROUPS) do
+		local ok, value = pcall(function()
+			return description[group.descKey]
+		end)
+		if ok and type(value) == "number" and value ~= 0 then
+			return true
+		end
+	end
+	return false
+end
+
+local function donorHasNative(donor, bodyPart)
+	for _, c in ipairs(donor:GetChildren()) do
+		if c:IsA("CharacterMesh") and c.BodyPart == bodyPart then
+			return true
+		end
+	end
+	return false
+end
+
+local SKIN_STRIP = { "Motor6D", "Weld", "Attachment", "FaceControls", "Bone", "WrapTarget", "WrapLayer" }
+
+local function applySkinGroup(character, skinDonor, group, toCharacter)
+	local target = findPart(character, group.name)
+	if not target then
+		return false
+	end
+	local made = false
+	for _, r15Name in ipairs(group.skin) do
+		local donorPart = skinDonor:FindFirstChild(r15Name)
+		if donorPart and donorPart:IsA("BasePart") then
+			local skinPart = donorPart:Clone()
+			for _, child in ipairs(skinPart:GetChildren()) do
+				for _, className in ipairs(SKIN_STRIP) do
+					if child:IsA(className) then
+						child:Destroy()
+						break
+					end
+				end
+			end
+			skinPart.Name = "AFO_Skin_" .. r15Name
+			skinPart:SetAttribute("AFOSkin", true)
+			skinPart.Anchored = false
+			skinPart.CanCollide = false
+			skinPart.CanTouch = false
+			skinPart.CanQuery = false
+			skinPart.Massless = true
+			skinPart.LocalTransparencyModifier = 0
+
+			local offset = target.CFrame:ToObjectSpace(toCharacter * donorPart.CFrame)
+			skinPart.CFrame = target.CFrame * offset
+			skinPart.Parent = character
+
+			local weld = Instance.new("Weld")
+			weld.Name = "AFOSkinWeld"
+			weld.Part0 = target
+			weld.Part1 = skinPart
+			weld.C0 = offset
+			weld.Parent = skinPart
+			made = true
+		end
+	end
+	if made then
+		if target:GetAttribute("AFO_OrigTransparency") == nil then
+			target:SetAttribute("AFO_OrigTransparency", target.Transparency)
+		end
+		target:SetAttribute("AFO_Skinned", true)
+		target.Transparency = 1
+	end
+	return made
+end
+
+-- Adapta un avatar (posiblemente con cuerpo R15/UGC) a un rig R6.
+local function adaptR15ToR6(character, donor, extra)
+	local description = extra and extra.description
+	local skinDonor = extra and extra.skinDonor
+
+	-- 1) Cabeza: malla/cara/attachments del donante R6
+	local r6Part = findPart(character, "Head")
+	local donorHead = donor:FindFirstChild("Head")
+	if r6Part and donorHead and donorHead:IsA("BasePart") then
+		for _, child in ipairs(r6Part:GetChildren()) do
+			if child:IsA("Decal") or child:IsA("DataModelMesh") then
+				child:Destroy()
+			end
+		end
+		for _, child in ipairs(donorHead:GetChildren()) do
+			if child:IsA("Decal") or child:IsA("DataModelMesh") or child:IsA("SpecialMesh") then
+				child:Clone().Parent = r6Part
+			end
+		end
+		-- Que la cabeza R6 tenga SIEMPRE los attachments de accesorios
+		for _, att in ipairs(donorHead:GetChildren()) do
+			if att:IsA("Attachment") and not r6Part:FindFirstChild(att.Name) then
+				att:Clone().Parent = r6Part
+			end
+		end
+		if donorHead:IsA("MeshPart") and r6Part:IsA("MeshPart") then
+			pcall(function()
+				r6Part:ApplyMesh(donorHead)
+			end)
+			r6Part.TextureID = donorHead.TextureID
+		end
+	end
+
+	-- 2) Piel R15 para lo que no tenga version R6 nativa
+	if R6_SKIN_FALLBACK and skinDonor and hasCustomBody(description) then
+		local root = findPart(character, "HumanoidRootPart")
+		local skinRoot = skinDonor:FindFirstChild("HumanoidRootPart")
+		if root and skinRoot and skinRoot:IsA("BasePart") then
+			local toCharacter = root.CFrame * skinRoot.CFrame:Inverse()
+			for _, group in ipairs(R6_GROUPS) do
+				local ok, id = pcall(function()
+					return description[group.descKey]
+				end)
+				if ok and type(id) == "number" and id ~= 0 and not donorHasNative(donor, group.bodyPart) then
+					local made = applySkinGroup(character, skinDonor, group, toCharacter)
+					dbg("R6: " .. group.name .. " sin version nativa ->", made and "piel R15" or "sin piel")
+				end
+			end
+		end
 	end
 end
 
 -- Aplica el avatar del donante. NO hace yields (todo ocurre en el mismo frame).
 -- Devuelve la lista de accesorios aplicados (para el guardian).
-local function applyDonorData(character, humanoid, donor, isR15, syncBody)
+local function applyDonorData(character, humanoid, donor, isR15, syncBody, extra)
+	removeSkin(character)
 	-- Transparencia ORIGINAL de las partes del cuerpo. Algunos juegos ocultan
 	-- las partes del rig y dibujan el cuerpo con accesorios.
 	local keepTransparency = {}
@@ -1472,47 +1772,20 @@ local function applyDonorData(character, humanoid, donor, isR15, syncBody)
 			end
 		end
 	else
-		adaptR15ToR6(character, donor)
+		adaptR15ToR6(character, donor, extra)
 	end
 
-	-- Caras (conservando las originales y evitando conflictos con cabezas dinámicas)
+	-- Cara (v8): ver applyFace. La cabeza oculta por "piel" no necesita cara.
 	local head = findPart(character, "Head")
 	local donorHead = donor:FindFirstChild("Head")
-	if head then
+	if head and not head:GetAttribute("AFO_Skinned") then
 		if not isR15 and not head:FindFirstChildOfClass("DataModelMesh") then
 			local mesh = Instance.new("SpecialMesh")
 			mesh.MeshType = Enum.MeshType.Head
 			mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
 			mesh.Parent = head
 		end
-
-		local dynamic = head:FindFirstChildWhichIsA("FaceControls") ~= nil
-			or head:FindFirstChildWhichIsA("Bone", true) ~= nil
-
-		if dynamic then
-			for _, child in ipairs(head:GetChildren()) do
-				if child:IsA("Decal") then
-					child:Destroy()
-				end
-			end
-		else
-			local hasDecal = head:FindFirstChildOfClass("Decal") ~= nil
-			if not hasDecal and donorHead then
-				for _, child in ipairs(donorHead:GetChildren()) do
-					if child:IsA("Decal") then
-						child:Clone().Parent = head
-						hasDecal = true
-					end
-				end
-			end
-			if not hasDecal then
-				local face = Instance.new("Decal")
-				face.Name = "face"
-				face.Face = Enum.NormalId.Front
-				face.Texture = "rbxasset://textures/face.png"
-				face.Parent = head
-			end
-		end
+		applyFace(head, donorHead, extra and extra.description, extra and extra.skinDonor, isR15)
 	end
 
 	local donorColors = donor:FindFirstChildOfClass("BodyColors")
@@ -2178,6 +2451,7 @@ local function restoreExtras(character, extras)
 end
 
 local function applyDescriptionInner(character, humanoid, description, isR15)
+	removeSkin(character)
 	-- Algunos juegos ocultan las partes del rig (Transparency = 1) y dibujan
 	-- el cuerpo con otra cosa: se conserva esa transparencia por nombre.
 	local keepTransparency = {}
@@ -2203,6 +2477,20 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 		waited += 0.05
 	end
 	task.wait(0.15) -- deja que terminen de llegar los ultimos accesorios
+
+	-- (v8) tipo de cuerpo: escalas del avatar copiado
+	if COPY_BODY_SCALES and isR15 and done and okRun then
+		pcall(verifyScales, humanoid, description)
+	end
+	-- (v8) cara: si el motor no dejo ninguna y el avatar tiene una, se pone
+	if done and okRun then
+		pcall(function()
+			local head = findPart(character, "Head")
+			if head and description.Face ~= 0 and not hasFaceDecal(head) and not isDynamicHead(head) then
+				newFaceDecal(head, "rbxassetid://" .. tostring(description.Face))
+			end
+		end)
+	end
 
 	if gameHidesRig(keepTransparency) then
 		for name, transparency in pairs(keepTransparency) do
@@ -2360,6 +2648,19 @@ local function cleanupAfterChange(character, vis, before)
 		end
 	end
 	reassert()
+	-- (v8) Los accesorios que el motor entrega con retraso son del avatar nuevo,
+	-- no "del juego": se marcan propios para que el siguiente cambio los borre.
+	for _, delayTime in ipairs({ 0.4, 1.5, 3 }) do
+		task.delay(delayTime, function()
+			if character.Parent then
+				for _, child in ipairs(character:GetChildren()) do
+					if child:IsA("Accessory") and not isProtectedAccessory(child) then
+						ownedAccessories[child] = true
+					end
+				end
+			end
+		end)
+	end
 	for _, delayTime in ipairs({ 0.3, 1, 2.5 }) do
 		task.delay(delayTime, function()
 			if character.Parent then
@@ -2493,13 +2794,13 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			"| metodo:", useDescription and "ApplyDescription" or "manual")
 		dumpBody(character, "antes")
 
-		local donor, donorHumanoid
-		local function buildDonor()
+		local donor, donorHumanoid, skinDonor
+		local function buildDonor(rigOverride)
 			local d = callMethod(
 				Players,
 				{ "CreateHumanoidModelFromDescriptionAsync", "CreateHumanoidModelFromDescription" },
 				description,
-				rigType
+				rigOverride or rigType
 			)
 			if not d then
 				return nil
@@ -2536,6 +2837,13 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if not donor then
 				fail()
 				return
+			end
+			-- (v8) R6: donante R15 extra, solo para la "piel" de cuerpos sin version R6
+			if not isR15 and R6_SKIN_FALLBACK and hasCustomBody(description) then
+				skinDonor = buildDonor(Enum.HumanoidRigType.R15)
+				if not stillValid() then
+					return
+				end
 			end
 		end
 
@@ -2599,7 +2907,10 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		local function doSwap()
 			local sizes = snapshotSizes(character)
 			local syncBody = geometryCompatible()
-			local records = applyDonorData(character, humanoid, donor, isR15, syncBody)
+			local records = applyDonorData(character, humanoid, donor, isR15, syncBody, {
+				description = description,
+				skinDonor = skinDonor,
+			})
 			sanitizeAccessories(character)
 			if not syncBody then
 				clampSizes(character, sizes)
@@ -2638,6 +2949,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		end
 
 		local function performChange()
+			removeSkin(character) -- (v8) antes de medir la visibilidad
 			local vis = snapshotVisibility(character)
 			local before = snapshotPartSet(character)
 			local okSwap, result = pcall(guardedSwap, humanoid, performChangeInner)
@@ -2670,7 +2982,11 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if donor then
 				donor:Destroy()
 			end
+			if skinDonor then
+				skinDonor:Destroy()
+			end
 			transforming = false
+			quietUntil = os.clock() + 8
 			return
 		end
 
@@ -2786,7 +3102,11 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		if donor then
 			donor:Destroy()
 		end
+		if skinDonor then
+			skinDonor:Destroy()
+		end
 		transforming = false
+		quietUntil = os.clock() + 8
 
 		if not okRun then
 			warn("[CopyAvatar] Error en la transformacion (etapa: " .. stage .. "): " .. tostring(err))
