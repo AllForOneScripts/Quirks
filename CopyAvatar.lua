@@ -1,4 +1,4 @@
-print("imthemorning2332432432423433")
+print("imthemorning3433")
 
 local M = {}
 
@@ -13,6 +13,10 @@ local Debris = game:GetService("Debris")
 --------------------------------------------------------------------
 -- ESTADO
 --------------------------------------------------------------------
+-- Constantes propias (algunos ejecutores exponen Vector3.one/zero de forma distinta)
+local ONE = Vector3.new(1, 1, 1)
+local ZERO = Vector3.new(0, 0, 0)
+
 local localPlayer
 local keys
 local active = false
@@ -129,20 +133,6 @@ end
 
 local function trim(text)
 	return (text:match("^%s*(.-)%s*$")) or ""
-end
-
--- Detecta el rig REAL por las partes del cuerpo.
--- Humanoid.RigType no es fiable en algunos juegos: puede decir R15 aunque el
--- cuerpo sea R6 (Torso / Left Arm / ...), y eso hacia que se aplicara una
--- cabeza y un cuello R15 sobre un torso R6 (cabeza torcida).
-local function getRigType(character, humanoid)
-	if character:FindFirstChild("UpperTorso") then
-		return Enum.HumanoidRigType.R15
-	end
-	if character:FindFirstChild("Torso") then
-		return Enum.HumanoidRigType.R6
-	end
-	return humanoid.RigType
 end
 
 local function getUserId(username)
@@ -385,15 +375,15 @@ end
 
 local function shrinkFactor(item, la)
 	local e = easeSmooth(la)
-	return wobble(Vector3.one:Lerp(item.to, e), item, la)
+	return wobble(ONE:Lerp(item.to, e), item, la)
 end
 
 local function growFactor(item, la)
 	if la >= 1 then
-		return Vector3.one
+		return ONE
 	end
 	local e = easeSmooth(la)
-	return wobble(item.from:Lerp(Vector3.one, e), item, la)
+	return wobble(item.from:Lerp(ONE, e), item, la)
 end
 
 local function runPhase(duration, step, id, isValid)
@@ -440,8 +430,8 @@ local function freezeCharacter(character, humanoid)
 		baseCFrame = root.CFrame,
 		baseHip = humanoid.HipHeight,
 	}
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
+	root.AssemblyLinearVelocity = ZERO
+	root.AssemblyAngularVelocity = ZERO
 	root.Anchored = true
 	return state
 end
@@ -467,8 +457,8 @@ local function unfreezeCharacter(state)
 	end
 	local root = state.root
 	if root and root.Parent then
-		root.AssemblyLinearVelocity = Vector3.zero
-		root.AssemblyAngularVelocity = Vector3.zero
+		root.AssemblyLinearVelocity = ZERO
+		root.AssemblyAngularVelocity = ZERO
 		root.Anchored = state.anchored
 	end
 end
@@ -569,14 +559,6 @@ end
 --------------------------------------------------------------------
 -- LIMPIEZA Y ADAPTACION DE RIG (R15 / R6 / UGC)
 --------------------------------------------------------------------
--- Ropa en capas (WrapLayer): solo se deforma sobre cuerpos R15. En R6 no hay
--- "cage" donde ajustarse, asi que se dibuja como una malla rigida del tamano
--- del molde (los bloques enormes rosas/negros alrededor del cuerpo).
-local function isLayeredAccessory(accessory)
-	local handle = accessory:FindFirstChild("Handle")
-	return handle ~= nil and handle:FindFirstChildWhichIsA("WrapLayer", true) ~= nil
-end
-
 local function applyManualBodyColors(character, bodyColors)
 	for _, part in ipairs(character:GetChildren()) do
 		if part:IsA("BasePart") then
@@ -763,19 +745,7 @@ local function adaptR15ToR6(character, donor)
 end
 
 local function applyDonorData(character, humanoid, donor)
-	-- Rig REAL del personaje (no Humanoid.RigType)
-	local isR15 = getRigType(character, humanoid) == Enum.HumanoidRigType.R15
-
-	-- Transparencia ORIGINAL de las partes del cuerpo. Algunos juegos ocultan
-	-- las partes del rig y dibujan el cuerpo con accesorios; copiar la
-	-- transparencia del donante las hacia visibles (bloques de color de piel).
-	local keepTransparency = {}
-	for _, p in ipairs(character:GetChildren()) do
-		if p:IsA("BasePart") then
-			keepTransparency[p.Name] = p.Transparency
-		end
-	end
-
+	local isR15 = humanoid.RigType == Enum.HumanoidRigType.R15
 	wipeAppearance(character)
 
 	if isR15 then
@@ -871,10 +841,6 @@ local function applyDonorData(character, humanoid, donor)
 
 	local result = {}
 	for _, template in ipairs(donor:GetChildren()) do
-		if template:IsA("Accessory") and not isR15 and isLayeredAccessory(template) then
-			-- R6: no se puede deformar, se omite en vez de dibujarla rigida
-			continue
-		end
 		if template:IsA("Accessory") then
 			local accessory = template:Clone()
 			local handle = accessory:FindFirstChild("Handle")
@@ -894,19 +860,7 @@ local function applyDonorData(character, humanoid, donor)
 				manualAttachAccessory(accessory, character)
 			end
 
-			handle = accessory:FindFirstChild("Handle")
-			if not isR15 and not (handle and handle:FindFirstChild("AccessoryWeld")) then
-				-- sin attachment en el cuerpo R6: se descarta en vez de dejarlo suelto
-				accessory:Destroy()
-			else
-				result[template] = accessory
-			end
-		end
-	end
-
-	for _, p in ipairs(character:GetChildren()) do
-		if p:IsA("BasePart") and keepTransparency[p.Name] ~= nil then
-			p.Transparency = keepTransparency[p.Name]
+			result[template] = accessory
 		end
 	end
 
@@ -940,7 +894,7 @@ local function setAnimateEnabled(animate, enabled)
 end
 
 local function applyAnimations(character, humanoid, description)
-	if getRigType(character, humanoid) ~= Enum.HumanoidRigType.R15 then
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
 		return
 	end
 
@@ -1023,7 +977,7 @@ local function splash(character, humanoid)
 		gray.boost = 1
 	end
 
-	local emitterPart = newFxPart({ Transparency = 1, Size = Vector3.one, Position = center })
+	local emitterPart = newFxPart({ Transparency = 1, Size = ONE, Position = center })
 	local light = Instance.new("PointLight")
 	light.Color = Color3.fromRGB(225, 227, 235)
 	light.Brightness = 5
@@ -1131,7 +1085,7 @@ local function buildPlan(character, donor)
 	for _, part in ipairs(character:GetChildren()) do
 		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
 			local item = captureItem(part)
-			item.to = Vector3.one * MIN_FACTOR
+			item.to = Vector3.new(MIN_FACTOR, MIN_FACTOR, MIN_FACTOR)
 			local donorPart = donor:FindFirstChild(part.Name)
 			if donorPart and donorPart:IsA("BasePart") then
 				local ratio = donorPart.Size / part.Size
@@ -1159,7 +1113,7 @@ local function buildPlan(character, donor)
 			local handle = accessory:FindFirstChild("Handle")
 			if handle and handle:IsA("BasePart") then
 				local item = captureItem(handle)
-				item.to = Vector3.one * MIN_FACTOR
+				item.to = Vector3.new(MIN_FACTOR, MIN_FACTOR, MIN_FACTOR)
 				item.att = attachmentNameOf(handle)
 				item.effective = effectiveSize(handle)
 				table.insert(plan.acc, item)
@@ -1198,7 +1152,7 @@ local function collectNewItems(character, plan, accMap)
 	for _, part in ipairs(character:GetChildren()) do
 		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
 			local item = captureItem(part)
-			item.from = plan.similarBody[part.Name] and Vector3.one or (Vector3.one * MIN_FACTOR)
+			item.from = plan.similarBody[part.Name] and ONE or (Vector3.new(MIN_FACTOR, MIN_FACTOR, MIN_FACTOR))
 			table.insert(items, item)
 			table.insert(bodyItems, item)
 		end
@@ -1208,7 +1162,7 @@ local function collectNewItems(character, plan, accMap)
 		local handle = accessory:FindFirstChild("Handle")
 		if handle and handle:IsA("BasePart") then
 			local item = captureItem(handle)
-			item.from = plan.paired[template] and Vector3.one or (Vector3.one * MIN_FACTOR)
+			item.from = plan.paired[template] and ONE or (Vector3.new(MIN_FACTOR, MIN_FACTOR, MIN_FACTOR))
 			table.insert(items, item)
 		end
 	end
@@ -1297,14 +1251,11 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 
-		-- Rig REAL del cuerpo (no Humanoid.RigType, que puede mentir)
-		local rigType = getRigType(character, humanoid)
-
 		local donor = callMethod(
 			Players,
 			{ "CreateHumanoidModelFromDescriptionAsync", "CreateHumanoidModelFromDescription" },
 			description,
-			rigType
+			humanoid.RigType
 		)
 		if not stillValid() then
 			if donor then
@@ -1346,7 +1297,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 
-		local isR15 = rigType == Enum.HumanoidRigType.R15
+		local isR15 = humanoid.RigType == Enum.HumanoidRigType.R15
 		local hipOld = humanoid.HipHeight
 		local hipNew = isR15 and donorHumanoid.HipHeight or hipOld
 
@@ -1436,8 +1387,8 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			-- que se capturaba despues era el tamano ya encogido y el cuerpo se
 			-- quedaba diminuto para siempre.) Se hace en el mismo frame que el swap,
 			-- asi que nunca se ve ni se simula.
-			setAll(plan.body, Vector3.one)
-			setAll(plan.acc, Vector3.one)
+			setAll(plan.body, ONE)
+			setAll(plan.acc, ONE)
 
 			-- Swap de apariencia
 			stage = "swap de apariencia"
@@ -1499,7 +1450,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		----------------------------------------------------------------
 		-- LIMPIEZA: siempre se ejecuta (exito, cancelacion o error)
 		----------------------------------------------------------------
-		setAll(activeItems, Vector3.one)
+		setAll(activeItems, ONE)
 		if isR15 then
 			setFrozenHip(freeze, finalHip)
 		end
@@ -2026,7 +1977,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	local function parseInput(text)
 		text = trim(text)
 		text = (text:gsub("\u{201C}", '"'):gsub("\u{201D}", '"'))
-
+		
 		-- Si usa prefijo "name:" o "user:" o "@"
 		local prefixed = text:match("^%s*[%w_]+%s*:%s*(.+)$") or text:match("^%s*@(.+)$")
 		if prefixed then
