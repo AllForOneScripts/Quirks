@@ -1,4 +1,4 @@
-print("seriously?3433")
+print("imthemorning")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -21,16 +21,11 @@ local toggleKey = Enum.KeyCode.F4
 local lastUsername = nil
 local requestId = 0
 local transforming = false
-local quietUntil = 0
 local gray = nil
 local descriptionCache = {}
 local defaultAnims = setmetatable({}, { __mode = "k" })
 local originalHip = setmetatable({}, { __mode = "k" })
-local ownedAccessories = setmetatable({}, { __mode = "k" })
-local protectedAccessories = setmetatable({}, { __mode = "k" })
-local trackedCharacters = setmetatable({}, { __mode = "k" })
 local originalDescriptions = setmetatable({}, { __mode = "k" })
-local applyingChange = false
 local autoReapply = true
 local deathStrikes = 0
 local C_PURPLE = Color3.fromRGB(110, 30, 180)
@@ -47,9 +42,6 @@ local MENU_MAX_ROWS = 3
 local GRAY_A = Color3.fromRGB(125, 127, 134)
 local GRAY_B = Color3.fromRGB(208, 210, 218)
 local GRAY_NAME = "AFO_GrayLayer"
-local MIN_FACTOR = 0.7
-local SHRINK_TIME = 0.55
-local GROW_TIME = 0.75
 local BODY_COLOR_MAP = {
 	["Head"] = "HeadColor3",
 	["Torso"] = "TorsoColor3",
@@ -82,8 +74,6 @@ local ANIM_MAP = {
 	{ "climb", "ClimbAnim", "ClimbAnimation" },
 	{ "swim", "Swim", "SwimAnimation" },
 }
-local PRESERVE_GAME_ACCESSORIES = true
-local KEEP_NAME_PATTERNS = { "crown", "corona" }
 local GUARD_SECONDS = 6
 local GUARD_INTERVAL = 0.35
 local MAX_REPAIRS = 3
@@ -93,22 +83,18 @@ local DEATH_WINDOW = 8
 local MAX_DEATH_STRIKES = 2
 local DESCRIPTION_TIMEOUT = 20
 local R6_SKIN_FALLBACK = true
-local COPY_BODY_SCALES = true
+local MORPH_TIME = 0.55
+local HEIGHT_TIME = 0.8
+local HEIGHT_EPSILON = 0.02
+local HIP_FOLLOW_RATE = 10
 local function clamp01(x)
 	return math.clamp(x, 0, 1)
 end
+local function easeInOut(t)
+	t = clamp01(t)
+	return 0.5 - 0.5 * math.cos(math.pi * t)
+end
 
-local function easeInBack(t)
-	t = clamp01(t)
-	local c1 = 1.2
-	return (c1 + 1) * t ^ 3 - c1 * t ^ 2
-end
-local function easeOutBack(t)
-	t = clamp01(t)
-	local c1 = 1.70158
-	local c3 = c1 + 1
-	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
-end
 local function disconnectAll()
 	for _, connection in ipairs(connections) do
 		if connection and connection.Connected then
@@ -514,7 +500,35 @@ local function scaleSequence(sequence, k)
 	return NumberSequence.new(points)
 end
 
-local function makeGhost(character, root)
+local function verticalExtent(cf, size)
+	return (math.abs(cf.RightVector.Y) * size.X + math.abs(cf.UpVector.Y) * size.Y + math.abs(cf.LookVector.Y) * size.Z) / 2
+end
+local function computePoses(model)
+	local poses = {}
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return poses
+	end
+	poses[root] = CFrame.new()
+	local motors = {}
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("Motor6D") and d.Part0 and d.Part1 then
+			table.insert(motors, d)
+		end
+	end
+	local progress = true
+	while progress do
+		progress = false
+		for _, motor in ipairs(motors) do
+			if poses[motor.Part0] and not poses[motor.Part1] then
+				poses[motor.Part1] = poses[motor.Part0] * motor.C0 * motor.C1:Inverse()
+				progress = true
+			end
+		end
+	end
+	return poses
+end
+local function makeGhost(character, root, humanoid, followHip)
 	destroyGhost()
 	local state = hideState and hideState.character == character and hideState or nil
 	local hiddenPaths = {}
@@ -625,28 +639,68 @@ local function makeGhost(character, root)
 			end
 		end
 	end
+	local poses = computePoses(clone)
+	local restLow, restHigh
+	for _, item in ipairs(items) do
+		local part = item.part
+		local pose = poses[part]
+		if pose and part.Transparency < 0.95 and not isInsideAccessoryOrTool(part) then
+			local e = verticalExtent(pose, item.orig)
+			local low, high = pose.Position.Y - e, pose.Position.Y + e
+			restLow = restLow and math.min(restLow, low) or low
+			restHigh = restHigh and math.max(restHigh, high) or high
+		end
+	end
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("JointInstance") or d:IsA("WeldConstraint") or d:IsA("Constraint") then
 			d:Destroy()
 		end
 	end
-	local minY
+	local bodyLow, bodyHigh, anyLow
 	for _, item in ipairs(items) do
 		if item.part.Transparency < 0.95 then
-			local r = item.rot
-			local s = item.orig
-			local extent = (math.abs(r.RightVector.Y) * s.X + math.abs(r.UpVector.Y) * s.Y + math.abs(r.LookVector.Y) * s.Z) / 2
-			local low = item.pos.Y - extent
-			if not minY or low < minY then
-				minY = low
+			local e = verticalExtent(item.rot, item.orig)
+			local low, high = item.pos.Y - e, item.pos.Y + e
+			anyLow = anyLow and math.min(anyLow, low) or low
+			if not isInsideAccessoryOrTool(item.part) then
+				bodyLow = bodyLow and math.min(bodyLow, low) or low
+				bodyHigh = bodyHigh and math.max(bodyHigh, high) or high
 			end
 		end
 	end
+	local pivotY = bodyLow or anyLow or -3
+	local height
+	if restLow and restHigh then
+		height = restHigh - restLow
+	elseif bodyLow and bodyHigh then
+		height = bodyHigh - bodyLow
+	end
 	clone.Name = "AFO_Ghost"
 	clone.Parent = workspace.CurrentCamera or workspace
-	local g = { model = clone, items = items, pivot = Vector3.new(0, minY or -3, 0) }
+	local hipTotal = humanoid.HipHeight + root.Size.Y / 2
+	local g = {
+		model = clone,
+		items = items,
+		pivot = Vector3.new(0, pivotY, 0),
+		height = height,
+		followHip = followHip,
+		total0 = hipTotal,
+		total = hipTotal,
+		lastT = os.clock(),
+	}
 	ghostState = g
 	return g
+end
+local function ghostBase(g, root, humanoid)
+	if not g.followHip then
+		return root.CFrame
+	end
+	local now = os.clock()
+	local dt = math.min(now - g.lastT, 0.1)
+	g.lastT = now
+	local target = humanoid.HipHeight + root.Size.Y / 2
+	g.total += (target - g.total) * (1 - math.exp(-dt * HIP_FOLLOW_RATE))
+	return root.CFrame - Vector3.new(0, g.total - g.total0, 0)
 end
 local function poseGhostItem(g, item, k, sizeMul, followCF)
 	local part = item.part
@@ -670,22 +724,17 @@ local function poseGhostItem(g, item, k, sizeMul, followCF)
 	local pivot = g.pivot
 	part.CFrame = followCF * (CFrame.new(pivot + (item.pos - pivot) * k) * item.rot)
 end
-local function animateGhost(g, root, grow, id, isValid)
-	local dur = grow and GROW_TIME or SHRINK_TIME
-	return runPhase(dur, function(alpha)
-		local followCF = root.CFrame
-		local k
-		if grow then
-			k = MIN_FACTOR + (1 - MIN_FACTOR) * easeOutBack(alpha)
-		else
-			k = 1 - (1 - MIN_FACTOR) * easeInBack(alpha)
-		end
-		k = math.max(k, MIN_FACTOR)
-		local envelope = math.sin(alpha * math.pi)
-		for _, item in ipairs(g.items) do
-			local w = math.sin(alpha * 9 + item.seed) * 0.03 * envelope
-			poseGhostItem(g, item, k, Vector3.new(k * (1 + w), k * (1 - w * 0.5), k * (1 + w)), followCF)
-		end
+local function poseGhost(g, root, humanoid, k, wobble, phase)
+	local followCF = ghostBase(g, root, humanoid)
+	for _, item in ipairs(g.items) do
+		local w = math.sin(phase + item.seed) * 0.03 * wobble
+		poseGhostItem(g, item, k, Vector3.new(k * (1 + w), k, k * (1 + w)), followCF)
+	end
+end
+local function animateGhost(g, root, humanoid, k0, k1, duration, id, isValid)
+	return runPhase(duration, function(alpha)
+		local k = k0 + (k1 - k0) * easeInOut(alpha)
+		poseGhost(g, root, humanoid, k, math.sin(alpha * math.pi), alpha * 9)
 	end, id, isValid)
 end
 local function waitTransformFree(currentRequest)
@@ -698,46 +747,6 @@ local function waitTransformFree(currentRequest)
 		waited += 0.05
 	end
 	return currentRequest == requestId
-end
-local function isProtectedAccessory(accessory)
-	if ownedAccessories[accessory] then
-		return false
-	end
-	if PRESERVE_GAME_ACCESSORIES and protectedAccessories[accessory] then
-		return true
-	end
-	if accessory:GetAttribute("AFO_Keep") then
-		return true
-	end
-	local lname = accessory.Name:lower()
-	for _, pattern in ipairs(KEEP_NAME_PATTERNS) do
-		if lname:find(pattern, 1, true) then
-			return true
-		end
-	end
-	return false
-end
-local function trackCharacter(character)
-	if not active or not PRESERVE_GAME_ACCESSORIES or trackedCharacters[character] then
-		return
-	end
-	local state = { settled = false }
-	trackedCharacters[character] = state
-	task.spawn(function()
-		local t = 0
-		while localPlayer and not localPlayer:HasAppearanceLoaded() and t < 10 do
-			task.wait(0.2)
-			t += 0.2
-		end
-		task.wait(1.5)
-		state.settled = true
-	end)
-	table.insert(connections, character.ChildAdded:Connect(function(child)
-		if state.settled and not applyingChange and not transforming and os.clock() > quietUntil
-			and child:IsA("Accessory") and not ownedAccessories[child] then
-			protectedAccessories[child] = true
-		end
-	end))
 end
 local function findPart(character, name)
 	local direct = character:FindFirstChild(name)
@@ -909,7 +918,6 @@ local function fallbackWeld(character, accessory, handle, info, isR15)
 end
 local function attachAccessory(character, humanoid, template, info, isR15)
 	local accessory = template:Clone()
-	ownedAccessories[accessory] = true
 	local handle = accessory:FindFirstChild("Handle")
 	if not handle or not handle:IsA("BasePart") then
 		accessory:Destroy()
@@ -1015,11 +1023,8 @@ end
 local function wipeAppearance(character)
 	removeSkin(character)
 	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Accessory") then
-			if not isProtectedAccessory(child) then
-				child:Destroy()
-			end
-		elseif child:IsA("Clothing")
+		if child:IsA("Accessory")
+			or child:IsA("Clothing")
 			or child:IsA("ShirtGraphic")
 			or child:IsA("CharacterMesh")
 			or child:IsA("BodyColors") then
@@ -1038,29 +1043,6 @@ local function wipeAppearance(character)
 			end
 		end
 	end
-end
-local function meshIdOf(handle)
-	if handle:IsA("MeshPart") then
-		return handle.MeshId
-	end
-	local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-	return mesh and mesh.MeshId or ""
-end
-local function duplicatesProtected(character, template)
-	local templateHandle = template:FindFirstChild("Handle")
-	local templateMesh = templateHandle and meshIdOf(templateHandle) or ""
-	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Accessory") and isProtectedAccessory(child) then
-			if child.Name == template.Name then
-				return true
-			end
-			local handle = child:FindFirstChild("Handle")
-			if handle and handle:IsA("BasePart") and templateMesh ~= "" and meshIdOf(handle) == templateMesh then
-				return true
-			end
-		end
-	end
-	return false
 end
 
 local function copyPartChildren(part, donorPart)
@@ -1166,20 +1148,10 @@ local function syncR15Part(character, donorPart)
 	if donorPart.Name == "Head" and needsFullReplace(donorPart) then
 		return replaceBodyPart(character, part, donorPart)
 	end
-	if donorPart:IsA("MeshPart") and not part:IsA("MeshPart") then
+	if donorPart:IsA("MeshPart") ~= part:IsA("MeshPart") then
 		return replaceBodyPart(character, part, donorPart)
 	end
-	if part:IsA("MeshPart") and donorPart:IsA("MeshPart") then
-		if meshKey(part.MeshId) ~= meshKey(donorPart.MeshId) then
-			pcall(function()
-				part:ApplyMesh(donorPart)
-			end)
-			if meshKey(part.MeshId) ~= meshKey(donorPart.MeshId) then
-				pcall(function()
-					part.MeshId = donorPart.MeshId
-				end)
-			end
-		end
+	if donorPart:IsA("MeshPart") then
 		if meshKey(part.MeshId) ~= meshKey(donorPart.MeshId) then
 			return replaceBodyPart(character, part, donorPart)
 		end
@@ -1301,31 +1273,6 @@ local function donorHasNative(donor, bodyPart)
 	return false
 end
 local SKIN_STRIP = { "Motor6D", "Weld", "Attachment", "FaceControls", "Bone", "WrapTarget", "WrapLayer" }
-local function computePoses(model)
-	local poses = {}
-	local root = model:FindFirstChild("HumanoidRootPart")
-	if not root then
-		return poses
-	end
-	poses[root] = CFrame.new()
-	local motors = {}
-	for _, d in ipairs(model:GetDescendants()) do
-		if d:IsA("Motor6D") and d.Part0 and d.Part1 then
-			table.insert(motors, d)
-		end
-	end
-	local progress = true
-	while progress do
-		progress = false
-		for _, motor in ipairs(motors) do
-			if poses[motor.Part0] and not poses[motor.Part1] then
-				poses[motor.Part1] = poses[motor.Part0] * motor.C0 * motor.C1:Inverse()
-				progress = true
-			end
-		end
-	end
-	return poses
-end
 
 local function applySkinGroup(character, skinDonor, group, poses)
 	local target = findPart(character, group.name)
@@ -1487,7 +1434,15 @@ local function bodyMismatch(character, donor)
 			if not mine then
 				return true
 			end
-			if donorPart:IsA("MeshPart") and (not mine:IsA("MeshPart") or meshKey(mine.MeshId) ~= meshKey(donorPart.MeshId)) then
+			if donorPart:IsA("MeshPart") ~= mine:IsA("MeshPart") then
+				return true
+			end
+			if donorPart:IsA("MeshPart") and mine:IsA("MeshPart") then
+				if meshKey(mine.MeshId) ~= meshKey(donorPart.MeshId) or meshKey(mine.TextureID) ~= meshKey(donorPart.TextureID) then
+					return true
+				end
+			end
+			if donorPart.Name == "Head" and needsFullReplace(donorPart) and not isDynamicHead(mine) then
 				return true
 			end
 			if (mine.Size - donorPart.Size).Magnitude > 0.15 then
@@ -1538,7 +1493,7 @@ local function applyDonorData(character, humanoid, donor, isR15, extra)
 	local keep = {}
 	for _, template in ipairs(donor:GetChildren()) do
 		if template:IsA("Accessory") then
-			local skip = (not isR15 and isLayeredAccessory(template)) or duplicatesProtected(character, template)
+			local skip = not isR15 and isLayeredAccessory(template)
 			if not skip then
 				local info = getWeldInfo(template)
 				local accessory = attachAccessory(character, humanoid, template, info, isR15)
@@ -1555,7 +1510,7 @@ local function applyDonorData(character, humanoid, donor, isR15, extra)
 		end
 	end
 	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Accessory") and not keep[child] and not isProtectedAccessory(child) then
+		if child:IsA("Accessory") and not keep[child] then
 			child:Destroy()
 		end
 	end
@@ -1931,56 +1886,6 @@ local function captureOriginals(character, humanoid)
 end
 
 
-local function stashProtectedAccessories(character)
-	local stash = {}
-	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Accessory") and isProtectedAccessory(child) then
-			local rec = { accessory = child }
-			local handle = child:FindFirstChild("Handle")
-			if handle and handle:IsA("BasePart") then
-				for _, j in ipairs(handle:GetChildren()) do
-					if j:IsA("JointInstance") and j.Part0 and j.Part1 then
-						rec.weld = j
-						rec.handleIsPart0 = (j.Part0 == handle)
-						rec.partName = rec.handleIsPart0 and j.Part1.Name or j.Part0.Name
-						break
-					end
-				end
-			end
-			table.insert(stash, rec)
-		end
-	end
-	for _, rec in ipairs(stash) do
-		rec.accessory.Parent = nil
-	end
-	return stash
-end
-local function restoreProtectedAccessories(character, stash, isR15)
-	for _, rec in ipairs(stash) do
-		local accessory = rec.accessory
-		local handle = accessory:FindFirstChild("Handle")
-		accessory.Parent = character
-		protectedAccessories[accessory] = true
-		if handle and handle:IsA("BasePart") then
-			local part = rec.partName and findPart(character, rec.partName)
-			if part and rec.weld and rec.weld.Parent then
-				if rec.handleIsPart0 then
-					rec.weld.Part0 = handle
-					rec.weld.Part1 = part
-				else
-					rec.weld.Part0 = part
-					rec.weld.Part1 = handle
-				end
-			end
-			prepareHandle(handle)
-			if not isAttached(character, accessory) then
-				pcall(fallbackWeld, character, accessory, handle, nil, isR15)
-			end
-			if not isAttached(character, accessory) then
-			end
-		end
-	end
-end
 local function runDescriptionMethod(humanoid, description)
 	local methods = {
 		"ApplyDescriptionResetAsync",
@@ -1998,134 +1903,7 @@ local function runDescriptionMethod(humanoid, description)
 	end
 	return false
 end
-local STANDARD_ATTACHMENTS = {
-	FaceCenterAttachment = true,
-	FaceFrontAttachment = true,
-	HairAttachment = true,
-	HatAttachment = true,
-	NeckAttachment = true,
-	BodyFrontAttachment = true,
-	BodyBackAttachment = true,
-	LeftCollarAttachment = true,
-	RightCollarAttachment = true,
-	WaistFrontAttachment = true,
-	WaistBackAttachment = true,
-	WaistCenterAttachment = true,
-	LeftShoulderAttachment = true,
-	RightShoulderAttachment = true,
-	LeftGripAttachment = true,
-	RightGripAttachment = true,
-	LeftFootAttachment = true,
-	RightFootAttachment = true,
-	RootAttachment = true,
-}
-local function isAppearanceOrRigChild(inst)
-	if inst:IsA("Motor6D")
-		or inst:IsA("Decal")
-		or inst:IsA("Texture")
-		or inst:IsA("SurfaceAppearance")
-		or inst:IsA("FaceControls")
-		or inst:IsA("WrapTarget")
-		or inst:IsA("WrapLayer")
-		or inst:IsA("Bone")
-		or inst:IsA("DataModelMesh")
-		or inst:IsA("BodyPartDescription") then
-		return true
-	end
-	if inst.Name == "OriginalSize" or inst.Name == "AvatarPartScaleType" then
-		return true
-	end
-	if inst:IsA("Attachment") then
-		return STANDARD_ATTACHMENTS[inst.Name] == true or inst.Name:find("RigAttachment$") ~= nil
-	end
-	return false
-end
-local function isBodyPart(part)
-	return part:IsA("BasePart")
-		and BODY_COLOR_MAP[part.Name] ~= nil
-		and not isInsideAccessoryOrTool(part)
-end
-local function bodyPartName(part)
-	if part and isBodyPart(part) then
-		return part.Name
-	end
-	return nil
-end
-local function stashExtras(character)
-	local extras = { children = {}, links = {}, adornees = {} }
-	for _, d in ipairs(character:GetDescendants()) do
-		if (d:IsA("JointInstance") and not d:IsA("Motor6D")) or d:IsA("WeldConstraint") then
-			local owner = d.Parent
-			if not (owner and owner:IsA("BasePart") and isInsideAccessoryOrTool(owner)) then
-				local n0, n1 = bodyPartName(d.Part0), bodyPartName(d.Part1)
-				if n0 or n1 then
-					table.insert(extras.links, { joint = d, n0 = n0, n1 = n1 })
-				end
-			end
-		elseif (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and d.Name ~= GRAY_NAME then
-			local name = bodyPartName(d.Adornee)
-			if name then
-				table.insert(extras.adornees, { gui = d, name = name })
-			end
-		end
-	end
-	for _, part in ipairs(character:GetDescendants()) do
-		if isBodyPart(part) then
-			for _, child in ipairs(part:GetChildren()) do
-				if child.Name ~= GRAY_NAME
-					and not isAppearanceOrRigChild(child)
-					and not child:IsA("BaseScript") then
-					table.insert(extras.children, { inst = child, partName = part.Name })
-				end
-			end
-		end
-	end
-	for _, rec in ipairs(extras.children) do
-		rec.inst.Parent = nil
-	end
-	return extras
-end
-local function restoreExtras(character, extras)
-	local fallback = character:FindFirstChild("HumanoidRootPart")
-	for _, rec in ipairs(extras.children) do
-		local part = findPart(character, rec.partName) or fallback
-		if part then
-			pcall(function()
-				if rec.inst:IsA("Attachment") and part:FindFirstChild(rec.inst.Name) then
-					rec.inst:Destroy()
-				else
-					rec.inst.Parent = part
-				end
-			end)
-		end
-	end
-	for _, rec in ipairs(extras.links) do
-		local joint = rec.joint
-		if joint and joint.Parent then
-			pcall(function()
-				local p0 = rec.n0 and findPart(character, rec.n0)
-				local p1 = rec.n1 and findPart(character, rec.n1)
-				if p0 and joint.Part0 ~= p0 then
-					joint.Part0 = p0
-				end
-				if p1 and joint.Part1 ~= p1 then
-					joint.Part1 = p1
-				end
-			end)
-		end
-	end
-	for _, rec in ipairs(extras.adornees) do
-		if rec.gui and rec.gui.Parent then
-			local part = findPart(character, rec.name)
-			if part and rec.gui.Adornee ~= part then
-				pcall(function()
-					rec.gui.Adornee = part
-				end)
-			end
-		end
-	end
-end
-local function applyDescriptionInner(character, humanoid, description, isR15)
+local function applyDescriptionToCharacter(character, humanoid, description, isR15)
 	removeSkin(character)
 	local keepTransparency = {}
 	for _, d in ipairs(character:GetDescendants()) do
@@ -2133,9 +1911,6 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 			keepTransparency[d.Name] = d.Transparency
 		end
 	end
-	local stash = PRESERVE_GAME_ACCESSORIES and stashProtectedAccessories(character) or {}
-	local extras = PRESERVE_GAME_ACCESSORIES and stashExtras(character) or nil
-	applyingChange = true
 	local done, okRun = false, false
 	task.spawn(function()
 		okRun = runDescriptionMethod(humanoid, description)
@@ -2147,7 +1922,7 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 		waited += 0.05
 	end
 	task.wait(0.15)
-	if COPY_BODY_SCALES and isR15 and done and okRun then
+	if isR15 and done and okRun then
 		pcall(verifyScales, humanoid, description)
 	end
 	if done and okRun then
@@ -2166,24 +1941,7 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 			end
 		end
 	end
-	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Accessory") then
-			ownedAccessories[child] = true
-		end
-	end
-	if extras then
-		restoreExtras(character, extras)
-	end
-	restoreProtectedAccessories(character, stash, isR15)
 	return done and okRun
-end
-local function applyDescriptionToCharacter(character, humanoid, description, isR15)
-	local ok, result = pcall(applyDescriptionInner, character, humanoid, description, isR15)
-	applyingChange = false
-	if not ok then
-		error(result, 0)
-	end
-	return result
 end
 local function notify(text)
 	pcall(function()
@@ -2236,11 +1994,18 @@ local function snapshotPartSet(character)
 	end
 	return set
 end
-local function cleanupAfterChange(character, vis, before)
+local function hasJoint(character, part)
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("Motor6D") and d.Part1 == part then
+			return true
+		end
+	end
+	return false
+end
+local function dedupeBodyParts(character, before)
 	local groups = {}
 	for _, d in ipairs(character:GetDescendants()) do
-		if d:IsA("BasePart") and not isInsideAccessoryOrTool(d)
-			and (BODY_COLOR_MAP[d.Name] or d.Name == "HumanoidRootPart") then
+		if d:IsA("BasePart") and BODY_COLOR_MAP[d.Name] and not isInsideAccessoryOrTool(d) then
 			local list = groups[d.Name]
 			if not list then
 				list = {}
@@ -2249,26 +2014,47 @@ local function cleanupAfterChange(character, vis, before)
 			table.insert(list, d)
 		end
 	end
-	for name, list in pairs(groups) do
+	for _, list in pairs(groups) do
 		if #list > 1 then
-			local olds = 0
+			local fresh, stale = {}, {}
 			for _, part in ipairs(list) do
 				if before[part] then
-					olds += 1
+					table.insert(stale, part)
+				else
+					table.insert(fresh, part)
 				end
 			end
-			local keepFirstNew = olds == 0
-			for _, part in ipairs(list) do
-				if not before[part] then
-					if keepFirstNew then
-						keepFirstNew = false
-					else
-						part:Destroy()
+			local keeper
+			for _, part in ipairs(fresh) do
+				if hasJoint(character, part) then
+					keeper = part
+					break
+				end
+			end
+			if not keeper then
+				local linked
+				for _, part in ipairs(stale) do
+					if hasJoint(character, part) then
+						linked = part
+						break
 					end
+				end
+				if linked and #fresh > 0 then
+					keeper = replaceBodyPart(character, linked, fresh[1])
+				else
+					keeper = linked or fresh[1] or stale[1]
+				end
+			end
+			for _, part in ipairs(list) do
+				if part ~= keeper and part.Parent then
+					part:Destroy()
 				end
 			end
 		end
 	end
+end
+local function cleanupAfterChange(character, vis, before)
+	dedupeBodyParts(character, before)
 	local lockVisibility = gameHidesRig(vis)
 	local function reassert()
 		if not lockVisibility then
@@ -2284,17 +2070,6 @@ local function cleanupAfterChange(character, vis, before)
 		end
 	end
 	reassert()
-	for _, delayTime in ipairs({ 0.4, 1.5, 3 }) do
-		task.delay(delayTime, function()
-			if character.Parent then
-				for _, child in ipairs(character:GetChildren()) do
-					if child:IsA("Accessory") and not isProtectedAccessory(child) then
-						ownedAccessories[child] = true
-					end
-				end
-			end
-		end)
-	end
 	for _, delayTime in ipairs({ 0.3, 1, 2.5 }) do
 		task.delay(delayTime, function()
 			if character.Parent then
@@ -2349,7 +2124,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		if not root then
 			return
 		end
-		trackCharacter(character)
 		captureOriginals(character, humanoid)
 		local userId = getUserId(username)
 		if not userId then
@@ -2540,7 +2314,17 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			end
 			return result
 		end
+		local function settleBody()
+			if not isR15 or not donor then
+				return
+			end
+			if bodyMismatch(character, donor) then
+				syncBodyGeometry(character, donor)
+				applyHip()
+			end
+		end
 		local function finishAnimations()
+			pcall(settleBody)
 			local waitedAnim = 0
 			while not animReady and waitedAnim < 8 do
 				task.wait(0.05)
@@ -2555,7 +2339,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			finishAnimations()
 			cleanupDonors()
 			transforming = false
-			quietUntil = os.clock() + 8
 			return
 		end
 		transforming = true
@@ -2565,7 +2348,8 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			local function valid()
 				return stillValid() and root.Parent ~= nil
 			end
-			local oldGhost = makeGhost(character, root)
+			local oldGhost = makeGhost(character, root, humanoid, true)
+			local oldHeight = oldGhost and oldGhost.height
 			local useGhost = oldGhost ~= nil
 			if oldGhost then
 				hideCharacter(character)
@@ -2577,7 +2361,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				changeDone = true
 			end)
 			if oldGhost then
-				if not animateGhost(oldGhost, root, false, currentRequest, valid) then
+				if not animateGhost(oldGhost, root, humanoid, 1, 1, MORPH_TIME, currentRequest, valid) then
 					destroyGhost()
 					return
 				end
@@ -2590,10 +2374,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				end
 				local g = ghostState
 				if g then
-					local cf = root.CFrame
-					for _, item in ipairs(g.items) do
-						poseGhostItem(g, item, MIN_FACTOR, Vector3.one * MIN_FACTOR, cf)
-					end
+					poseGhost(g, root, humanoid, 1, 0, 0)
 				end
 				waitedChange += RunService.Heartbeat:Wait()
 			end
@@ -2609,10 +2390,19 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if useGhost then
 				RunService.Heartbeat:Wait()
 				RunService.Heartbeat:Wait()
-				local newGhost = makeGhost(character, root)
+				local newGhost = makeGhost(character, root, humanoid, false)
 				if newGhost then
 					retargetGray(newGhost.model)
-					if not animateGhost(newGhost, root, true, currentRequest, valid) then
+					local startK = 1
+					local newHeight = newGhost.height
+					if oldHeight and newHeight and newHeight > 0.01 then
+						local ratio = oldHeight / newHeight
+						if math.abs(ratio - 1) > HEIGHT_EPSILON then
+							startK = math.clamp(ratio, 0.2, 5)
+						end
+					end
+					local duration = startK == 1 and MORPH_TIME or HEIGHT_TIME
+					if not animateGhost(newGhost, root, humanoid, startK, 1, duration, currentRequest, valid) then
 						return
 					end
 				end
@@ -2631,7 +2421,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		end
 		cleanupDonors()
 		transforming = false
-		quietUntil = os.clock() + 8
 		if currentRequest == requestId then
 			if completed then
 				splash(character, humanoid)
@@ -2717,7 +2506,6 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	requestId += 1
 	autoReapply = true
 	deathStrikes = 0
-	table.clear(trackedCharacters)
 	disconnectAll()
 	releaseGray(true)
 	clearTransformVisuals()
@@ -3132,7 +2920,6 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	end
 	table.insert(connections, textBox:GetPropertyChangedSignal("Text"):Connect(fitText))
 	table.insert(connections, localPlayer.CharacterAdded:Connect(function(character)
-		trackCharacter(character)
 		if active and autoReapply and lastUsername and lastUsername:lower() ~= localPlayer.Name:lower() then
 			task.spawn(function()
 				character:WaitForChild("Humanoid", 10)
@@ -3168,9 +2955,6 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 			togglePanel()
 		end
 	end))
-	if localPlayer.Character then
-		trackCharacter(localPlayer.Character)
-	end
 	if defaultAvatar:lower() == localPlayer.Name:lower() then
 		loadAvatarImage(localPlayer.UserId, requestId)
 	else
