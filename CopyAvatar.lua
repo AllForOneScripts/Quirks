@@ -1,4 +1,4 @@
-print("dindsuaid")
+print("daid")
 
 local M = {}
 
@@ -765,6 +765,17 @@ end
 local function applyDonorData(character, humanoid, donor)
 	-- Rig REAL del personaje (no Humanoid.RigType)
 	local isR15 = getRigType(character, humanoid) == Enum.HumanoidRigType.R15
+
+	-- Transparencia ORIGINAL de las partes del cuerpo. Algunos juegos ocultan
+	-- las partes del rig y dibujan el cuerpo con accesorios; copiar la
+	-- transparencia del donante las hacia visibles (bloques de color de piel).
+	local keepTransparency = {}
+	for _, p in ipairs(character:GetChildren()) do
+		if p:IsA("BasePart") then
+			keepTransparency[p.Name] = p.Transparency
+		end
+	end
+
 	wipeAppearance(character)
 
 	if isR15 then
@@ -890,6 +901,12 @@ local function applyDonorData(character, humanoid, donor)
 			else
 				result[template] = accessory
 			end
+		end
+	end
+
+	for _, p in ipairs(character:GetChildren()) do
+		if p:IsA("BasePart") and keepTransparency[p.Name] ~= nil then
+			p.Transparency = keepTransparency[p.Name]
 		end
 	end
 
