@@ -113,11 +113,15 @@ local KEEP_NAME_PATTERNS = { "crown", "corona" }
 local GUARD_SECONDS = 6
 local GUARD_INTERVAL = 0.35
 local MAX_REPAIRS = 3
--- (v6) false (por defecto) = metodo "en sitio": modifica las partes que ya
--- existen (malla/textura/colores) sin reemplazarlas ni borrar cosas del juego,
--- como hacia el CopyAvatar original. true = experimental: usa el metodo oficial
--- Humanoid:ApplyDescription (el motor puede reemplazar partes del cuerpo).
-local USE_APPLY_DESCRIPTION = false
+-- (v6) Como se aplica el avatar:
+--  * R15 -> true: metodo OFICIAL Humanoid:ApplyDescriptionResetAsync. El motor
+--    arma solo cuello, escalas, cabeza (incluida la dinamica), ropa en capas y
+--    accesorios. El metodo manual en R15 dejaba la cabeza hundida / mataba al
+--    personaje. Si falla, se usa el metodo manual como respaldo.
+--  * R6  -> false: metodo "en sitio" (como el CopyAvatar original): no
+--    reemplaza partes ni borra cosas del juego.
+local USE_APPLY_DESCRIPTION_R15 = true
+local USE_APPLY_DESCRIPTION_R6 = false
 -- Anti-bucle de muertes: si el personaje muere dentro de DEATH_WINDOW segundos
 -- despues de un cambio de avatar MAX_DEATH_STRIKES veces seguidas, se deja de
 -- reaplicar el avatar al reaparecer y se pasa a "modo seguro" (no reemplaza
@@ -485,7 +489,28 @@ local STRIP_CLASSES = {
 	"Highlight",
 	"BillboardGui",
 	"ProximityPrompt",
+	"ParticleEmitter",
+	"Trail",
+	"Beam",
+	"Fire",
+	"Smoke",
+	"Sparkles",
+	"Light",
 }
+
+-- Efectos que siguen "vivos" aunque el cuerpo este oculto: particulas, rastros,
+-- rayos, luces. Durante la transformacion se apagan y se limpian (si no, las
+-- estrellas del avatar viejo se quedaban flotando sin cuerpo).
+local FX_CLASSES = { "ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles", "Light" }
+
+local function isFxInstance(inst)
+	for _, className in ipairs(FX_CLASSES) do
+		if inst:IsA(className) then
+			return true
+		end
+	end
+	return false
+end
 
 local function hideStep()
 	local state = hideState
@@ -506,6 +531,18 @@ local function hideStep()
 				end
 				d.LocalTransparencyModifier = 1
 			end
+		elseif isFxInstance(d) then
+			if state.fx[d] == nil then
+				state.fx[d] = d.Enabled
+				if d:IsA("ParticleEmitter") then
+					pcall(function()
+						d:Clear()
+					end)
+				end
+			end
+			if d.Enabled then
+				d.Enabled = false
+			end
 		end
 	end
 end
@@ -520,6 +557,13 @@ local function showCharacter()
 	if not state then
 		return
 	end
+	for inst, wasEnabled in pairs(state.fx) do
+		if inst.Parent then
+			pcall(function()
+				inst.Enabled = wasEnabled
+			end)
+		end
+	end
 	local target = state.character
 	if target and target.Parent then
 		for _, d in ipairs(target:GetDescendants()) do
@@ -532,7 +576,11 @@ end
 
 local function hideCharacter(character)
 	showCharacter()
-	hideState = { character = character, saved = setmetatable({}, { __mode = "k" }) }
+	hideState = {
+		character = character,
+		saved = setmetatable({}, { __mode = "k" }),
+		fx = setmetatable({}, { __mode = "k" }),
+	}
 	hideStep()
 	pcall(function()
 		RunService:BindToRenderStep(HIDE_STEP, Enum.RenderPriority.Last.Value, hideStep)
@@ -1073,6 +1121,20 @@ local function applyManualBodyColors(character, bodyColors)
 	end
 end
 
+-- Hay juegos que esconden TODO el rig (Torso, brazos, piernas con Transparency 1)
+-- y dibujan el cuerpo con otra cosa. En ese caso, y solo en ese caso, las partes
+-- deben seguir ocultas despues del cambio. Un avatar con cabeza invisible
+-- (Headless) NO cuenta: ahi la transparencia SI debe cambiar con el avatar.
+local function gameHidesRig(snap)
+	local hidden = 0
+	for name, transparency in pairs(snap) do
+		if name ~= "Head" and BODY_COLOR_MAP[name] and transparency >= 0.95 then
+			hidden += 1
+		end
+	end
+	return hidden >= 3
+end
+
 -- Solo borra lo que pertenece al AVATAR: accesorios, ropa clasica y BodyColors
 -- (hijos directos del personaje) + cara/malla de la cabeza + SurfaceAppearance de
 -- las partes del cuerpo. Nada mas: lo que el juego cuelga del personaje (el
@@ -1436,10 +1498,12 @@ local function applyDonorData(character, humanoid, donor, isR15)
 		end
 	end
 
-	for name, transparency in pairs(keepTransparency) do
-		local p = findPart(character, name)
-		if p then
-			p.Transparency = transparency
+	if gameHidesRig(keepTransparency) then
+		for name, transparency in pairs(keepTransparency) do
+			local p = findPart(character, name)
+			if p then
+				p.Transparency = transparency
+			end
 		end
 	end
 
@@ -1995,7 +2059,11 @@ local function restoreExtras(character, extras)
 		local part = findPart(character, rec.partName) or fallback
 		if part then
 			pcall(function()
-				rec.inst.Parent = part
+				if rec.inst:IsA("Attachment") and part:FindFirstChild(rec.inst.Name) then
+					rec.inst:Destroy() -- el motor ya creo uno igual en la parte nueva
+				else
+					rec.inst.Parent = part
+				end
 			end)
 		end
 	end
@@ -2055,10 +2123,12 @@ local function applyDescriptionInner(character, humanoid, description, isR15)
 	end
 	task.wait(0.15) -- deja que terminen de llegar los ultimos accesorios
 
-	for name, transparency in pairs(keepTransparency) do
-		local p = findPart(character, name)
-		if p and p.Transparency ~= transparency then
-			p.Transparency = transparency
+	if gameHidesRig(keepTransparency) then
+		for name, transparency in pairs(keepTransparency) do
+			local p = findPart(character, name)
+			if p and p.Transparency ~= transparency then
+				p.Transparency = transparency
+			end
 		end
 	end
 
@@ -2193,7 +2263,11 @@ local function cleanupAfterChange(character, vis, before)
 		end
 	end
 
+	local lockVisibility = gameHidesRig(vis)
 	local function reassert()
+		if not lockVisibility then
+			return
+		end
 		for _, d in ipairs(character:GetDescendants()) do
 			if d:IsA("BasePart") and not isInsideAccessoryOrTool(d) then
 				local want = vis[d.Name]
@@ -2312,8 +2386,17 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 
 		-- Reset: se usa el aspecto que el personaje tenia al empezar (el que le dio
 		-- el juego); si no se pudo guardar, el avatar de tu cuenta.
+		-- Rig REAL del cuerpo (Humanoid.RigType puede mentir en rigs custom).
+		-- ApplyDescription obedece a Humanoid.RigType: si no coincide con el rig
+		-- real se usa el metodo manual (apoyado en un modelo donante).
+		local rigType = getRigType(character, humanoid)
+		local isR15 = rigType == Enum.HumanoidRigType.R15
+		local useDescription = ((isR15 and USE_APPLY_DESCRIPTION_R15) or (not isR15 and USE_APPLY_DESCRIPTION_R6))
+			and not safeMode
+			and humanoid.RigType == rigType
+
 		local description
-		if isReset and USE_APPLY_DESCRIPTION and originalDescriptions[character] then
+		if isReset and useDescription and originalDescriptions[character] then
 			description = originalDescriptions[character]:Clone()
 		else
 			description = getDescription(userId)
@@ -2325,13 +2408,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			fail()
 			return
 		end
-
-		-- Rig REAL del cuerpo (Humanoid.RigType puede mentir en rigs custom).
-		-- ApplyDescription obedece a Humanoid.RigType: si no coincide con el rig
-		-- real se usa el metodo manual (apoyado en un modelo donante).
-		local rigType = getRigType(character, humanoid)
-		local isR15 = rigType == Enum.HumanoidRigType.R15
-		local useDescription = USE_APPLY_DESCRIPTION and not safeMode and humanoid.RigType == rigType
 		dbg("rig real:", rigType.Name, "| Humanoid.RigType:", humanoid.RigType.Name,
 			"| metodo:", useDescription and "ApplyDescription" or "manual")
 		dumpBody(character, "antes")
@@ -2521,21 +2597,33 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if oldGhost then
 				stage = "encoger"
 				local ok = animateGhost(oldGhost, root, false, currentRequest, valid)
-				destroyGhost()
 				if not ok then
+					destroyGhost()
 					return
 				end
 			end
 
+			-- ApplyDescription puede tardar: mientras tanto el fantasma queda como
+			-- una gota diminuta pegada al suelo (siguiendo al jugador) en vez de
+			-- dejar el personaje invisible sin ninguna pista.
 			stage = "esperando el cambio"
 			local waitedChange = 0
 			while not changeDone and waitedChange < 25 do
 				if not valid() then
+					destroyGhost()
 					return
+				end
+				local g = ghostState
+				if g then
+					local cf = root.CFrame
+					for _, item in ipairs(g.items) do
+						poseGhostItem(g, item, MIN_FACTOR, Vector3.one * MIN_FACTOR, cf)
+					end
 				end
 				task.wait(0.05)
 				waitedChange += 0.05
 			end
+			destroyGhost()
 			if not changeOk then
 				return
 			end
