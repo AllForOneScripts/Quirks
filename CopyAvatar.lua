@@ -1,4 +1,4 @@
-print("325235esdf")
+print("32143df")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -8,6 +8,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
 local Debris = game:GetService("Debris")
+local SoundService = game:GetService("SoundService")
 local localPlayer
 local keys
 local active = false
@@ -240,6 +241,93 @@ local function loadAvatarImage(userId, currentRequest)
 	end)
 end
 
+local SFX_START = "rbxassetid://133636509794555"
+local SFX_LOOP = { "rbxassetid://77661010879646", "rbxassetid://112251905264250" }
+local SFX_FINISH = "rbxassetid://130507807370367"
+local SFX_START_VOLUME = 4
+local SFX_LOOP_VOLUME = 7
+local SFX_FINISH_VOLUME = 5
+local SFX_LOOP_CLIP_TIMEOUT = 10
+local sfxLoopToken = 0
+local sfxLoopSound = nil
+
+local function newSfx(id, volume)
+	local sound = Instance.new("Sound")
+	sound.Name = "AFO_Sfx"
+	sound.SoundId = id
+	sound.Volume = volume
+	sound.Parent = SoundService
+	return sound
+end
+
+local function playSfx(id, volume)
+	local sound = newSfx(id, volume)
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	Debris:AddItem(sound, 20)
+	sound:Play()
+end
+
+local function stopSfxLoop()
+	sfxLoopToken += 1
+	local sound = sfxLoopSound
+	sfxLoopSound = nil
+	if sound then
+		pcall(function()
+			sound:Stop()
+			sound:Destroy()
+		end)
+	end
+end
+
+local function startSfxLoop()
+	stopSfxLoop()
+	local token = sfxLoopToken
+	task.spawn(function()
+		while token == sfxLoopToken and active do
+			local sound = newSfx(SFX_LOOP[math.random(#SFX_LOOP)], SFX_LOOP_VOLUME)
+			sfxLoopSound = sound
+			local ended = false
+			sound.Ended:Once(function()
+				ended = true
+			end)
+			sound:Play()
+			local t0 = os.clock()
+			while token == sfxLoopToken and not ended do
+				local elapsed = os.clock() - t0
+				if elapsed > SFX_LOOP_CLIP_TIMEOUT or (elapsed > 2 and not sound.IsPlaying) then
+					break
+				end
+				task.wait(0.05)
+			end
+			if sfxLoopSound == sound then
+				sfxLoopSound = nil
+			end
+			pcall(function()
+				sound:Destroy()
+			end)
+		end
+	end)
+end
+
+local function preloadSfx()
+	task.spawn(function()
+		local list = {}
+		for _, id in ipairs({ SFX_START, SFX_LOOP[1], SFX_LOOP[2], SFX_FINISH }) do
+			local sound = Instance.new("Sound")
+			sound.SoundId = id
+			table.insert(list, sound)
+		end
+		pcall(function()
+			ContentProvider:PreloadAsync(list)
+		end)
+		for _, sound in ipairs(list) do
+			sound:Destroy()
+		end
+	end)
+end
+
 local function snapshotHighlights(character)
 	local saved = {}
 	local function consider(h)
@@ -277,6 +365,7 @@ local function restoreHighlights(saved)
 end
 
 local function releaseGray(instant)
+	stopSfxLoop()
 	local g = gray
 	if not g then
 		return
@@ -813,6 +902,13 @@ local function sanitizeAccessories(character)
 			child.Massless = true
 		end
 		if child:IsA("Accessory") then
+			for _, d in ipairs(child:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.CanCollide = false
+					d.CanTouch = false
+					d.Massless = true
+				end
+			end
 			local handle = child:FindFirstChild("Handle")
 			if handle and handle:IsA("BasePart") then
 				handle.CanCollide = false
@@ -1629,6 +1725,8 @@ local function splash(character, humanoid)
 	if not root then
 		return
 	end
+	stopSfxLoop()
+	playSfx(SFX_FINISH, SFX_FINISH_VOLUME)
 	local center = root.Position
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -2009,114 +2107,7 @@ local function watchDeath(humanoid)
 		end
 	end)
 end
-local R15 = {
-	MIN_FACTOR = 0.03,
-	SHRINK_TIME = 0.75,
-	GROW_TIME = 0.95,
-	STAGGER = 0.4,
-	SIMILAR_MIN = 0.6,
-	SIMILAR_MAX = 1.7,
-}
-
-function R15.easeInBack(t)
-	local c1 = 1.2
-	return (c1 + 1) * t ^ 3 - c1 * t ^ 2
-end
-
-function R15.easeOutBack(t)
-	local c1 = 1.70158
-	local c3 = c1 + 1
-	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
-end
-
-function R15.captureItem(part)
-	local item = {
-		part = part,
-		orig = part.Size,
-		meshes = {},
-		delay = math.random() * R15.STAGGER,
-		seed = math.random() * 6.28,
-	}
-	for _, child in ipairs(part:GetChildren()) do
-		if child:IsA("SpecialMesh") and child.MeshType == Enum.MeshType.FileMesh then
-			table.insert(item.meshes, { mesh = child, orig = child.Scale })
-		end
-	end
-	return item
-end
-
-function R15.setItemFactor(item, f)
-	local part = item.part
-	if not part or not part.Parent then
-		return
-	end
-	local floor = R15.MIN_FACTOR
-	f = Vector3.new(math.max(f.X, floor), math.max(f.Y, floor), math.max(f.Z, floor))
-	part.Size = item.orig * f
-	for _, entry in ipairs(item.meshes) do
-		if entry.mesh.Parent then
-			entry.mesh.Scale = entry.orig * f
-		end
-	end
-end
-
-function R15.setAll(items, f)
-	for _, item in ipairs(items) do
-		R15.setItemFactor(item, f)
-	end
-end
-
-function R15.effectiveSize(part)
-	local size = part.Size
-	local mesh = part:FindFirstChildOfClass("SpecialMesh")
-	if mesh and mesh.MeshType == Enum.MeshType.FileMesh then
-		size = size * mesh.Scale
-	end
-	return size
-end
-
-function R15.isSimilar(ratio)
-	local low, high = R15.SIMILAR_MIN, R15.SIMILAR_MAX
-	return ratio.X >= low and ratio.X <= high
-		and ratio.Y >= low and ratio.Y <= high
-		and ratio.Z >= low and ratio.Z <= high
-end
-
-function R15.softTarget(oldSize, newSize)
-	local ratio = newSize / oldSize
-	local ratioClamped = Vector3.new(
-		math.clamp(ratio.X, 0.4, 2.5),
-		math.clamp(ratio.Y, 0.4, 2.5),
-		math.clamp(ratio.Z, 0.4, 2.5)
-	)
-	local volume = math.max(ratio.X * ratio.Y * ratio.Z, 1e-3)
-	local mismatch = clamp01(math.abs(math.log(volume)) / math.log(4))
-	local floorScale = 0.55 + (R15.MIN_FACTOR - 0.55) * mismatch
-	local to = ratioClamped * floorScale
-	local from = to / ratio
-	return to, from
-end
-
-function R15.wobble(base, item, alpha)
-	if alpha <= 0 or alpha >= 1 then
-		return base
-	end
-	local w = math.sin(alpha * 11 + item.seed) * 0.12 * math.sin(alpha * math.pi)
-	return base * Vector3.new(1 + w, 1 - w * 0.8, 1 + w)
-end
-
-function R15.shrinkFactor(item, alpha)
-	local e = R15.easeInBack(alpha)
-	return R15.wobble(Vector3.one:Lerp(item.to, e), item, alpha)
-end
-
-function R15.growFactor(item, alpha)
-	if alpha >= 1 then
-		return Vector3.one
-	end
-	local e = R15.easeOutBack(alpha)
-	return R15.wobble(item.from:Lerp(Vector3.one, e), item, alpha)
-end
+local R15 = {}
 
 function R15.manualAttach(accessory, character)
 	local handle = accessory:FindFirstChild("Handle")
@@ -2331,32 +2322,98 @@ function R15.applyDonorData(character, humanoid, donor)
 	return result
 end
 
-function R15.applyAnimations(character, humanoid, description)
-	local animate = character:FindFirstChild("Animate") or character:WaitForChild("Animate", 5)
-	if not animate then
-		return
-	end
-	local defaults = defaultAnims[character]
-	if not defaults then
-		defaults = {}
+function R15.readLiveAnimations(targetPlayer)
+	local live = {}
+	pcall(function()
+		local targetCharacter = targetPlayer and targetPlayer.Character
+		local targetHumanoid = targetCharacter and targetCharacter:FindFirstChildOfClass("Humanoid")
+		if not targetHumanoid or targetHumanoid.RigType ~= Enum.HumanoidRigType.R15 then
+			return
+		end
+		local animate = targetCharacter:FindFirstChild("Animate")
+		if not animate then
+			return
+		end
 		for _, entry in ipairs(ANIM_MAP) do
 			local folder = animate:FindFirstChild(entry[1])
 			local anim = folder and folder:FindFirstChild(entry[2])
-			if anim and anim:IsA("Animation") then
-				defaults[entry[1] .. "/" .. entry[2]] = anim.AnimationId
+			if anim and anim:IsA("Animation") and anim.AnimationId ~= "" then
+				live[entry[1] .. "/" .. entry[2]] = anim.AnimationId
 			end
 		end
-		defaultAnims[character] = defaults
+	end)
+	return live
+end
+
+-- The Animate script reads script.<folder>.<Animation>.AnimationId (idle, walk, run, jump, fall, climb, swim)
+-- and reloads a set whenever a child is added, removed or changed. Changing the id is enough for the NEXT
+-- animation it picks, but the track that is already playing keeps the old one, so after editing the ids the
+-- script is restarted to make the change show up right away.
+function R15.applyAnimations(character, humanoid, description, targetPlayer)
+	local animate = character:FindFirstChild("Animate") or character:WaitForChild("Animate", 1)
+	if not animate then
+		return
 	end
+	captureDefaultAnims(character)
+	local defaults = defaultAnims[character] or {}
+	local live = targetPlayer and R15.readLiveAnimations(targetPlayer) or {}
+	local touched = {}
+	local changed = false
 	for _, entry in ipairs(ANIM_MAP) do
-		local folder = animate:FindFirstChild(entry[1])
-		local anim = folder and folder:FindFirstChild(entry[2])
-		if anim and anim:IsA("Animation") then
-			local id = description and description[entry[3]] or 0
-			local newId = (id and id ~= 0) and ("rbxassetid://" .. tostring(id)) or defaults[entry[1] .. "/" .. entry[2]]
-			if newId then
-				anim.AnimationId = newId
+		local folderName, animName, propertyName = entry[1], entry[2], entry[3]
+		local key = folderName .. "/" .. animName
+		local id = description and description[propertyName] or 0
+		local newId
+		if type(id) == "number" and id ~= 0 then
+			newId = "rbxassetid://" .. tostring(id)
+		else
+			newId = live[key] or defaults[key]
+		end
+		local folder = animate:FindFirstChild(folderName)
+		local anim = folder and folder:FindFirstChild(animName)
+		if newId then
+			if not folder then
+				folder = Instance.new("StringValue")
+				folder.Name = folderName
+				folder:SetAttribute("AFO_Created", true)
+				folder.Parent = animate
+				changed = true
 			end
+			if not (anim and anim:IsA("Animation")) then
+				anim = Instance.new("Animation")
+				anim.Name = animName
+				anim:SetAttribute("AFO_Created", true)
+				anim.Parent = folder
+				changed = true
+			end
+			if anim.AnimationId ~= newId then
+				anim.AnimationId = newId
+				changed = true
+			end
+			table.insert(touched, anim)
+		elseif anim and anim:GetAttribute("AFO_Created") then
+			anim:Destroy()
+			if folder and folder:GetAttribute("AFO_Created") and #folder:GetChildren() == 0 then
+				folder:Destroy()
+			end
+			changed = true
+		end
+	end
+	if not changed then
+		return
+	end
+	if #touched > 0 then
+		local loaded = false
+		task.spawn(function()
+			pcall(function()
+				ContentProvider:PreloadAsync(touched)
+			end)
+			loaded = true
+		end)
+		local waited = 0
+		while not loaded and waited < 2 do
+			task.wait(0.05)
+			waited += 0.05
 		end
 	end
 	local animator = humanoid:FindFirstChildOfClass("Animator")
@@ -2370,262 +2427,26 @@ function R15.applyAnimations(character, humanoid, description)
 	setAnimateEnabled(animate, true)
 end
 
-function R15.attachmentNameOf(handle)
-	local attachment = findHandleAttachment(handle)
-	return attachment and attachment.Name or ""
-end
-
-function R15.buildPlan(character, donor)
-	local plan = { body = {}, acc = {}, fromBody = {}, paired = {} }
-	for _, part in ipairs(character:GetChildren()) do
-		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-			local item = R15.captureItem(part)
-			item.to = Vector3.one * R15.MIN_FACTOR
-			local donorPart = donor:FindFirstChild(part.Name)
-			if donorPart and donorPart:IsA("BasePart") then
-				local to, from = R15.softTarget(part.Size, donorPart.Size)
-				item.to = to
-				plan.fromBody[part.Name] = from
-			end
-			table.insert(plan.body, item)
-		end
-	end
-	local templates = {}
-	for _, template in ipairs(donor:GetChildren()) do
-		if template:IsA("Accessory") then
-			local handle = template:FindFirstChild("Handle")
-			if handle and handle:IsA("BasePart") then
-				table.insert(templates, {
-					template = template,
-					handle = handle,
-					att = R15.attachmentNameOf(handle),
-				})
-			end
-		end
-	end
-	for _, accessory in ipairs(character:GetChildren()) do
-		if accessory:IsA("Accessory") then
-			local handle = accessory:FindFirstChild("Handle")
-			if handle and handle:IsA("BasePart") then
-				local item = R15.captureItem(handle)
-				item.to = Vector3.one * R15.MIN_FACTOR
-				item.att = R15.attachmentNameOf(handle)
-				item.effective = R15.effectiveSize(handle)
-				table.insert(plan.acc, item)
-			end
-		end
-	end
-	for _, entry in ipairs(templates) do
-		local best, bestScore, bestTo, bestFrom
-		local newSize = R15.effectiveSize(entry.handle)
-		for _, item in ipairs(plan.acc) do
-			if not item.paired and item.att == entry.att then
-				local ratio = newSize / item.effective
-				if R15.isSimilar(ratio) then
-					local score = math.abs(math.log(ratio.X * ratio.Y * ratio.Z))
-					if not bestScore or score < bestScore then
-						local to, from = R15.softTarget(item.effective, newSize)
-						best, bestScore, bestTo, bestFrom = item, score, to, from
-					end
-				end
-			end
-		end
-		if best then
-			best.paired = true
-			best.to = bestTo
-			plan.paired[entry.template] = bestFrom
-		end
-	end
-	return plan
-end
-
-function R15.collectNewItems(character, plan, accMap)
-	local items = {}
-	local bodyItems = {}
-	for _, part in ipairs(character:GetChildren()) do
-		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-			local item = R15.captureItem(part)
-			item.from = plan.fromBody[part.Name] or (Vector3.one * R15.MIN_FACTOR)
-			table.insert(items, item)
-			table.insert(bodyItems, item)
-		end
-	end
-	for template, accessory in pairs(accMap) do
-		local handle = accessory:FindFirstChild("Handle")
-		if handle and handle:IsA("BasePart") then
-			local item = R15.captureItem(handle)
-			item.from = plan.paired[template] or (Vector3.one * R15.MIN_FACTOR)
-			table.insert(items, item)
-		end
-	end
-	return items, bodyItems
-end
-
-function R15.averageY(items, getter)
-	if #items == 0 then
-		return 1
-	end
-	local sum = 0
-	for _, item in ipairs(items) do
-		sum += math.max(getter(item), R15.MIN_FACTOR)
-	end
-	return sum / #items
-end
-
-function R15.transform(character, humanoid, donor, donorHumanoid, description, animated, currentRequest, stillValid)
-	local hipOld = humanoid.HipHeight
-	local hipNew = donorHumanoid.HipHeight
-	if not animated then
-		R15.applyDonorData(character, humanoid, donor)
-		humanoid.HipHeight = hipNew
-		fixColorsDeferred(character, currentRequest)
-		R15.applyAnimations(character, humanoid, description)
+-- Keeps the feet on the ground when the new body is taller/shorter without touching the game's own
+-- HumanoidRootPart size: ground -> root centre must equal what the donor rig would have.
+function R15.syncRoot(character, humanoid, donor)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local donorRoot = donor:FindFirstChild("HumanoidRootPart")
+	local donorHumanoid = donor:FindFirstChildOfClass("Humanoid")
+	if not (root and donorRoot and donorHumanoid) then
 		return
 	end
-	local plan = R15.buildPlan(character, donor)
-	local totalShrink = R15.SHRINK_TIME + R15.STAGGER
-	local ok = runPhase(totalShrink, function(alpha)
-		local t = alpha * totalShrink
-		local sumY = 0
-		for _, item in ipairs(plan.body) do
-			local f = R15.shrinkFactor(item, clamp01((t - item.delay) / R15.SHRINK_TIME))
-			R15.setItemFactor(item, f)
-			sumY += math.max(f.Y, R15.MIN_FACTOR)
-		end
-		for _, item in ipairs(plan.acc) do
-			R15.setItemFactor(item, R15.shrinkFactor(item, clamp01((t - item.delay) / R15.SHRINK_TIME)))
-		end
-		if #plan.body > 0 then
-			humanoid.HipHeight = hipOld * (sumY / #plan.body)
-		end
-	end, currentRequest, stillValid)
-	if not ok then
-		R15.setAll(plan.body, Vector3.one)
-		R15.setAll(plan.acc, Vector3.one)
-		humanoid.HipHeight = hipOld
-		return
-	end
-	local accMap = R15.applyDonorData(character, humanoid, donor)
-	task.spawn(function()
-		pcall(function()
-			ContentProvider:PreloadAsync(character:GetDescendants())
-		end)
+	pcall(function()
+		humanoid.HipHeight = math.max(donorHumanoid.HipHeight + donorRoot.Size.Y / 2 - root.Size.Y / 2, 0)
 	end)
-	local newItems, newBody = R15.collectNewItems(character, plan, accMap)
-	local isBody = {}
-	for _, item in ipairs(newBody) do
-		isBody[item] = true
-	end
-	for _, item in ipairs(newItems) do
-		R15.setItemFactor(item, item.from)
-	end
-	humanoid.HipHeight = hipNew * R15.averageY(newBody, function(item)
-		return item.from.Y
-	end)
-	fixColorsDeferred(character, currentRequest)
-	R15.applyAnimations(character, humanoid, description)
-	if currentRequest ~= requestId then
-		R15.setAll(newItems, Vector3.one)
-		humanoid.HipHeight = hipNew
-		return
-	end
-	local totalGrow = R15.GROW_TIME + R15.STAGGER
-	ok = runPhase(totalGrow, function(alpha)
-		local t = alpha * totalGrow
-		local sumY = 0
-		for _, item in ipairs(newBody) do
-			local f = R15.growFactor(item, clamp01((t - item.delay) / R15.GROW_TIME))
-			R15.setItemFactor(item, f)
-			sumY += math.max(f.Y, R15.MIN_FACTOR)
-		end
-		for _, item in ipairs(newItems) do
-			if not isBody[item] then
-				R15.setItemFactor(item, R15.growFactor(item, clamp01((t - item.delay) / R15.GROW_TIME)))
-			end
-		end
-		if #newBody > 0 then
-			humanoid.HipHeight = hipNew * (sumY / #newBody)
-		end
-	end, currentRequest, stillValid)
-	R15.setAll(newItems, Vector3.one)
-	humanoid.HipHeight = hipNew
-	if not ok then
-		return
-	end
-	local waitedAssets = 0
-	while waitedAssets < 3 and currentRequest == requestId do
-		local pending = false
-		pcall(function()
-			pending = ContentProvider.RequestQueueSize > 0
-		end)
-		if not pending then
-			break
-		end
-		task.wait(0.1)
-		waitedAssets += 0.1
-	end
-	if currentRequest ~= requestId then
-		return
-	end
-	splash(character, humanoid)
-	releaseGray(false)
 end
 
-function R15.run(character, humanoid, description, animated, currentRequest, stillValid, fail)
-	local donor = callMethod(
-		Players,
-		{ "CreateHumanoidModelFromDescriptionAsync", "CreateHumanoidModelFromDescription" },
-		description,
-		Enum.HumanoidRigType.R15
-	)
-	if not stillValid() then
-		if donor then
-			donor:Destroy()
-		end
-		return
-	end
-	local donorHumanoid = donor and donor:FindFirstChildOfClass("Humanoid")
-	if not donor or not donorHumanoid then
-		if donor then
-			donor:Destroy()
-		end
-		fail()
-		return
-	end
-	local preloaded = false
-	task.spawn(function()
-		pcall(function()
-			ContentProvider:PreloadAsync(donor:GetDescendants())
-		end)
-		preloaded = true
-	end)
-	local waited = 0
-	while not preloaded and waited < 8 do
-		task.wait(0.1)
-		waited += 0.1
-	end
-	if not stillValid() or not waitTransformFree(currentRequest) or not stillValid() then
-		donor:Destroy()
-		return
-	end
-	transforming = true
-	pcall(
-		R15.transform,
-		character,
-		humanoid,
-		donor,
-		donorHumanoid,
-		description,
-		animated,
-		currentRequest,
-		stillValid
-	)
-	transforming = false
-	donor:Destroy()
-	if currentRequest == requestId then
-		releaseGray(false)
-	end
+function R15.swap(character, humanoid, donor, description, targetPlayer)
+	R15.applyDonorData(character, humanoid, donor)
+	R15.syncRoot(character, humanoid, donor)
+	R15.applyAnimations(character, humanoid, description, targetPlayer)
 end
+
 
 local function applyAvatar(username, isReset, animated, onFail, force)
 	if not localPlayer or not username or username == "" then
@@ -2663,6 +2484,8 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		loadAvatarImage(userId, currentRequest)
 		if animated then
 			ensureGray(character)
+			playSfx(SFX_START, SFX_START_VOLUME)
+			startSfxLoop()
 		end
 		local function stillValid()
 			return currentRequest == requestId
@@ -2694,11 +2517,14 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			fail()
 			return
 		end
-		if isR15 then
-			R15.run(character, humanoid, description, animated, currentRequest, stillValid, fail)
-			return
+		local targetPlayer = nil
+		if isR15 and not isReset then
+			targetPlayer = Players:GetPlayerByUserId(userId)
+			if targetPlayer == localPlayer then
+				targetPlayer = nil
+			end
 		end
-		local useDescription = USE_APPLY_DESCRIPTION_R6 and humanoid.RigType == rigType
+		local useDescription = (not isR15) and USE_APPLY_DESCRIPTION_R6 and humanoid.RigType == rigType
 		local donor, skinDonor
 		local function buildDonor(rigOverride)
 			local d = callMethod(
@@ -2746,7 +2572,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				fail()
 				return
 			end
-			if R6_SKIN_FALLBACK and hasCustomBody(description) then
+			if (not isR15) and R6_SKIN_FALLBACK and hasCustomBody(description) then
 				skinDonor = buildDonor(Enum.HumanoidRigType.R15)
 				if not stillValid() then
 					cleanupDonors()
@@ -2759,10 +2585,15 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 		local function doSwap()
-			local records = applyDonorData(character, humanoid, donor, {
-				description = description,
-				skinDonor = skinDonor,
-			})
+			local records
+			if isR15 then
+				R15.swap(character, humanoid, donor, description, targetPlayer)
+			else
+				records = applyDonorData(character, humanoid, donor, {
+					description = description,
+					skinDonor = skinDonor,
+				})
+			end
 			sanitizeAccessories(character)
 			pcall(repairAccessoryFx, character, donor)
 			fixColorsDeferred(character, currentRequest)
@@ -2995,6 +2826,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	requestId += 1
 	autoReapply = true
 	deathStrikes = 0
+	preloadSfx()
 	disconnectAll()
 	releaseGray(true)
 	clearTransformVisuals()
