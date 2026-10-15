@@ -36,6 +36,9 @@ local protectedAccessories = setmetatable({}, { __mode = "k" })
 local trackedCharacters = setmetatable({}, { __mode = "k" })
 local originalDescriptions = setmetatable({}, { __mode = "k" })
 local applyingChange = false
+local safeMode = false -- se activa solo si el cambio de avatar mata al personaje
+local autoReapply = true -- reaplicar el avatar al reaparecer (se apaga si hay bucle de muertes)
+local deathStrikes = 0
 
 --------------------------------------------------------------------
 -- CONFIGURACION
@@ -115,6 +118,12 @@ local MAX_REPAIRS = 3
 -- como hacia el CopyAvatar original. true = experimental: usa el metodo oficial
 -- Humanoid:ApplyDescription (el motor puede reemplazar partes del cuerpo).
 local USE_APPLY_DESCRIPTION = false
+-- Anti-bucle de muertes: si el personaje muere dentro de DEATH_WINDOW segundos
+-- despues de un cambio de avatar MAX_DEATH_STRIKES veces seguidas, se deja de
+-- reaplicar el avatar al reaparecer y se pasa a "modo seguro" (no reemplaza
+-- partes del cuerpo, no toca tamanos/uniones/HipHeight).
+local DEATH_WINDOW = 8
+local MAX_DEATH_STRIKES = 2
 -- Segundos maximos que se espera a que ApplyDescription termine.
 local DESCRIPTION_TIMEOUT = 20
 -- Pon DEBUG = true para ver en consola que rig se detecta, el metodo usado y un
@@ -545,8 +554,30 @@ local function clearTransformVisuals()
 	showCharacter()
 end
 
+local function relPath(inst, root)
+	local names = {}
+	local cur = inst
+	while cur and cur ~= root do
+		table.insert(names, 1, cur.Name)
+		cur = cur.Parent
+	end
+	return table.concat(names, "/")
+end
+
 local function makeGhost(character, root)
 	destroyGhost()
+
+	-- Algunos juegos esconden las partes "hitbox" del rig con LocalTransparencyModifier,
+	-- que NO se copia al clonar: en el fantasma aparecian como cajas visibles.
+	local hiddenPaths = {}
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local ltm = (hideState and hideState.saved[d]) or d.LocalTransparencyModifier
+			if ltm >= 0.95 then
+				hiddenPaths[relPath(d, character)] = true
+			end
+		end
+	end
 
 	local clone
 	local previous = character.Archivable
@@ -599,6 +630,9 @@ local function makeGhost(character, root)
 			d.CanTouch = false
 			d.CanQuery = false
 			d.LocalTransparencyModifier = 0
+			if hiddenPaths[relPath(d, clone)] then
+				d.Transparency = 1
+			end
 			if d ~= gRoot then
 				local item = {
 					part = d,
@@ -1153,6 +1187,12 @@ end
 -- Reemplaza una parte del cuerpo conservando TODAS las uniones que dependian de
 -- ella. Antes solo se reapuntaban los Motor6D: el AccessoryWeld de la corona
 -- apuntaba a la cabeza vieja (destruida) y la corona se caia.
+-- Reemplaza una parte del cuerpo SIN dejar el personaje sin cuello/uniones ni
+-- un solo instante: (1) la parte nueva entra al personaje, (2) se reapuntan las
+-- uniones, (3) se pasan los hijos del juego, (4) recien ahi se borra la vieja.
+-- Antes los Motor6D (incluido el Neck) se movian a una parte que todavia no
+-- tenia padre: el Humanoid veia el cuello roto y moria -> respawn -> se volvia a
+-- aplicar el avatar -> moria otra vez (bucle de muertes en R15).
 local function replaceBodyPart(character, oldPart, donorPart)
 	local newPart = donorPart:Clone()
 
@@ -1176,19 +1216,10 @@ local function replaceBodyPart(character, oldPart, donorPart)
 		hideState.saved[newPart] = hideState.saved[oldPart]
 	end
 
-	-- Mover a la parte nueva todo lo que NO es apariencia (uniones, attachments
-	-- propios del juego, luces, etc.).
-	for _, child in ipairs(oldPart:GetChildren()) do
-		if not isAppearanceChild(child) then
-			local clash = child:IsA("Attachment") and newPart:FindFirstChild(child.Name)
-			if not clash then
-				child.Parent = newPart
-			end
-		end
-	end
-
+	-- 1) entra al personaje
 	newPart.Parent = oldPart.Parent or character
 
+	-- 2) reapuntar uniones (el cuello, welds de accesorios, etc.)
 	for _, d in ipairs(character:GetDescendants()) do
 		if d:IsA("JointInstance") or d:IsA("WeldConstraint") then
 			if d.Part0 == oldPart then
@@ -1200,6 +1231,18 @@ local function replaceBodyPart(character, oldPart, donorPart)
 		end
 	end
 
+	-- 3) pasar todo lo que NO es apariencia (uniones propias, attachments del
+	--    juego, luces, el holograma...) a la parte nueva
+	for _, child in ipairs(oldPart:GetChildren()) do
+		if not isAppearanceChild(child) then
+			local clash = child:IsA("Attachment") and newPart:FindFirstChild(child.Name)
+			if not clash then
+				child.Parent = newPart
+			end
+		end
+	end
+
+	-- 4) ahora si
 	oldPart:Destroy()
 	return newPart
 end
@@ -1217,7 +1260,7 @@ local function syncR15Part(character, donorPart)
 
 	-- Unica excepcion: la cabeza dinamica (FaceControls/Bone) no se puede copiar
 	-- en sitio. Cualquier otra parte se modifica donde esta, sin reemplazarla.
-	if donorPart.Name == "Head" and needsFullReplace(donorPart) then
+	if donorPart.Name == "Head" and needsFullReplace(donorPart) and not safeMode then
 		return replaceBodyPart(character, part, donorPart)
 	end
 
@@ -1236,73 +1279,43 @@ local function syncR15Part(character, donorPart)
 	end
 
 	part.Size = donorPart.Size
-	copyVisual(part, donorPart)
 	copyPartChildren(part, donorPart)
 	return part
 end
 
--- Adaptación forzada de Bundles R15 / UGC a R6
+-- R6: igual que el CopyAvatar original, el cuerpo (Torso/brazos/piernas) NO se
+-- toca: su aspecto viene de BodyColors + Shirt/Pants + CharacterMesh. Copiar
+-- Color/Material/hijos del donante a esas partes dejaba un "cuerpo cuadrado"
+-- extra visible. Solo se adapta la CABEZA (malla, cara y attachments).
 local function adaptR15ToR6(character, donor)
-	local mapping = {
-		["Torso"] = { "UpperTorso", "Torso", "LowerTorso" },
-		["Left Arm"] = { "LeftUpperArm", "LeftArm", "LeftHand", "LeftLowerArm" },
-		["Right Arm"] = { "RightUpperArm", "RightArm", "RightHand", "RightLowerArm" },
-		["Left Leg"] = { "LeftUpperLeg", "LeftLeg", "LeftFoot", "LeftLowerLeg" },
-		["Right Leg"] = { "RightUpperLeg", "RightLeg", "RightFoot", "RightLowerLeg" },
-		["Head"] = { "Head" },
-	}
+	local r6Part = findPart(character, "Head")
+	local donorHead = donor:FindFirstChild("Head")
+	if not r6Part or not donorHead or not donorHead:IsA("BasePart") then
+		return
+	end
 
-	for r6Name, r15Candidates in pairs(mapping) do
-		local r6Part = findPart(character, r6Name)
-		if r6Part then
-			local foundDonorPart
-			for _, cand in ipairs(r15Candidates) do
-				local p = donor:FindFirstChild(cand)
-				if p and p:IsA("BasePart") then
-					foundDonorPart = p
-					break
-				end
-			end
-
-			if foundDonorPart then
-				if r6Name == "Head" then
-					local donorHead = foundDonorPart
-					for _, child in ipairs(r6Part:GetChildren()) do
-						if child:IsA("Decal") or child:IsA("DataModelMesh") then
-							child:Destroy()
-						end
-					end
-					for _, child in ipairs(donorHead:GetChildren()) do
-						if child:IsA("Decal") or child:IsA("DataModelMesh") or child:IsA("SpecialMesh") then
-							child:Clone().Parent = r6Part
-						end
-					end
-					-- Que la cabeza R6 tenga SIEMPRE los attachments de accesorios
-					-- (en algunos juegos battleground no los tiene).
-					for _, att in ipairs(donorHead:GetChildren()) do
-						if att:IsA("Attachment") and not r6Part:FindFirstChild(att.Name) then
-							att:Clone().Parent = r6Part
-						end
-					end
-					if donorHead:IsA("MeshPart") and r6Part:IsA("MeshPart") then
-						pcall(function()
-							r6Part:ApplyMesh(donorHead)
-						end)
-						r6Part.TextureID = donorHead.TextureID
-					end
-					copyVisual(r6Part, donorHead)
-				else
-					if foundDonorPart:IsA("MeshPart") and r6Part:IsA("MeshPart") then
-						pcall(function()
-							r6Part:ApplyMesh(foundDonorPart)
-						end)
-						r6Part.TextureID = foundDonorPart.TextureID
-					end
-					copyVisual(r6Part, foundDonorPart)
-					copyPartChildren(r6Part, foundDonorPart)
-				end
-			end
+	for _, child in ipairs(r6Part:GetChildren()) do
+		if child:IsA("Decal") or child:IsA("DataModelMesh") then
+			child:Destroy()
 		end
+	end
+	for _, child in ipairs(donorHead:GetChildren()) do
+		if child:IsA("Decal") or child:IsA("DataModelMesh") or child:IsA("SpecialMesh") then
+			child:Clone().Parent = r6Part
+		end
+	end
+	-- Que la cabeza R6 tenga SIEMPRE los attachments de accesorios
+	-- (en algunos juegos battleground no los tiene).
+	for _, att in ipairs(donorHead:GetChildren()) do
+		if att:IsA("Attachment") and not r6Part:FindFirstChild(att.Name) then
+			att:Clone().Parent = r6Part
+		end
+	end
+	if donorHead:IsA("MeshPart") and r6Part:IsA("MeshPart") then
+		pcall(function()
+			r6Part:ApplyMesh(donorHead)
+		end)
+		r6Part.TextureID = donorHead.TextureID
 	end
 end
 
@@ -1320,7 +1333,9 @@ local function applyDonorData(character, humanoid, donor, isR15)
 
 	wipeAppearance(character)
 
-	if isR15 then
+	if isR15 and safeMode then
+		dbg("modo seguro: no se tocan partes/tamanos/uniones del cuerpo R15")
+	elseif isR15 then
 		for _, donorPart in ipairs(donor:GetChildren()) do
 			if donorPart:IsA("BasePart") and donorPart.Name ~= "HumanoidRootPart" then
 				syncR15Part(character, donorPart)
@@ -1685,6 +1700,8 @@ local function dumpBody(character, label)
 				"  ", d.ClassName, d.Name,
 				"size=" .. tostring(d.Size),
 				"transp=" .. tostring(d.Transparency),
+				"ltm=" .. tostring(d.LocalTransparencyModifier),
+				"mat=" .. d.Material.Name,
 				"color=" .. tostring(d.Color),
 				mesh
 			)
@@ -2075,6 +2092,158 @@ end
 --------------------------------------------------------------------
 -- APLICAR AVATAR
 --------------------------------------------------------------------
+--------------------------------------------------------------------
+-- SEGURIDAD DEL CAMBIO (anti-muerte, anti-cajas, anti-bucle)
+--------------------------------------------------------------------
+local function notify(text)
+	pcall(function()
+		game:GetService("StarterGui"):SetCore("SendNotification", {
+			Title = "Avatar Changer",
+			Text = text,
+			Duration = 8,
+		})
+	end)
+end
+
+-- Durante el cambio el Humanoid no puede morir por perder el cuello un instante.
+local function guardedSwap(humanoid, fn)
+	local prevNeck = humanoid.RequiresNeck
+	local prevDead = true
+	pcall(function()
+		prevDead = humanoid:GetStateEnabled(Enum.HumanoidStateType.Dead)
+	end)
+	pcall(function()
+		humanoid.RequiresNeck = false
+	end)
+	pcall(function()
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+	end)
+
+	local ok, a, b = pcall(fn)
+
+	pcall(function()
+		humanoid.RequiresNeck = prevNeck
+	end)
+	pcall(function()
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, prevDead)
+	end)
+
+	if not ok then
+		error(a, 0)
+	end
+	return a, b
+end
+
+local function snapshotVisibility(character)
+	local snap = {}
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") and not isInsideAccessoryOrTool(d) then
+			snap[d.Name] = d.Transparency
+		end
+	end
+	return snap
+end
+
+local function snapshotPartSet(character)
+	local set = setmetatable({}, { __mode = "k" })
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") and not isInsideAccessoryOrTool(d) then
+			set[d] = true
+		end
+	end
+	return set
+end
+
+-- Despues del cambio: (1) borra partes del cuerpo DUPLICADAS que aparecieron
+-- (el "cuerpo cuadrado extra") y (2) si alguna parte que estaba oculta se volvio
+-- visible, la vuelve a ocultar (varias veces durante unos segundos, por si el
+-- juego la cambia despues).
+local function cleanupAfterChange(character, vis, before)
+	local groups = {}
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("BasePart") and not isInsideAccessoryOrTool(d)
+			and (BODY_COLOR_MAP[d.Name] or d.Name == "HumanoidRootPart") then
+			local list = groups[d.Name]
+			if not list then
+				list = {}
+				groups[d.Name] = list
+			end
+			table.insert(list, d)
+		end
+	end
+	for name, list in pairs(groups) do
+		if #list > 1 then
+			local olds = 0
+			for _, part in ipairs(list) do
+				if before[part] then
+					olds += 1
+				end
+			end
+			local keepFirstNew = olds == 0
+			for _, part in ipairs(list) do
+				if not before[part] then
+					if keepFirstNew then
+						keepFirstNew = false
+					else
+						warn("[CopyAvatar] Parte duplicada eliminada: " .. name)
+						part:Destroy()
+					end
+				end
+			end
+		end
+	end
+
+	local function reassert()
+		for _, d in ipairs(character:GetDescendants()) do
+			if d:IsA("BasePart") and not isInsideAccessoryOrTool(d) then
+				local want = vis[d.Name]
+				if want and d.Transparency < want - 0.01 then
+					dbg("parte que estaba oculta se volvio visible, se oculta:", d.Name)
+					d.Transparency = want
+				end
+			end
+		end
+	end
+	reassert()
+	for _, delayTime in ipairs({ 0.3, 1, 2.5 }) do
+		task.delay(delayTime, function()
+			if character.Parent then
+				reassert()
+			end
+		end)
+	end
+end
+
+-- Si el personaje muere justo despues de un cambio, varias veces seguidas, se
+-- corta el bucle (muere -> reaparece -> se reaplica -> muere...).
+local function watchDeath(humanoid)
+	local t0 = os.clock()
+	local conn
+	conn = humanoid.Died:Connect(function()
+		if conn then
+			conn:Disconnect()
+		end
+		if os.clock() - t0 > DEATH_WINDOW then
+			return
+		end
+		deathStrikes += 1
+		safeMode = true
+		warn("[CopyAvatar] El personaje murio justo despues de cambiar el avatar (" .. deathStrikes .. ").")
+		if deathStrikes >= MAX_DEATH_STRIKES then
+			autoReapply = false
+			lastUsername = nil
+			requestId += 1
+			notify("El cambio de avatar mataba a tu personaje: se detuvo la reaplicacion automatica. Prueba otra vez con el boton Apply (modo seguro).")
+		end
+	end)
+	task.delay(DEATH_WINDOW, function()
+		if conn and conn.Connected then
+			conn:Disconnect()
+			deathStrikes = 0
+		end
+	end)
+end
+
 local function applyAvatar(username, isReset, animated, onFail, force)
 	if not localPlayer or not username or username == "" then
 		return
@@ -2084,6 +2253,10 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 	-- Si ya es el avatar actual no hace nada (salvo reset o reaplicacion forzada tras respawn)
 	if not force and not isReset and lastUsername and username:lower() == lastUsername:lower() then
 		return
+	end
+
+	if not force then
+		autoReapply = true -- una orden manual vuelve a permitir la reaplicacion
 	end
 
 	task.spawn(function()
@@ -2158,7 +2331,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		-- real se usa el metodo manual (apoyado en un modelo donante).
 		local rigType = getRigType(character, humanoid)
 		local isR15 = rigType == Enum.HumanoidRigType.R15
-		local useDescription = USE_APPLY_DESCRIPTION and humanoid.RigType == rigType
+		local useDescription = USE_APPLY_DESCRIPTION and not safeMode and humanoid.RigType == rigType
 		dbg("rig real:", rigType.Name, "| Humanoid.RigType:", humanoid.RigType.Name,
 			"| metodo:", useDescription and "ApplyDescription" or "manual")
 		dumpBody(character, "antes")
@@ -2226,7 +2399,12 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				originalHip[character] = humanoid.HipHeight
 			end
 			local target = isReset and originalHip[character] or donorHumanoid.HipHeight
-			if target and math.abs(humanoid.HipHeight - target) > 0.001 then
+			if safeMode then
+				return
+			end
+			if target and math.abs(humanoid.HipHeight - target) > 1.5 then
+				dbg("HipHeight demasiado distinto, no se cambia:", humanoid.HipHeight, "->", target)
+			elseif target and math.abs(humanoid.HipHeight - target) > 0.001 then
 				humanoid.HipHeight = target
 			end
 		end
@@ -2243,7 +2421,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		end
 
 		-- Hace el cambio real. Devuelve true si el personaje quedo con el avatar.
-		local function performChange()
+		local function performChangeInner()
 			if useDescription then
 				local ok = applyDescriptionToCharacter(character, humanoid, description, isR15)
 				if ok then
@@ -2266,6 +2444,20 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			doSwap()
 			dumpBody(character, "despues (manual)")
 			return true
+		end
+
+		local function performChange()
+			local vis = snapshotVisibility(character)
+			local before = snapshotPartSet(character)
+			local okSwap, result = pcall(guardedSwap, humanoid, performChangeInner)
+			pcall(cleanupAfterChange, character, vis, before)
+			if not okSwap then
+				error(result, 0)
+			end
+			if result == true then
+				watchDeath(humanoid)
+			end
+			return result
 		end
 
 		----------------------------------------------------------------
@@ -2496,6 +2688,9 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	end
 
 	requestId += 1
+	safeMode = false
+	autoReapply = true
+	deathStrikes = 0
 	table.clear(trackedCharacters)
 	disconnectAll()
 	releaseGray(true)
@@ -2971,7 +3166,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 
 	table.insert(connections, localPlayer.CharacterAdded:Connect(function(character)
 		trackCharacter(character)
-		if active and lastUsername and lastUsername:lower() ~= localPlayer.Name:lower() then
+		if active and autoReapply and lastUsername and lastUsername:lower() ~= localPlayer.Name:lower() then
 			task.spawn(function()
 				character:WaitForChild("Humanoid", 10)
 				character:WaitForChild("HumanoidRootPart", 10)
@@ -2981,7 +3176,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 					t += 0.2
 				end
 				task.wait(0.5)
-				if active and lastUsername and localPlayer.Character == character then
+				if active and autoReapply and lastUsername and localPlayer.Character == character then
 					applyAvatar(lastUsername, false, false, nil, true)
 				end
 			end)
