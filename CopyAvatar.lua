@@ -1,3 +1,5 @@
+print("seriously?")
+
 local M = {}
 
 local Players = game:GetService("Players")
