@@ -1,4 +1,4 @@
-print("3ghf34354355gf")
+print("3ghf3gaiweihijgf")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -463,6 +463,8 @@ local fovBase = nil
 local visualOwner = nil
 local hideState = nil
 local ghostState = nil
+local retiredGhosts = {}
+local ghostGroup = nil
 local STRIP_CLASSES = {
 	"BaseScript",
 	"ModuleScript",
@@ -647,6 +649,31 @@ local function destroyGhost()
 			g.model:Destroy()
 		end)
 	end
+	for _, r in ipairs(retiredGhosts) do
+		pcall(function()
+			r.model:Destroy()
+		end)
+	end
+	table.clear(retiredGhosts)
+	if ghostGroup then
+		local group = ghostGroup
+		ghostGroup = nil
+		pcall(function()
+			group:Destroy()
+		end)
+	end
+end
+
+-- Both ghosts (old + new body) live inside one Model so a single Highlight can tint them together.
+local function getGhostGroup()
+	if ghostGroup and ghostGroup.Parent then
+		return ghostGroup
+	end
+	local group = Instance.new("Model")
+	group.Name = "AFO_GhostGroup"
+	group.Parent = workspace.CurrentCamera or workspace
+	ghostGroup = group
+	return group
 end
 
 local function clearTransformVisuals()
@@ -695,8 +722,13 @@ local function computePoses(model)
 	return poses
 end
 
-local function makeGhost(character, root, humanoid, followHip)
-	destroyGhost()
+local function makeGhost(character, root, humanoid, followHip, keepOld)
+	if keepOld and ghostState then
+		table.insert(retiredGhosts, ghostState)
+		ghostState = nil
+	else
+		destroyGhost()
+	end
 	local state = hideState and hideState.character == character and hideState or nil
 	local hiddenPaths = {}
 	for _, d in ipairs(character:GetDescendants()) do
@@ -767,11 +799,15 @@ local function makeGhost(character, root, humanoid, followHip)
 					pos = rel.Position,
 					rot = rel - rel.Position,
 					meshes = {},
+					decals = {},
+					baseT = d.Transparency,
 					seed = math.random() * 6.28,
 				}
 				for _, child in ipairs(d:GetChildren()) do
 					if child:IsA("SpecialMesh") and child.MeshType == Enum.MeshType.FileMesh then
 						table.insert(item.meshes, { mesh = child, orig = child.Scale })
+					elseif child:IsA("Decal") or child:IsA("Texture") then
+						table.insert(item.decals, { inst = child, orig = child.Transparency })
 					end
 				end
 				table.insert(items, item)
@@ -824,7 +860,7 @@ local function makeGhost(character, root, humanoid, followHip)
 		height = bodyHigh - bodyLow
 	end
 	clone.Name = "AFO_Ghost"
-	clone.Parent = workspace.CurrentCamera or workspace
+	clone.Parent = getGhostGroup()
 	local hipTotal = humanoid.HipHeight + root.Size.Y / 2
 	local g = {
 		model = clone,
@@ -889,143 +925,122 @@ local function animateGhost(g, root, humanoid, k0, k1, duration, id, isValid)
 	end, id, isValid)
 end
 
--- Transition: every piece of the old avatar shrinks to MID_FRACTION of its size and every piece of the new
--- avatar grows from that SAME absolute size, so a 30 cm hat goes down to 15 cm, is replaced by the new 30 cm
--- hat at 15 cm, and grows back up through the same point. Pieces that only exist on one side shrink to
--- (or grow from) almost nothing. Pieces are matched by their path inside the model (e.g. "Hat/Handle").
-local MID_FRACTION = 0.5
-local MIN_FACTOR = 0.02
-local SHRINK_TIME = 0.8
-local GROW_TIME = 1.1
-local STAGGER_SPAN = 0.25
-local POS_BLEND_PORTION = 0.55
+-- Transition (v13): the body NEVER shrinks. The old body is frozen as a "ghost" at its current size and the new
+-- body is a second ghost. Every piece of the old one is matched by its path inside the model ("RightUpperArm",
+-- "Hat/Handle"...) with the same piece of the new one, and slides / bends / resizes into it (position, rotation
+-- and size) while the two cross-fade, like an object that melts into a new mould. The change travels from the
+-- feet to the head. Pieces that exist on one side only just fade out / fade in where they are.
+local MORPH_DURATION = 1.25
+local MORPH_HOLD_MIN = 0.55
+local MORPH_STAGGER = 0.3
+local MORPH_WOBBLE = 0.03
+local MIN_SCALE = 0.03
 
-local function itemMagnitude(item)
-	return math.max(item.orig.Magnitude, 0.05)
+local function smoothstep(t)
+	t = clamp01(t)
+	return t * t * (3 - 2 * t)
 end
 
-local function easeOutBack(t, c1)
-	local c3 = c1 + 1
-	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
+local function lerpNum(a, b, t)
+	return a + (b - a) * t
 end
 
-local function ghostKeySet(model)
-	local set = {}
-	for _, d in ipairs(model:GetDescendants()) do
-		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
-			set[relPath(d, model)] = true
-		end
-	end
-	return set
-end
-
-local function markShrinkTargets(g, newKeys)
+-- Old body keeps its pose (and follows the hips) while the new body is being built; it trembles a little
+-- like it is charging up.
+local function holdGhost(g, root, humanoid)
+	local base = ghostBase(g, root, humanoid)
+	local now = os.clock()
+	local shake = Vector3.new(math.sin(now * 53), math.sin(now * 47 + 1.3), math.sin(now * 61 + 2.1)) * 0.035
 	for _, item in ipairs(g.items) do
-		if newKeys == nil or newKeys[item.key] then
-			item.endFactor = MID_FRACTION
-		else
-			item.endFactor = MIN_FACTOR
+		local part = item.part
+		if part and part.Parent then
+			part.CFrame = base * CFrame.new(item.pos + shake) * item.rot
 		end
 	end
 end
 
-local function pairGhosts(oldGhost, newGhost)
+local function pairByKey(oldGhost, newGhost)
 	local byKey = {}
 	for _, item in ipairs(oldGhost.items) do
+		item.twin = nil
 		if item.key and not byKey[item.key] then
 			byKey[item.key] = item
 		end
 	end
-	local drift = 0
-	if oldGhost.followHip then
-		drift = oldGhost.total - oldGhost.total0
-	end
 	for _, item in ipairs(newGhost.items) do
-		item.startFactor = MIN_FACTOR
-		item.fromRel = nil
+		item.twin = nil
 		local old = item.key and byKey[item.key]
-		if old and (old.endFactor or 1) > MIN_FACTOR then
+		if old then
 			byKey[item.key] = nil
-			local midSize = old.endFactor * itemMagnitude(old)
-			item.startFactor = math.clamp(midSize / itemMagnitude(item), MIN_FACTOR, 1)
-			item.fromRel = CFrame.new(oldGhost.pivot + (old.pos - oldGhost.pivot) * MID_FRACTION - Vector3.new(0, drift, 0)) * old.rot
+			item.twin = old
+			old.twin = item
 		end
 	end
 end
 
--- The whole body behaves like one lump of jelly: pieces keep touching because their positions are pulled
--- toward the feet together with their size, a wave of squash and stretch travels up the body, and the new
--- body springs back to full size with a bounce.
-local JELLY_AMPLITUDE = 0.17
-local JELLY_WAVES = 1.6
-local JELLY_SPEED = 12
-local SHRINK_STAGGER = 0.2
-
-local function springOut(a)
-	if a >= 1 then
-		return 1
+-- size = absolute size the piece must have, visible = 0 (invisible) .. 1 (its normal transparency)
+local function setItemLook(item, size, visible)
+	local part = item.part
+	if not part or not part.Parent then
+		return
 	end
-	return 1 - math.exp(-6.5 * a) * math.cos(9 * a)
-end
-
-local function poseJelly(g, root, humanoid, sizeOf, posScaleOf, relOf, amp)
-	local followCF = ghostBase(g, root, humanoid)
-	local now = os.clock()
-	local pivot = g.pivot
-	for _, item in ipairs(g.items) do
-		local f = sizeOf(item)
-		local w = math.sin(now * JELLY_SPEED - (item.stagger or 0) * JELLY_WAVES * 2 * math.pi + item.seed * 0.25) * amp
-		local rel = relOf and relOf(item) or nil
-		if not rel then
-			rel = CFrame.new(pivot + (item.pos - pivot) * posScaleOf(item)) * item.rot
-		end
-		poseGhostItem(g, item, 1, Vector3.new(f * (1 + w), f * (1 - w * 0.9), f * (1 + w)), followCF, rel)
-	end
-end
-
-local function holdShrunk(g, root, humanoid)
-	poseJelly(g, root, humanoid, function(item)
-		return item.endFactor or 1
-	end, function()
-		return MID_FRACTION
-	end, nil, 0.05)
-end
-
-local function shrinkGhost(g, root, humanoid, duration, id, isValid)
-	return runPhase(duration, function(alpha)
-		local function a(item)
-			local delay = (1 - (item.stagger or 0)) * SHRINK_STAGGER
-			return easeInOut(clamp01(alpha * (1 + SHRINK_STAGGER) - delay))
-		end
-		poseJelly(g, root, humanoid, function(item)
-			return 1 + ((item.endFactor or MID_FRACTION) - 1) * a(item)
-		end, function(item)
-			return 1 + (MID_FRACTION - 1) * a(item)
-		end, nil, JELLY_AMPLITUDE * math.sin(alpha * math.pi))
-	end, id, isValid)
-end
-
-local function growGhost(g, root, humanoid, duration, id, isValid)
-	return runPhase(duration, function(alpha)
-		local function a(item)
-			local delay = (item.stagger or 0) * STAGGER_SPAN
-			return clamp01(alpha * (1 + STAGGER_SPAN) - delay)
-		end
-		local pivot = g.pivot
-		poseJelly(g, root, humanoid, function(item)
-			local start = item.startFactor or MIN_FACTOR
-			return start + (1 - start) * springOut(a(item))
-		end, function(item)
-			return MID_FRACTION + (1 - MID_FRACTION) * easeOutBack(a(item), 0.8)
-		end, function(item)
-			if not item.fromRel then
-				return nil
+	local o = item.orig
+	part.Size = Vector3.new(math.max(size.X, 0.02), math.max(size.Y, 0.02), math.max(size.Z, 0.02))
+	if #item.meshes > 0 then
+		local rx = size.X / math.max(o.X, 0.001)
+		local ry = size.Y / math.max(o.Y, 0.001)
+		local rz = size.Z / math.max(o.Z, 0.001)
+		for _, entry in ipairs(item.meshes) do
+			if entry.mesh.Parent then
+				entry.mesh.Scale = Vector3.new(entry.orig.X * rx, entry.orig.Y * ry, entry.orig.Z * rz)
 			end
-			local ai = a(item)
-			local p = MID_FRACTION + (1 - MID_FRACTION) * easeOutBack(ai, 0.8)
-			local toRel = CFrame.new(pivot + (item.pos - pivot) * p) * item.rot
-			return item.fromRel:Lerp(toRel, easeInOut(clamp01(ai / POS_BLEND_PORTION)))
-		end, JELLY_AMPLITUDE * math.sin(alpha * math.pi))
+		end
+	end
+	part.Transparency = 1 - (1 - item.baseT) * visible
+	for _, d in ipairs(item.decals) do
+		if d.inst.Parent then
+			d.inst.Transparency = 1 - (1 - d.orig) * visible
+		end
+	end
+end
+
+local function morphGhosts(oldG, newG, root, humanoid, duration, id, isValid)
+	return runPhase(duration, function(alpha)
+		local baseOld = ghostBase(oldG, root, humanoid)
+		local baseNew = ghostBase(newG, root, humanoid)
+		local now = os.clock()
+		local wobbleAmp = MORPH_WOBBLE * math.sin(alpha * math.pi)
+		local function localAlpha(item)
+			return clamp01(alpha * (1 + MORPH_STAGGER) - (item.stagger or 0) * MORPH_STAGGER)
+		end
+		for _, item in ipairs(newG.items) do
+			local a = localAlpha(item)
+			local e = smoothstep(a)
+			local w = math.sin(now * 11 + (item.stagger or 0) * 6 + item.seed) * wobbleAmp
+			local wob = Vector3.new(1 + w, 1 - w * 0.8, 1 + w)
+			local cfNew = baseNew * CFrame.new(item.pos) * item.rot
+			local twin = item.twin
+			if twin then
+				local cfOld = baseOld * CFrame.new(twin.pos) * twin.rot
+				local cf = cfOld:Lerp(cfNew, e)
+				local size = twin.orig:Lerp(item.orig, e) * wob
+				item.part.CFrame = cf
+				twin.part.CFrame = cf
+				setItemLook(item, size, smoothstep(a / 0.55))
+				setItemLook(twin, size, 1 - smoothstep((a - 0.3) / 0.6))
+			else
+				item.part.CFrame = cfNew
+				setItemLook(item, item.orig * lerpNum(MIN_SCALE, 1, e), smoothstep(a / 0.7))
+			end
+		end
+		for _, item in ipairs(oldG.items) do
+			if not item.twin then
+				local a = localAlpha(item)
+				local e = smoothstep(a)
+				item.part.CFrame = baseOld * CFrame.new(item.pos) * item.rot
+				setItemLook(item, item.orig * lerpNum(1, MIN_SCALE, e), 1 - smoothstep(a / 0.8))
+			end
+		end
 	end, id, isValid)
 end
 
@@ -1863,7 +1878,7 @@ local function fixCamera(humanoid)
 	end)
 end
 
-local function newFxPart(props)
+local function newFxPart(props, life)
 	local p = Instance.new("Part")
 	p.Anchored = true
 	p.CanCollide = false
@@ -1876,57 +1891,173 @@ local function newFxPart(props)
 		p[key] = value
 	end
 	p.Parent = workspace
-	Debris:AddItem(p, 3)
+	Debris:AddItem(p, life or 3)
 	return p
 end
 
--- Transformation burst, in the style of a big energy whirlwind appearing:
---  1) wide tapered ribbons of two colours sweep around the body in opposite spirals (long streaks),
---  2) a tower of tilted rings stacks upward and opens like a spiralling cone,
---  3) the new body flashes with a glowing outline (aura) that fades away.
-local VORTEX_COLOR_A = Color3.fromRGB(238, 240, 250)
-local VORTEX_COLOR_B = Color3.fromRGB(110, 175, 255)
-local AURA_COLOR = Color3.fromRGB(255, 224, 120)
-local RIBBONS_PER_COLOR = 3
-local RIBBON_BIRTH_SPAN = 0.35
-local RIBBON_LIFE = 0.95
-local RIBBON_TRAIL = 0.8
-local RIBBON_WIDTH = 3.4
-local RIBBON_HEIGHT = 15
-local RIBBON_R0 = 3
-local RIBBON_R1 = 10
-local RIBBON_TURNS = 0.9
-local TOWER_RINGS = 12
-local TOWER_STEP = 0.9
-local TOWER_DELAY = 0.06
+-- Transformation effect in white / grey, modelled on the way Gogeta appears in Dragon Ball Super: Broly:
+--  1) CHARGE: ki is sucked into the body from every direction, the ground pulses with inward rings.
+--  2) VORTEX: a tall tornado of long bright streaks spins up around the body inside a column of light, with
+--     lightning and rocks lifting off the ground. The body morphs inside it.
+--  3) REVEAL: blinding flash, shockwaves along the ground, the column bursts, the camera shakes, aura flash.
+local Lighting = game:GetService("Lighting")
+local FX_WHITE = Color3.fromRGB(246, 247, 252)
+local FX_LIGHT = Color3.fromRGB(208, 211, 222)
+local FX_GRAY = Color3.fromRGB(132, 135, 144)
+local FX_ROCK = Color3.fromRGB(112, 114, 120)
+local AURA_COLOR = FX_WHITE
+local STREAK_COUNT = 16
+local STREAK_LIFE = 0.85
+local STREAK_TRAIL = 0.65
+local STREAK_WIDTH = 2.4
+local VORTEX_HEIGHT = 28
+local VORTEX_R0 = 2.4
+local VORTEX_R1 = 8.5
+local VORTEX_TURNS = 1.7
+local SCREEN_FLASH = true
+local activeVortex = nil
 
-local function newRibbonHead(color)
+local function flatRing(position, diameter, thickness, color, transparency, life)
+	return newFxPart({
+		Shape = Enum.PartType.Cylinder,
+		Material = Enum.Material.Neon,
+		Color = color,
+		Transparency = transparency,
+		Size = Vector3.new(thickness, diameter, diameter),
+		CFrame = CFrame.new(position) * CFrame.Angles(0, 0, math.rad(90)),
+	}, life)
+end
+
+local function tallColumn(bottom, height, diameter, color, transparency, life)
+	return newFxPart({
+		Shape = Enum.PartType.Cylinder,
+		Material = Enum.Material.Neon,
+		Color = color,
+		Transparency = transparency,
+		Size = Vector3.new(height, diameter, diameter),
+		CFrame = CFrame.new(bottom + Vector3.new(0, height / 2, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+	}, life)
+end
+
+local function ringOffset(radius)
+	local angle = math.random() * math.pi * 2
+	return Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+end
+
+local function lightningBolt(a, b, color, thickness)
+	local segments = 6
+	local dir = b - a
+	local jitter = dir.Magnitude * 0.09
+	local last = a
+	for i = 1, segments do
+		local nextPoint = b
+		if i < segments then
+			nextPoint = a
+				+ dir * (i / segments)
+				+ Vector3.new(
+					(math.random() - 0.5) * 2 * jitter,
+					(math.random() - 0.5) * 2 * jitter,
+					(math.random() - 0.5) * 2 * jitter
+				)
+		end
+		local delta = nextPoint - last
+		local length = delta.Magnitude
+		if length > 0.01 then
+			newFxPart({
+				Material = Enum.Material.Neon,
+				Color = color,
+				Size = Vector3.new(thickness, thickness, length),
+				CFrame = CFrame.lookAt(last + delta / 2, nextPoint),
+			}, 0.14)
+		end
+		last = nextPoint
+	end
+end
+
+local function throwRock(center, distance, rise, life)
+	local angle = math.random() * math.pi * 2
+	local size = 0.4 + math.random() * 0.9
+	local startPos = center + Vector3.new(math.cos(angle) * distance, size / 2, math.sin(angle) * distance)
+	local rock = newFxPart({
+		Material = Enum.Material.Slate,
+		Color = FX_ROCK,
+		Size = Vector3.new(size, size * (0.6 + math.random() * 0.6), size * (0.7 + math.random() * 0.5)),
+		CFrame = CFrame.new(startPos) * CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6),
+	}, life + 0.5)
+	TweenService:Create(rock, TweenInfo.new(life, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		CFrame = CFrame.new(startPos + Vector3.new(0, rise, 0))
+			* CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6),
+		Transparency = 1,
+	}):Play()
+end
+
+local function shakeCamera(humanoid, duration, strength)
+	if not humanoid or not humanoid.Parent then
+		return
+	end
+	local base = humanoid.CameraOffset
+	local t0 = os.clock()
+	local conn
+	conn = RunService.RenderStepped:Connect(function()
+		local t = (os.clock() - t0) / duration
+		if t >= 1 or not humanoid.Parent then
+			conn:Disconnect()
+			pcall(function()
+				humanoid.CameraOffset = base
+			end)
+			return
+		end
+		local k = (1 - t) ^ 2 * strength
+		humanoid.CameraOffset = base + Vector3.new((math.random() - 0.5) * k, (math.random() - 0.5) * k, 0)
+	end)
+end
+
+local function screenFlash(peak, duration)
+	if not SCREEN_FLASH then
+		return
+	end
+	local ok = pcall(function()
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.Name = "AFO_Flash"
+		cc.Brightness = peak
+		cc.Saturation = -0.7
+		cc.Parent = Lighting
+		TweenService:Create(cc, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Brightness = 0,
+			Saturation = 0,
+		}):Play()
+		Debris:AddItem(cc, duration + 0.3)
+	end)
+	return ok
+end
+
+local function newStreakHead(color)
 	local p = newFxPart({
 		Transparency = 1,
 		Size = Vector3.new(0.2, 0.2, 0.2),
-	})
+	}, 60)
 	local a0 = Instance.new("Attachment")
-	a0.Position = Vector3.new(0, RIBBON_WIDTH / 2, 0)
+	a0.Position = Vector3.new(0, STREAK_WIDTH / 2, 0)
 	a0.Parent = p
 	local a1 = Instance.new("Attachment")
-	a1.Position = Vector3.new(0, -RIBBON_WIDTH / 2, 0)
+	a1.Position = Vector3.new(0, -STREAK_WIDTH / 2, 0)
 	a1.Parent = p
 	local trail = Instance.new("Trail")
 	trail.Attachment0 = a0
 	trail.Attachment1 = a1
-	trail.Lifetime = RIBBON_TRAIL
+	trail.Lifetime = STREAK_TRAIL
 	trail.MinLength = 0.02
 	trail.FaceCamera = true
-	trail.LightEmission = 0.85
+	trail.LightEmission = 1
 	trail.LightInfluence = 0
 	trail.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
-		ColorSequenceKeypoint.new(0.35, color),
+		ColorSequenceKeypoint.new(0.4, color),
 		ColorSequenceKeypoint.new(1, color),
 	})
 	trail.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.05),
-		NumberSequenceKeypoint.new(0.6, 0.35),
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.6, 0.4),
 		NumberSequenceKeypoint.new(1, 1),
 	})
 	trail.WidthScale = NumberSequence.new({
@@ -1938,14 +2069,198 @@ local function newRibbonHead(color)
 	return p, trail
 end
 
-local function ribbonPoint(center, baseAngle, direction, lift, u)
+local function streakPoint(center, baseAngle, direction, u, scale)
 	local eased = u * u * (3 - 2 * u)
-	local angle = baseAngle + direction * eased * RIBBON_TURNS * 2 * math.pi
-	local radius = RIBBON_R0 + (RIBBON_R1 - RIBBON_R0) * eased
-	local height = lift + RIBBON_HEIGHT * (u ^ 0.9)
+	local angle = baseAngle + direction * eased * VORTEX_TURNS * 2 * math.pi
+	local radius = (VORTEX_R0 + (VORTEX_R1 - VORTEX_R0) * (u ^ 1.6)) * scale
+	local height = VORTEX_HEIGHT * (u ^ 0.85) * scale
 	return center + Vector3.new(math.cos(angle) * radius, height, math.sin(angle) * radius)
 end
 
+-- Starts charge + vortex. Runs until state.stop() is called (the reveal calls it).
+local function beginVortex(character, root)
+	if activeVortex then
+		pcall(activeVortex.stop)
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local origin = root.Position
+	local hit = workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
+	local groundY = hit and (hit.Position.Y + 0.1) or (origin.Y - 3)
+	local state = { alive = true, parts = {} }
+	local function keep(p)
+		table.insert(state.parts, p)
+		return p
+	end
+	local function groundCenter()
+		local p = root.Position
+		return Vector3.new(p.X, groundY, p.Z)
+	end
+	local center = groundCenter()
+
+	-- ki flying into the body
+	local gather = keep(newFxPart({
+		Transparency = 1,
+		Size = Vector3.new(22, 22, 22),
+		Position = center + Vector3.new(0, 3, 0),
+	}, 60))
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	emitter.Color = ColorSequence.new(FX_WHITE, FX_LIGHT)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.9),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	emitter.Lifetime = NumberRange.new(0.5, 0.8)
+	emitter.Speed = NumberRange.new(16, 26)
+	emitter.Rate = 70
+	emitter.LightEmission = 1
+	emitter.Drag = 0
+	pcall(function()
+		emitter.Shape = Enum.ParticleEmitterShape.Sphere
+		emitter.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+		emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.Inward
+	end)
+	emitter.Parent = gather
+	local light = Instance.new("PointLight")
+	light.Color = FX_WHITE
+	light.Range = 26
+	light.Brightness = 0
+	light.Parent = gather
+
+	-- column of light
+	local pillar = keep(tallColumn(center, VORTEX_HEIGHT, 1, FX_WHITE, 1, 60))
+
+	-- spiral streaks
+	local heads = {}
+	for i = 0, STREAK_COUNT - 1 do
+		local m = i % 3
+		local color = (m == 0) and FX_GRAY or ((m == 1) and FX_WHITE or FX_LIGHT)
+		local part, trail = newStreakHead(color)
+		keep(part)
+		table.insert(heads, {
+			part = part,
+			trail = trail,
+			direction = (i % 4 == 3) and -1 or 1,
+			baseAngle = (i / STREAK_COUNT) * 2 * math.pi,
+			birth = (i / STREAK_COUNT) * STREAK_LIFE,
+			cycle = -1,
+			jitter = 0,
+			fresh = false,
+		})
+	end
+
+	local t0 = os.clock()
+	local nextRing, nextBolt, nextRock = 0, 0, 0
+	state.conn = RunService.Heartbeat:Connect(function()
+		if not state.alive or not root.Parent then
+			return
+		end
+		local t = os.clock() - t0
+		center = groundCenter()
+		local ramp = smoothstep(t / 0.7)
+		gather.Position = center + Vector3.new(0, 3, 0)
+		light.Brightness = 2 + 6 * ramp * (0.7 + 0.3 * math.sin(t * 30))
+
+		local diameter = 1.2 + 6 * ramp + math.sin(t * 25) * 0.25
+		pillar.Transparency = 1 - 0.3 * ramp
+		pillar.Size = Vector3.new(VORTEX_HEIGHT, diameter, diameter)
+		pillar.CFrame = CFrame.new(center + Vector3.new(0, VORTEX_HEIGHT / 2, 0)) * CFrame.Angles(0, 0, math.rad(90))
+
+		for _, h in ipairs(heads) do
+			local lt = t - h.birth
+			if lt >= 0 then
+				local cycle = math.floor(lt / STREAK_LIFE)
+				local u = lt / STREAK_LIFE - cycle
+				if cycle ~= h.cycle then
+					h.cycle = cycle
+					h.trail.Enabled = false
+					h.fresh = true
+					h.jitter = math.random() * 0.6
+				elseif h.fresh then
+					h.fresh = false
+					h.trail.Enabled = true
+				end
+				h.part.CFrame = CFrame.new(streakPoint(center, h.baseAngle + h.jitter, h.direction, u, 0.45 + 0.55 * ramp))
+			end
+		end
+
+		if t >= nextRing then
+			nextRing = t + 0.3
+			local ring
+			if t < 0.6 then
+				-- charge: rings collapse into the body
+				ring = flatRing(center + Vector3.new(0, 0.1, 0), 28, 0.15, FX_LIGHT, 0.7, 1)
+				TweenService:Create(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+					Size = Vector3.new(0.15, 4, 4),
+					Transparency = 0.1,
+				}):Play()
+			else
+				ring = flatRing(center + Vector3.new(0, 0.1, 0), 6, 0.15, (math.random() < 0.5) and FX_WHITE or FX_LIGHT, 0.35, 1)
+				TweenService:Create(ring, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(0.15, 26, 26),
+					Transparency = 1,
+				}):Play()
+			end
+		end
+
+		if ramp > 0.3 and t >= nextBolt then
+			nextBolt = t + 0.09
+			for _ = 1, 2 do
+				local a = center + Vector3.new(0, 0.5 + math.random() * 2, 0) + ringOffset(1.5)
+				local b = center + Vector3.new(0, 4 + math.random() * 14, 0) + ringOffset(4 + math.random() * 5)
+				lightningBolt(a, b, (math.random() < 0.6) and FX_WHITE or FX_LIGHT, 0.16)
+			end
+		end
+
+		if ramp > 0.15 and t >= nextRock then
+			nextRock = t + 0.1
+			throwRock(center, 3 + math.random() * 7, 6 + math.random() * 12, 1.4)
+		end
+	end)
+
+	function state.stop()
+		if not state.alive then
+			return
+		end
+		state.alive = false
+		if activeVortex == state then
+			activeVortex = nil
+		end
+		if state.conn then
+			state.conn:Disconnect()
+		end
+		emitter.Enabled = false
+		for _, h in ipairs(heads) do
+			h.trail.Enabled = false
+		end
+		pcall(function()
+			TweenService:Create(pillar, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+			}):Play()
+			TweenService:Create(light, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Brightness = 0,
+			}):Play()
+		end)
+		task.delay(1.2, function()
+			for _, p in ipairs(state.parts) do
+				pcall(function()
+					p:Destroy()
+				end)
+			end
+		end)
+	end
+
+	activeVortex = state
+	return state
+end
+
+-- The reveal: the vortex collapses into a flash, shockwaves run along the ground, the column bursts.
 local function splash(character, humanoid)
 	local root = character:FindFirstChild("HumanoidRootPart")
 	if not root then
@@ -1962,20 +2277,67 @@ local function splash(character, humanoid)
 	if gray then
 		gray.boost = 1
 	end
+	screenFlash(0.55, 0.75)
+	shakeCamera(humanoid, 0.6, 0.9)
+
+	-- blinding sphere of light
+	local flash = newFxPart({
+		Shape = Enum.PartType.Ball,
+		Material = Enum.Material.Neon,
+		Color = FX_WHITE,
+		Transparency = 0,
+		Size = Vector3.new(5, 5, 5),
+		Position = center,
+	}, 1.5)
+	TweenService:Create(flash, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(36, 36, 36),
+		Transparency = 1,
+	}):Play()
+
+	-- column of light bursting open
+	local column = tallColumn(groundPos, VORTEX_HEIGHT * 1.4, 3, FX_WHITE, 0.2, 1.5)
+	TweenService:Create(column, TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(VORTEX_HEIGHT * 1.4, 14, 14),
+		Transparency = 1,
+	}):Play()
+
+	-- shockwaves along the ground
+	for k = 0, 2 do
+		task.delay(k * 0.09, function()
+			local diameter = 70 + k * 12
+			local ring = flatRing(groundPos, 4, 0.35, (k % 2 == 0) and FX_WHITE or FX_LIGHT, 0.1, 1.5)
+			TweenService:Create(ring, TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = Vector3.new(0.12, diameter, diameter),
+				Transparency = 1,
+			}):Play()
+		end)
+	end
+
+	-- lightning and rocks thrown out
+	for _ = 1, 8 do
+		local a = center + ringOffset(1)
+		local b = center + Vector3.new(0, (math.random() - 0.3) * 10, 0) + ringOffset(8 + math.random() * 8)
+		lightningBolt(a, b, (math.random() < 0.5) and FX_WHITE or FX_LIGHT, 0.2)
+	end
+	for _ = 1, 18 do
+		throwRock(groundPos, 2 + math.random() * 9, 8 + math.random() * 14, 1.6)
+	end
+
+	-- sparks + light
 	local emitterPart = newFxPart({ Transparency = 1, Size = Vector3.one, Position = groundPos + Vector3.new(0, 4, 0) })
 	local light = Instance.new("PointLight")
-	light.Color = VORTEX_COLOR_A
-	light.Brightness = 6
-	light.Range = 30
+	light.Color = FX_WHITE
+	light.Brightness = 8
+	light.Range = 34
 	light.Parent = emitterPart
 	TweenService:Create(light, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Brightness = 0,
 	}):Play()
 	local sparks = Instance.new("ParticleEmitter")
 	sparks.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	sparks.Color = ColorSequence.new(AURA_COLOR, VORTEX_COLOR_A)
+	sparks.Color = ColorSequence.new(FX_WHITE, FX_LIGHT)
 	sparks.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.5),
+		NumberSequenceKeypoint.new(0, 0.6),
 		NumberSequenceKeypoint.new(1, 0),
 	})
 	sparks.Transparency = NumberSequence.new({
@@ -1983,87 +2345,16 @@ local function splash(character, humanoid)
 		NumberSequenceKeypoint.new(1, 1),
 	})
 	sparks.Lifetime = NumberRange.new(0.7, 1.2)
-	sparks.Speed = NumberRange.new(8, 18)
+	sparks.Speed = NumberRange.new(10, 24)
 	sparks.SpreadAngle = Vector2.new(180, 180)
 	sparks.Drag = 2
 	sparks.Rate = 0
 	sparks.LightEmission = 1
 	sparks.Parent = emitterPart
-	task.delay(0.35, function()
-		if sparks.Parent then
-			sparks:Emit(22)
-		end
-	end)
+	sparks:Emit(40)
 
-	-- 1) ribbons
-	local heads = {}
-	for colorIndex = 0, 1 do
-		local color = colorIndex == 0 and VORTEX_COLOR_A or VORTEX_COLOR_B
-		local direction = colorIndex == 0 and 1 or -1
-		for i = 0, RIBBONS_PER_COLOR - 1 do
-			local part, trail = newRibbonHead(color)
-			table.insert(heads, {
-				part = part,
-				trail = trail,
-				baseAngle = (i / RIBBONS_PER_COLOR) * 2 * math.pi + colorIndex * 0.9,
-				direction = direction,
-				lift = colorIndex * 1.5 + i * 0.4,
-				birth = (i / RIBBONS_PER_COLOR) * RIBBON_BIRTH_SPAN + colorIndex * 0.08,
-			})
-		end
-	end
-	local t0 = os.clock()
-	local totalTime = RIBBON_BIRTH_SPAN + RIBBON_LIFE + 0.15
-	local conn
-	conn = RunService.Heartbeat:Connect(function()
-		local t = os.clock() - t0
-		local alive = false
-		for _, h in ipairs(heads) do
-			local u = (t - h.birth) / RIBBON_LIFE
-			if u < 1 then
-				alive = true
-			end
-			if u >= 0 and u <= 1 then
-				h.trail.Enabled = true
-				h.part.CFrame = CFrame.new(ribbonPoint(groundPos, h.baseAngle, h.direction, h.lift, u))
-			elseif u > 1 then
-				h.trail.Enabled = false
-			end
-		end
-		if not alive or t > totalTime then
-			conn:Disconnect()
-			for _, h in ipairs(heads) do
-				h.trail.Enabled = false
-			end
-		end
-	end)
-
-	-- 2) tower of tilted rings
-	for k = 0, TOWER_RINGS - 1 do
-		task.delay(0.1 + k * TOWER_DELAY, function()
-			local startDiameter = 3 + k * 1.1
-			local base = groundPos + Vector3.new(0, 0.6 + k * TOWER_STEP, 0)
-			local color = (k % 2 == 0) and VORTEX_COLOR_A or VORTEX_COLOR_B
-			local orient = CFrame.Angles(0, k * 0.55, 0) * CFrame.Angles(math.rad(10 * math.sin(k)), 0, math.rad(10 * math.cos(k * 1.3)))
-				* CFrame.Angles(0, 0, math.rad(90))
-			local ringPart = newFxPart({
-				Shape = Enum.PartType.Cylinder,
-				Material = Enum.Material.Neon,
-				Color = color,
-				Transparency = 0.25,
-				Size = Vector3.new(0.18, startDiameter, startDiameter),
-				CFrame = CFrame.new(base) * orient,
-			})
-			TweenService:Create(ringPart, TweenInfo.new(0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Size = Vector3.new(0.18, startDiameter * 1.5, startDiameter * 1.5),
-				Position = base + Vector3.new(0, 2.5, 0),
-				Transparency = 1,
-			}):Play()
-		end)
-	end
-
-	-- 3) glowing outline on the new body
-	task.delay(0.15, function()
+	-- white aura on the new body
+	task.delay(0.05, function()
 		if not character.Parent then
 			return
 		end
@@ -2071,28 +2362,28 @@ local function splash(character, humanoid)
 		aura.Name = "AFO_AuraFlash"
 		aura.Adornee = character
 		aura.FillColor = AURA_COLOR
-		aura.FillTransparency = 0.55
+		aura.FillTransparency = 0.45
 		aura.OutlineColor = AURA_COLOR
 		aura.OutlineTransparency = 0
 		aura.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		aura.Parent = workspace
-		TweenService:Create(aura, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		TweenService:Create(aura, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			FillTransparency = 1,
 			OutlineTransparency = 1,
 		}):Play()
-		Debris:AddItem(aura, 1.3)
+		Debris:AddItem(aura, 1.4)
 	end)
 
 	local camera = workspace.CurrentCamera
 	if camera and not fovBase then
 		local fov = camera.FieldOfView
 		fovBase = fov
-		local out = TweenService:Create(camera, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			FieldOfView = fov + 7,
+		local out = TweenService:Create(camera, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			FieldOfView = fov + 10,
 		})
 		out:Play()
 		out.Completed:Once(function()
-			local back = TweenService:Create(camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			local back = TweenService:Create(camera, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 				FieldOfView = fov,
 			})
 			back:Play()
@@ -2101,7 +2392,7 @@ local function splash(character, humanoid)
 				fovBase = nil
 			end)
 		end)
-		task.delay(1.7, function()
+		task.delay(1.9, function()
 			if fovBase == fov then
 				pcall(function()
 					camera.FieldOfView = fov
@@ -2526,180 +2817,6 @@ function AnimTable.build(userId, username, description, targetPlayer)
 	return t
 end
 
--- Forced override at the Animator level. Whatever script plays the base idle/walk/run/jump/fall/climb/swim
--- animation (the Animate script, a game controller, AllowCustomAnimations off...), a mirrored track with the
--- player's animation is played on top of it and follows its weight and speed, so the base one never shows.
-local AnimOverride = {
-	desired = {},
-	slotById = {},
-	ours = setmetatable({}, { __mode = "k" }),
-	shadows = {},
-	connections = {},
-	animator = nil,
-}
-
-function AnimOverride.slotOf(anim)
-	local slot
-	local id = numericAnimId(anim.AnimationId)
-	if id and AnimOverride.slotById[id] then
-		slot = AnimOverride.slotById[id]
-	end
-	if not slot then
-		local parentName = anim.Parent and string.lower(anim.Parent.Name) or nil
-		if parentName and SLOT_NAMES[parentName] then
-			slot = parentName
-		elseif not anim.Parent then
-			local name = string.lower(anim.Name)
-			if SLOT_NAMES[name] then
-				slot = name
-			end
-		end
-	end
-	if slot == "idle" and anim.Name == "Animation2" and AnimOverride.desired.idle2 then
-		return "idle2"
-	end
-	return slot
-end
-
-function AnimOverride.finish(orig, entry, instant)
-	AnimOverride.shadows[orig] = nil
-	local shadow, animation = entry.shadow, entry.animation
-	pcall(function()
-		shadow:Stop(instant and 0 or OVERRIDE_FADE_OUT)
-	end)
-	task.delay(instant and 0 or 0.5, function()
-		pcall(function()
-			shadow:Destroy()
-		end)
-		pcall(function()
-			animation:Destroy()
-		end)
-	end)
-end
-
-function AnimOverride.unbind()
-	for _, connection in ipairs(AnimOverride.connections) do
-		pcall(function()
-			connection:Disconnect()
-		end)
-	end
-	table.clear(AnimOverride.connections)
-	for orig, entry in pairs(AnimOverride.shadows) do
-		AnimOverride.finish(orig, entry, true)
-	end
-	AnimOverride.animator = nil
-	AnimOverride.desired = {}
-end
-
-function AnimOverride.consider(track)
-	if AnimOverride.ours[track] or AnimOverride.shadows[track] then
-		return
-	end
-	local animator = AnimOverride.animator
-	local anim = track.Animation
-	if not animator or not anim then
-		return
-	end
-	local slot = AnimOverride.slotOf(anim)
-	local want = slot and AnimOverride.desired[slot]
-	if not want or numericAnimId(anim.AnimationId) == want then
-		return
-	end
-	local animation = Instance.new("Animation")
-	animation.Name = "AFO_" .. slot
-	animation.AnimationId = "rbxassetid://" .. tostring(want)
-	local okLoad, shadow = pcall(function()
-		return animator:LoadAnimation(animation)
-	end)
-	if not okLoad or not shadow then
-		animation:Destroy()
-		return
-	end
-	AnimOverride.ours[shadow] = true
-	pcall(function()
-		shadow.Priority = priorityAbove(track.Priority)
-		if slot ~= "jump" then
-			shadow.Looped = true
-		end
-	end)
-	local okPlay = pcall(function()
-		shadow:Play(0, math.max(track.WeightCurrent, 0.001), track.Speed)
-	end)
-	if not okPlay then
-		pcall(function()
-			shadow:Destroy()
-		end)
-		animation:Destroy()
-		return
-	end
-	AnimOverride.shadows[track] = { shadow = shadow, animation = animation, slot = slot }
-	dbg("override", slot, numericAnimId(anim.AnimationId), "->", want)
-end
-
-function AnimOverride.step()
-	local animator = AnimOverride.animator
-	if animator then
-		local okTracks, tracks = pcall(function()
-			return animator:GetPlayingAnimationTracks()
-		end)
-		if okTracks then
-			for _, track in ipairs(tracks) do
-				AnimOverride.consider(track)
-			end
-		end
-	end
-	for orig, entry in pairs(AnimOverride.shadows) do
-		local ok, playing = pcall(function()
-			return orig.IsPlaying
-		end)
-		if not ok or not playing then
-			AnimOverride.finish(orig, entry, false)
-		else
-			pcall(function()
-				entry.shadow:AdjustWeight(math.max(orig.WeightCurrent, 0.001), 0)
-				entry.shadow:AdjustSpeed(orig.Speed)
-			end)
-		end
-	end
-end
-
-function AnimOverride.apply(character, humanoid, ids)
-	AnimOverride.unbind()
-	for slot, id in pairs(ids or {}) do
-		AnimOverride.desired[slot] = id
-		AnimOverride.slotById[id] = slot
-	end
-	if next(AnimOverride.desired) == nil then
-		return
-	end
-	for slot, list in pairs(ROBLOX_DEFAULT_ANIMS) do
-		for _, id in ipairs(list) do
-			AnimOverride.slotById[id] = AnimOverride.slotById[id] or slot
-		end
-	end
-	local defaults = defaultAnims[character]
-	if defaults then
-		for key, value in pairs(defaults) do
-			local slot = string.match(key, "^(%w+)/")
-			local id = numericAnimId(value)
-			if slot and SLOT_NAMES[slot] and id then
-				AnimOverride.slotById[id] = AnimOverride.slotById[id] or slot
-			end
-		end
-	end
-	local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 2)
-	if not animator then
-		dbg("no Animator found, forced override not installed")
-		return
-	end
-	AnimOverride.animator = animator
-	table.insert(AnimOverride.connections, animator.AnimationPlayed:Connect(AnimOverride.consider))
-	table.insert(AnimOverride.connections, RunService.Heartbeat:Connect(AnimOverride.step))
-	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-		AnimOverride.consider(track)
-	end
-end
-
 function R15.manualAttach(accessory, character)
 	local handle = accessory:FindFirstChild("Handle")
 	if not handle or not handle:IsA("BasePart") then
@@ -2943,7 +3060,7 @@ end
 -- Same idea as the script the user wrote: assign the AnimationId of the Animation objects that already live
 -- inside the character's Animate script (animate.walk.WalkAnim.AnimationId = ...). The Animate script listens
 -- to those objects and picks the new ids up on the next animation it plays, so nothing is cloned, replaced
--- or restarted. Animations that were playing before the change are covered by AnimOverride (called first).
+-- or restarted. Nothing else touches the Animator afterwards, so later manual changes keep working.
 function R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
 	local animate = character:FindFirstChild("Animate") or character:WaitForChild("Animate", 1)
 	if not animate then
@@ -3049,14 +3166,6 @@ end
 function R15.swap(character, humanoid, donor, description, targetPlayer, animTable)
 	R15.applyDonorData(character, humanoid, donor)
 	R15.syncRoot(character, humanoid, donor)
-	local overrideIds
-	if animTable then
-		overrideIds = table.clone(animTable.ids)
-		overrideIds.idle2 = animTable.idleExtra
-	end
-	-- the override goes first: it shadows the base tracks that are playing right now (their Animation objects
-	-- are about to get new ids, which would otherwise hide the fact that the old animation is still on screen)
-	AnimOverride.apply(character, humanoid, overrideIds)
 	R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
 end
 
@@ -3270,6 +3379,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		transforming = true
 		local completed = false
 		local changeDone, changeOk = false, false
+		local vortex
 		pcall(function()
 			local function valid()
 				return stillValid() and root.Parent ~= nil
@@ -3282,29 +3392,29 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if oldGhost then
 				visualOwner = currentRequest
 				hideCharacter(character)
-				retargetGray(oldGhost.model)
-				markShrinkTargets(oldGhost, donor and ghostKeySet(donor) or nil)
+				retargetGray(getGhostGroup())
+			end
+			local okFx, fxResult = pcall(beginVortex, character, root)
+			if okFx then
+				vortex = fxResult
+			else
+				dbg("vortex failed:", fxResult)
 			end
 			task.spawn(function()
 				local okChange, result = pcall(performChange)
 				changeOk = okChange and result == true
 				changeDone = true
 			end)
-			if oldGhost then
-				if not shrinkGhost(oldGhost, root, humanoid, SHRINK_TIME, currentRequest, valid) then
-					destroyGhost()
-					return
-				end
-			end
+			-- the old body is held (trembling) while the new one is built; the vortex keeps growing meanwhile
+			local holdStart = os.clock()
 			local waitedChange = 0
-			while not changeDone and waitedChange < 25 do
+			while (not changeDone or os.clock() - holdStart < MORPH_HOLD_MIN) and waitedChange < 25 do
 				if not valid() then
 					destroyGhost()
 					return
 				end
-				local g = ghostState
-				if g then
-					holdShrunk(g, root, humanoid)
+				if oldGhost then
+					holdGhost(oldGhost, root, humanoid)
 				end
 				waitedChange += RunService.Heartbeat:Wait()
 			end
@@ -3320,11 +3430,10 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if useGhost then
 				RunService.Heartbeat:Wait()
 				RunService.Heartbeat:Wait()
-				local newGhost = makeGhost(character, root, humanoid, false)
+				local newGhost = makeGhost(character, root, humanoid, false, true)
 				if newGhost then
-					retargetGray(newGhost.model)
-					pairGhosts(oldGhost, newGhost)
-					if not growGhost(newGhost, root, humanoid, GROW_TIME, currentRequest, valid) then
+					pairByKey(oldGhost, newGhost)
+					if not morphGhosts(oldGhost, newGhost, root, humanoid, MORPH_DURATION, currentRequest, valid) then
 						return
 					end
 				end
@@ -3335,6 +3444,9 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		while not changeDone and waitedClean < 25 do
 			task.wait(0.05)
 			waitedClean += 0.05
+		end
+		if vortex then
+			pcall(vortex.stop)
 		end
 		if visualOwner == nil or visualOwner == currentRequest then
 			destroyGhost()
@@ -3349,7 +3461,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		cleanupDonors()
 		if currentRequest == requestId then
 			if completed then
-				splash(character, humanoid)
+				pcall(splash, character, humanoid)
 			elseif changeDone and not changeOk then
 				lastUsername = previousUsername
 				if onFail then
@@ -3397,7 +3509,9 @@ end
 function M.Stop(restoreAvatar)
 	requestId += 1
 	active = false
-	AnimOverride.unbind()
+	if activeVortex then
+		pcall(activeVortex.stop)
+	end
 	disconnectAll()
 	releaseGray(true)
 	clearTransformVisuals()
