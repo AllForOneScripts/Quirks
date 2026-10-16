@@ -1,4 +1,4 @@
-print("3ghHOUUUUUUSEEEeijgf")
+print("3gf")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -3056,7 +3056,17 @@ function R15.finalizeAnimations(character, humanoid, description, targetPlayer, 
 	if not isCurrent() then
 		return
 	end
-	R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
+	local changed = R15.applyAnimations(character, humanoid, description, targetPlayer, animTable) or 0
+	-- RESET: the Animate script keeps playing the track it already had (e.g. the old idle) until it changes
+	-- state. When any id changed, the old Animate tracks are stopped and Animate restarts from a copy that
+	-- already holds the new ids, so idle / walk / jump... switch to the new set right now.
+	if changed > 0 then
+		if R15.reloadAnimate(character, humanoid) then
+			dbg("reset de animaciones: Animate reiniciado con el set nuevo (" .. tostring(changed) .. " ids cambiados)")
+		else
+			dbg("reset de animaciones: no se pudo reiniciar Animate")
+		end
+	end
 	task.wait(0.7)
 	if not isCurrent() then
 		return
@@ -3381,6 +3391,7 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer, ani
 			waited += 0.05
 		end
 	end
+	return #touched
 end
 
 -- Hip height measured from the rest pose of the body that is actually on the character, so the feet land
