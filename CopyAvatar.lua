@@ -1,4 +1,4 @@
-print("3214323434df")
+print("3ghfgf")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -762,6 +762,7 @@ local function makeGhost(character, root, humanoid, followHip)
 				local rel = rootCF:ToObjectSpace(d.CFrame)
 				local item = {
 					part = d,
+					key = relPath(d, clone),
 					orig = d.Size,
 					pos = rel.Position,
 					rot = rel - rel.Position,
@@ -808,6 +809,14 @@ local function makeGhost(character, root, humanoid, followHip)
 		end
 	end
 	local pivotY = bodyLow or anyLow or -3
+	do
+		local lo = bodyLow or anyLow or -3
+		local hi = bodyHigh or (lo + 5)
+		local span = math.max(hi - lo, 0.5)
+		for _, item in ipairs(items) do
+			item.stagger = clamp01((item.pos.Y - lo) / span)
+		end
+	end
 	local height
 	if restLow and restHigh then
 		height = restHigh - restLow
@@ -843,7 +852,7 @@ local function ghostBase(g, root, humanoid)
 	return root.CFrame - Vector3.new(0, g.total - g.total0, 0)
 end
 
-local function poseGhostItem(g, item, k, sizeMul, followCF)
+local function poseGhostItem(g, item, k, sizeMul, followCF, relCF)
 	local part = item.part
 	if not part or not part.Parent then
 		return
@@ -856,6 +865,10 @@ local function poseGhostItem(g, item, k, sizeMul, followCF)
 				entry.mesh.Scale = entry.orig * sizeMul
 			end
 		end
+	end
+	if relCF then
+		part.CFrame = followCF * relCF
+		return
 	end
 	local pivot = g.pivot
 	part.CFrame = followCF * (CFrame.new(pivot + (item.pos - pivot) * k) * item.rot)
@@ -873,6 +886,114 @@ local function animateGhost(g, root, humanoid, k0, k1, duration, id, isValid)
 	return runPhase(duration, function(alpha)
 		local k = k0 + (k1 - k0) * easeInOut(alpha)
 		poseGhost(g, root, humanoid, k, math.sin(alpha * math.pi), alpha * 9)
+	end, id, isValid)
+end
+
+-- Transition: every piece of the old avatar shrinks to MID_FRACTION of its size and every piece of the new
+-- avatar grows from that SAME absolute size, so a 30 cm hat goes down to 15 cm, is replaced by the new 30 cm
+-- hat at 15 cm, and grows back up through the same point. Pieces that only exist on one side shrink to
+-- (or grow from) almost nothing. Pieces are matched by their path inside the model (e.g. "Hat/Handle").
+local MID_FRACTION = 0.5
+local MIN_FACTOR = 0.02
+local SHRINK_TIME = 0.7
+local GROW_TIME = 0.9
+local STAGGER_SPAN = 0.25
+local POS_BLEND_PORTION = 0.55
+
+local function itemMagnitude(item)
+	return math.max(item.orig.Magnitude, 0.05)
+end
+
+local function easeOutBack(t, c1)
+	local c3 = c1 + 1
+	return 1 + c3 * (t - 1) ^ 3 + c1 * (t - 1) ^ 2
+end
+
+local function ghostKeySet(model)
+	local set = {}
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
+			set[relPath(d, model)] = true
+		end
+	end
+	return set
+end
+
+local function markShrinkTargets(g, newKeys)
+	for _, item in ipairs(g.items) do
+		if newKeys == nil or newKeys[item.key] then
+			item.endFactor = MID_FRACTION
+		else
+			item.endFactor = MIN_FACTOR
+		end
+	end
+end
+
+local function pairGhosts(oldGhost, newGhost)
+	local byKey = {}
+	for _, item in ipairs(oldGhost.items) do
+		if item.key and not byKey[item.key] then
+			byKey[item.key] = item
+		end
+	end
+	local drift = 0
+	if oldGhost.followHip then
+		drift = oldGhost.total - oldGhost.total0
+	end
+	for _, item in ipairs(newGhost.items) do
+		item.startFactor = MIN_FACTOR
+		item.fromRel = nil
+		local old = item.key and byKey[item.key]
+		if old and (old.endFactor or 1) > MIN_FACTOR then
+			byKey[item.key] = nil
+			local midSize = old.endFactor * itemMagnitude(old)
+			item.startFactor = math.clamp(midSize / itemMagnitude(item), MIN_FACTOR, 1)
+			item.fromRel = CFrame.new(old.pos - Vector3.new(0, drift, 0)) * old.rot
+		end
+	end
+end
+
+local function poseWithFactors(g, root, humanoid, factorOf, relOf, phase, wobble)
+	local followCF = ghostBase(g, root, humanoid)
+	for _, item in ipairs(g.items) do
+		local f = factorOf(item)
+		local w = 1 + math.sin(phase + item.seed) * 0.04 * wobble
+		poseGhostItem(g, item, 1, Vector3.new(f * w, f, f * w), followCF, relOf and relOf(item) or nil)
+	end
+end
+
+local function holdShrunk(g, root, humanoid)
+	poseWithFactors(g, root, humanoid, function(item)
+		return item.endFactor or 1
+	end, nil, 0, 0)
+end
+
+local function shrinkGhost(g, root, humanoid, duration, id, isValid)
+	return runPhase(duration, function(alpha)
+		poseWithFactors(g, root, humanoid, function(item)
+			local delay = (1 - (item.stagger or 0)) * STAGGER_SPAN
+			local a = clamp01(alpha * (1 + STAGGER_SPAN) - delay)
+			return 1 + ((item.endFactor or MID_FRACTION) - 1) * easeInOut(a)
+		end, nil, alpha * 9, math.sin(alpha * math.pi))
+	end, id, isValid)
+end
+
+local function growGhost(g, root, humanoid, duration, id, isValid)
+	return runPhase(duration, function(alpha)
+		poseWithFactors(g, root, humanoid, function(item)
+			local delay = (item.stagger or 0) * STAGGER_SPAN
+			local a = clamp01(alpha * (1 + STAGGER_SPAN) - delay)
+			local start = item.startFactor or MIN_FACTOR
+			return start + (1 - start) * easeOutBack(a, 0.9)
+		end, function(item)
+			if not item.fromRel then
+				return nil
+			end
+			local delay = (item.stagger or 0) * STAGGER_SPAN
+			local a = clamp01(alpha * (1 + STAGGER_SPAN) - delay)
+			local b = easeInOut(clamp01(a / POS_BLEND_PORTION))
+			return item.fromRel:Lerp(CFrame.new(item.pos) * item.rot, b)
+		end, alpha * 9, math.sin(alpha * math.pi))
 	end, id, isValid)
 end
 
@@ -1727,6 +1848,60 @@ local function newFxPart(props)
 	return p
 end
 
+-- Transformation burst: a whirlwind. Several helical arms of light climb from the feet, spinning and
+-- opening outward like a funnel (the "aura tornado" of a fusion appearing), followed by shockwave rings.
+local VORTEX_ARMS = 4
+local VORTEX_PER_ARM = 8
+local VORTEX_BIRTH_SPAN = 0.6
+local VORTEX_LIFE = 0.85
+local VORTEX_HEIGHT = 12
+local VORTEX_R0 = 1.1
+local VORTEX_R1 = 8
+local VORTEX_SPIN = 12
+local VORTEX_TWIST = 2.6
+
+local function newVortexParticle(tint)
+	local p = newFxPart({
+		Shape = Enum.PartType.Ball,
+		Material = Enum.Material.Neon,
+		Color = tint,
+		Transparency = 1,
+		Size = Vector3.new(0.3, 0.3, 0.3),
+	})
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(0, 0.45, 0)
+	a0.Parent = p
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, -0.45, 0)
+	a1.Parent = p
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Lifetime = 0.5
+	trail.MinLength = 0.02
+	trail.FaceCamera = true
+	trail.LightEmission = 0.75
+	trail.Color = ColorSequence.new(Color3.new(1, 1, 1), tint)
+	trail.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	trail.WidthScale = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	trail.Enabled = false
+	trail.Parent = p
+	return p, trail
+end
+
+local function vortexPoint(center, arm, u, t)
+	local angle = arm * (2 * math.pi / VORTEX_ARMS) + t * VORTEX_SPIN + u * VORTEX_TWIST
+	local radius = VORTEX_R0 + (VORTEX_R1 - VORTEX_R0) * (u ^ 1.6)
+	local height = VORTEX_HEIGHT * (u ^ 0.85)
+	return center + Vector3.new(math.cos(angle) * radius, height, math.sin(angle) * radius)
+end
+
 local function splash(character, humanoid)
 	local root = character:FindFirstChild("HumanoidRootPart")
 	if not root then
@@ -1743,89 +1918,103 @@ local function splash(character, humanoid)
 	if gray then
 		gray.boost = 1
 	end
-	local emitterPart = newFxPart({ Transparency = 1, Size = Vector3.one, Position = center })
+	local emitterPart = newFxPart({ Transparency = 1, Size = Vector3.one, Position = groundPos })
 	local light = Instance.new("PointLight")
 	light.Color = Color3.fromRGB(225, 227, 235)
 	light.Brightness = 5
-	light.Range = 22
+	light.Range = 26
 	light.Parent = emitterPart
-	TweenService:Create(light, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+	TweenService:Create(light, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Brightness = 0,
 	}):Play()
+	-- updraft: a soft cone of mist that opens upward together with the whirlwind
 	local mist = Instance.new("ParticleEmitter")
 	mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
-	mist.Color = ColorSequence.new(Color3.fromRGB(190, 192, 200), Color3.fromRGB(120, 122, 130))
+	mist.Color = ColorSequence.new(Color3.fromRGB(205, 207, 215), Color3.fromRGB(120, 122, 130))
 	mist.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 2),
-		NumberSequenceKeypoint.new(1, 8),
+		NumberSequenceKeypoint.new(0, 1.5),
+		NumberSequenceKeypoint.new(1, 7),
 	})
 	mist.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(0, 0.35),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	mist.Lifetime = NumberRange.new(0.6, 1.1)
-	mist.Speed = NumberRange.new(14, 28)
-	mist.SpreadAngle = Vector2.new(180, 180)
-	mist.Drag = 3
+	mist.Lifetime = NumberRange.new(0.8, 1.3)
+	mist.Speed = NumberRange.new(9, 16)
+	mist.SpreadAngle = Vector2.new(38, 38)
+	mist.EmissionDirection = Enum.NormalId.Top
+	mist.Drag = 2
 	mist.Rate = 0
-	mist.LightEmission = 0.1
+	mist.LightEmission = 0.15
 	mist.Parent = emitterPart
-	mist:Emit(45)
-	local ring = newFxPart({
-		Shape = Enum.PartType.Cylinder,
-		Material = Enum.Material.Neon,
-		Color = Color3.fromRGB(235, 237, 245),
-		Transparency = 0.2,
-		Size = Vector3.new(0.15, 2, 2),
-		CFrame = CFrame.new(groundPos) * CFrame.Angles(0, 0, math.rad(90)),
-	})
-	TweenService:Create(ring, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.15, 28, 28),
-		Transparency = 1,
-	}):Play()
-	local drops = {}
-	for i = 1, 22 do
-		local s = 0.35 + math.random() * 0.45
-		local part = newFxPart({
-			Shape = Enum.PartType.Ball,
-			Material = Enum.Material.SmoothPlastic,
-			Reflectance = 0.4,
-			Color = GRAY_A:Lerp(GRAY_B, math.random()),
-			Size = Vector3.new(s * 1.4, s * 0.7, s * 1.4),
-			Position = center,
-		})
-		local dir = Vector3.new(math.random() * 2 - 1, math.random() * 0.8 + 0.3, math.random() * 2 - 1).Unit
-		drops[i] = { part = part, vel = dir * (12 + math.random() * 18), size = s }
+	mist:Emit(34)
+	local function ring(delayTime, finalSize, duration)
+		task.delay(delayTime, function()
+			local r = newFxPart({
+				Shape = Enum.PartType.Cylinder,
+				Material = Enum.Material.Neon,
+				Color = Color3.fromRGB(235, 237, 245),
+				Transparency = 0.2,
+				Size = Vector3.new(0.15, 2, 2),
+				CFrame = CFrame.new(groundPos) * CFrame.Angles(0, 0, math.rad(90)),
+			})
+			TweenService:Create(r, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = Vector3.new(0.15, finalSize, finalSize),
+				Transparency = 1,
+			}):Play()
+		end)
+	end
+	ring(0, 30, 0.7)
+	ring(0.25, 44, 0.9)
+	local particles = {}
+	for arm = 0, VORTEX_ARMS - 1 do
+		for j = 0, VORTEX_PER_ARM - 1 do
+			local tint = GRAY_B:Lerp(Color3.new(1, 1, 1), math.random() * 0.6)
+			local part, trail = newVortexParticle(tint)
+			table.insert(particles, {
+				part = part,
+				trail = trail,
+				arm = arm,
+				birth = (j / VORTEX_PER_ARM) * VORTEX_BIRTH_SPAN + math.random() * 0.04,
+			})
+		end
 	end
 	local t0 = os.clock()
+	local totalTime = VORTEX_BIRTH_SPAN + VORTEX_LIFE + 0.7
 	local conn
-	conn = RunService.Heartbeat:Connect(function(dt)
+	conn = RunService.Heartbeat:Connect(function()
 		local t = os.clock() - t0
-		if t > 0.9 then
+		if t > totalTime then
 			conn:Disconnect()
-			for _, d in ipairs(drops) do
-				d.part:Destroy()
+			for _, p in ipairs(particles) do
+				p.part:Destroy()
 			end
 			return
 		end
-		local k = clamp01((t - 0.45) / 0.4)
-		for _, d in ipairs(drops) do
-			d.vel += Vector3.new(0, -55 * dt, 0)
-			d.part.Position += d.vel * dt
-			local stretch = math.max(d.size * (1 - k), 0.02)
-			d.part.Size = Vector3.new(stretch * 1.3, stretch * 0.6, stretch * 1.3)
+		for _, p in ipairs(particles) do
+			local u = (t - p.birth) / VORTEX_LIFE
+			if u < 0 then
+				p.part.CFrame = CFrame.new(groundPos)
+			elseif u <= 1 then
+				p.trail.Enabled = true
+				p.part.Transparency = 0.1 + 0.9 * clamp01((u - 0.78) / 0.22)
+				p.part.CFrame = CFrame.new(vortexPoint(groundPos, p.arm, u, t))
+			else
+				p.trail.Enabled = false
+				p.part.Transparency = 1
+			end
 		end
 	end)
 	local camera = workspace.CurrentCamera
 	if camera and not fovBase then
 		local fov = camera.FieldOfView
 		fovBase = fov
-		local out = TweenService:Create(camera, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		local out = TweenService:Create(camera, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			FieldOfView = fov + 7,
 		})
 		out:Play()
 		out.Completed:Once(function()
-			local back = TweenService:Create(camera, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			local back = TweenService:Create(camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 				FieldOfView = fov,
 			})
 			back:Play()
@@ -1834,7 +2023,7 @@ local function splash(character, humanoid)
 				fovBase = nil
 			end)
 		end)
-		task.delay(1.5, function()
+		task.delay(1.7, function()
 			if fovBase == fov then
 				pcall(function()
 					camera.FieldOfView = fov
@@ -2116,6 +2305,302 @@ local function watchDeath(humanoid)
 end
 local R15 = {}
 
+-- ---------------------------------------------------------------------------------------------------------
+-- Animation table of a player (what the HumanoidDescription / appearance says they use) + forced override.
+-- ---------------------------------------------------------------------------------------------------------
+local ANIM_SLOTS = {
+	{ slot = "idle", label = "quieto", prop = "IdleAnimation", typeId = 51 },
+	{ slot = "walk", label = "caminar", prop = "WalkAnimation", typeId = 55 },
+	{ slot = "run", label = "correr", prop = "RunAnimation", typeId = 53 },
+	{ slot = "jump", label = "saltar", prop = "JumpAnimation", typeId = 52 },
+	{ slot = "fall", label = "caer", prop = "FallAnimation", typeId = 50 },
+	{ slot = "climb", label = "trepar", prop = "ClimbAnimation", typeId = 48 },
+	{ slot = "swim", label = "nadar", prop = "SwimAnimation", typeId = 54 },
+}
+local SLOT_NAMES = { idle = true, walk = true, run = true, jump = true, fall = true, climb = true, swim = true }
+local ROBLOX_DEFAULT_ANIMS = {
+	idle = { 507766666, 507766951, 507766388 },
+	walk = { 507777826 },
+	run = { 507767714 },
+	jump = { 507765000 },
+	fall = { 507767968 },
+	climb = { 507765644 },
+	swim = { 507784897 },
+}
+local OVERRIDE_FADE_OUT = 0.15
+local PRIORITY_LADDER = {
+	Enum.AnimationPriority.Core,
+	Enum.AnimationPriority.Idle,
+	Enum.AnimationPriority.Movement,
+	Enum.AnimationPriority.Action,
+	Enum.AnimationPriority.Action2,
+	Enum.AnimationPriority.Action3,
+	Enum.AnimationPriority.Action4,
+}
+
+local function priorityAbove(priority)
+	for i, item in ipairs(PRIORITY_LADDER) do
+		if item == priority then
+			return PRIORITY_LADDER[math.min(i + 1, #PRIORITY_LADDER)]
+		end
+	end
+	return Enum.AnimationPriority.Movement
+end
+
+local function numericAnimId(value)
+	if type(value) == "number" then
+		return value
+	end
+	local text = tostring(value or "")
+	local fromQuery = string.match(text, "[?&]id=(%d+)")
+	if fromQuery then
+		return tonumber(fromQuery)
+	end
+	local last
+	for digits in string.gmatch(text, "%d+") do
+		last = digits
+	end
+	return last and tonumber(last) or nil
+end
+
+local AnimTable = {}
+
+function AnimTable.fromDescription(description)
+	local t = { ids = {}, names = {}, source = {} }
+	for _, s in ipairs(ANIM_SLOTS) do
+		local ok, value = pcall(function()
+			return description[s.prop]
+		end)
+		if ok and type(value) == "number" and value ~= 0 then
+			t.ids[s.slot] = value
+			t.source[s.slot] = "descripcion"
+		end
+	end
+	return t
+end
+
+-- Reads the animation ids of a player, in order of trust: HumanoidDescription, the appearance info of the
+-- account (it also gives the catalog names, e.g. "Zombie Walk"), and the Animate script of the player when
+-- they are in this server. Slots nobody fills stay nil, which means "keep the base animation".
+function AnimTable.build(userId, username, description, targetPlayer)
+	local t = AnimTable.fromDescription(description)
+	local okInfo, info = pcall(function()
+		return Players:GetCharacterAppearanceInfoAsync(userId)
+	end)
+	if okInfo and type(info) == "table" and type(info.assets) == "table" then
+		for _, asset in ipairs(info.assets) do
+			local assetType = type(asset) == "table" and asset.assetType
+			local typeId = type(assetType) == "table" and assetType.id or nil
+			local typeName = type(assetType) == "table" and type(assetType.name) == "string"
+				and string.lower((assetType.name:gsub("%s", ""))) or nil
+			for _, s in ipairs(ANIM_SLOTS) do
+				if typeId == s.typeId or typeName == string.lower(s.prop) then
+					t.names[s.slot] = asset.name
+					if not t.ids[s.slot] and type(asset.id) == "number" and asset.id ~= 0 then
+						t.ids[s.slot] = asset.id
+						t.source[s.slot] = "apariencia"
+					end
+				end
+			end
+		end
+	end
+	if targetPlayer then
+		local live = R15.readLiveAnimations(targetPlayer)
+		for _, entry in ipairs(ANIM_MAP) do
+			local slot = entry[1]
+			local value = live[entry[1] .. "/" .. entry[2]]
+			if SLOT_NAMES[slot] and value and not t.ids[slot] then
+				local id = numericAnimId(value)
+				if id and id ~= 0 then
+					t.ids[slot] = id
+					t.source[slot] = "jugador en el servidor"
+				end
+			end
+		end
+	end
+	-- Walk and run are blended by the Animate script by speed; a pack that only defines one of them
+	-- would show the base animation of the other one at that speed, so the missing one reuses it.
+	if t.ids.walk and not t.ids.run then
+		t.ids.run = t.ids.walk
+		t.source.run = "copiado de caminar"
+	elseif t.ids.run and not t.ids.walk then
+		t.ids.walk = t.ids.run
+		t.source.walk = "copiado de correr"
+	end
+	if DEBUG then
+		local parts = {}
+		for _, s in ipairs(ANIM_SLOTS) do
+			local id = t.ids[s.slot]
+			if id then
+				local name = t.names[s.slot] and (" (" .. t.names[s.slot] .. ")") or ""
+				table.insert(parts, s.label .. " = " .. tostring(id) .. name .. " [" .. t.source[s.slot] .. "]")
+			else
+				table.insert(parts, s.label .. " = base")
+			end
+		end
+		print("[AFO] Animaciones de " .. tostring(username) .. ": " .. table.concat(parts, " | "))
+	end
+	return t
+end
+
+-- Forced override at the Animator level. Whatever script plays the base idle/walk/run/jump/fall/climb/swim
+-- animation (the Animate script, a game controller, AllowCustomAnimations off...), a mirrored track with the
+-- player's animation is played on top of it and follows its weight and speed, so the base one never shows.
+local AnimOverride = {
+	desired = {},
+	slotById = {},
+	ours = setmetatable({}, { __mode = "k" }),
+	shadows = {},
+	connections = {},
+	animator = nil,
+}
+
+function AnimOverride.slotOf(anim)
+	local id = numericAnimId(anim.AnimationId)
+	if id and AnimOverride.slotById[id] then
+		return AnimOverride.slotById[id]
+	end
+	local parentName = anim.Parent and string.lower(anim.Parent.Name) or nil
+	if parentName and SLOT_NAMES[parentName] then
+		return parentName
+	end
+	if not anim.Parent then
+		local name = string.lower(anim.Name)
+		if SLOT_NAMES[name] then
+			return name
+		end
+	end
+	return nil
+end
+
+function AnimOverride.finish(orig, entry, instant)
+	AnimOverride.shadows[orig] = nil
+	local shadow, animation = entry.shadow, entry.animation
+	pcall(function()
+		shadow:Stop(instant and 0 or OVERRIDE_FADE_OUT)
+	end)
+	task.delay(instant and 0 or 0.5, function()
+		pcall(function()
+			shadow:Destroy()
+		end)
+		pcall(function()
+			animation:Destroy()
+		end)
+	end)
+end
+
+function AnimOverride.unbind()
+	for _, connection in ipairs(AnimOverride.connections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	table.clear(AnimOverride.connections)
+	for orig, entry in pairs(AnimOverride.shadows) do
+		AnimOverride.finish(orig, entry, true)
+	end
+	AnimOverride.animator = nil
+	AnimOverride.desired = {}
+end
+
+function AnimOverride.consider(track)
+	if AnimOverride.ours[track] or AnimOverride.shadows[track] then
+		return
+	end
+	local animator = AnimOverride.animator
+	local anim = track.Animation
+	if not animator or not anim then
+		return
+	end
+	local slot = AnimOverride.slotOf(anim)
+	local want = slot and AnimOverride.desired[slot]
+	if not want or numericAnimId(anim.AnimationId) == want then
+		return
+	end
+	local animation = Instance.new("Animation")
+	animation.Name = "AFO_" .. slot
+	animation.AnimationId = "rbxassetid://" .. tostring(want)
+	local okLoad, shadow = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	if not okLoad or not shadow then
+		animation:Destroy()
+		return
+	end
+	AnimOverride.ours[shadow] = true
+	pcall(function()
+		shadow.Priority = priorityAbove(track.Priority)
+		if slot ~= "jump" then
+			shadow.Looped = true
+		end
+	end)
+	local okPlay = pcall(function()
+		shadow:Play(0, math.max(track.WeightCurrent, 0.001), track.Speed)
+	end)
+	if not okPlay then
+		pcall(function()
+			shadow:Destroy()
+		end)
+		animation:Destroy()
+		return
+	end
+	AnimOverride.shadows[track] = { shadow = shadow, animation = animation, slot = slot }
+	dbg("override", slot, numericAnimId(anim.AnimationId), "->", want)
+end
+
+function AnimOverride.step()
+	for orig, entry in pairs(AnimOverride.shadows) do
+		local ok, playing = pcall(function()
+			return orig.IsPlaying
+		end)
+		if not ok or not playing then
+			AnimOverride.finish(orig, entry, false)
+		else
+			pcall(function()
+				entry.shadow:AdjustWeight(math.max(orig.WeightCurrent, 0.001), 0)
+				entry.shadow:AdjustSpeed(orig.Speed)
+			end)
+		end
+	end
+end
+
+function AnimOverride.apply(character, humanoid, ids)
+	AnimOverride.unbind()
+	for slot, id in pairs(ids or {}) do
+		AnimOverride.desired[slot] = id
+		AnimOverride.slotById[id] = slot
+	end
+	if next(AnimOverride.desired) == nil then
+		return
+	end
+	for slot, list in pairs(ROBLOX_DEFAULT_ANIMS) do
+		for _, id in ipairs(list) do
+			AnimOverride.slotById[id] = AnimOverride.slotById[id] or slot
+		end
+	end
+	local defaults = defaultAnims[character]
+	if defaults then
+		for key, value in pairs(defaults) do
+			local slot = string.match(key, "^(%w+)/")
+			local id = numericAnimId(value)
+			if slot and SLOT_NAMES[slot] and id then
+				AnimOverride.slotById[id] = AnimOverride.slotById[id] or slot
+			end
+		end
+	end
+	local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 2)
+	if not animator then
+		dbg("no Animator found, forced override not installed")
+		return
+	end
+	AnimOverride.animator = animator
+	table.insert(AnimOverride.connections, animator.AnimationPlayed:Connect(AnimOverride.consider))
+	table.insert(AnimOverride.connections, RunService.Heartbeat:Connect(AnimOverride.step))
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		AnimOverride.consider(track)
+	end
+end
+
 function R15.manualAttach(accessory, character)
 	local handle = accessory:FindFirstChild("Handle")
 	if not handle or not handle:IsA("BasePart") then
@@ -2356,7 +2841,7 @@ end
 -- Editing the ids of the running script is not enough: it keeps the track that is already playing, and
 -- disabling/re-enabling it can leave it dead. So a fresh copy of the script gets the new ids written into it
 -- BEFORE it is parented, and then replaces the old one, which makes it start from zero with the right ids.
-function R15.applyAnimations(character, humanoid, description, targetPlayer)
+function R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
 	local animate = character:FindFirstChild("Animate") or character:WaitForChild("Animate", 1)
 	if not animate then
 		dbg("no Animate script in the character, animations left as they are")
@@ -2364,7 +2849,6 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer)
 	end
 	captureDefaultAnims(character)
 	local defaults = defaultAnims[character] or {}
-	local live = targetPlayer and R15.readLiveAnimations(targetPlayer) or {}
 	local fresh
 	pcall(function()
 		fresh = animate:Clone()
@@ -2375,12 +2859,12 @@ function R15.applyAnimations(character, humanoid, description, targetPlayer)
 	for _, entry in ipairs(ANIM_MAP) do
 		local folderName, animName, propertyName = entry[1], entry[2], entry[3]
 		local key = folderName .. "/" .. animName
-		local id = description and description[propertyName] or 0
+		local id = animTable and animTable.ids[folderName]
 		local newId
-		if type(id) == "number" and id ~= 0 then
+		if id then
 			newId = "rbxassetid://" .. tostring(id)
 		else
-			newId = live[key] or defaults[key]
+			newId = defaults[key]
 		end
 		local folder = editable:FindFirstChild(folderName)
 		local anim = folder and folder:FindFirstChild(animName)
@@ -2515,10 +2999,11 @@ function R15.syncRoot(character, humanoid, donor)
 	end
 end
 
-function R15.swap(character, humanoid, donor, description, targetPlayer)
+function R15.swap(character, humanoid, donor, description, targetPlayer, animTable)
 	R15.applyDonorData(character, humanoid, donor)
 	R15.syncRoot(character, humanoid, donor)
-	R15.applyAnimations(character, humanoid, description, targetPlayer)
+	R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
+	AnimOverride.apply(character, humanoid, animTable and animTable.ids)
 end
 
 
@@ -2598,6 +3083,13 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				targetPlayer = nil
 			end
 		end
+		local animTable = nil
+		if isR15 then
+			animTable = AnimTable.build(userId, username, description, targetPlayer)
+			if not stillValid() then
+				return
+			end
+		end
 		local useDescription = (not isR15) and USE_APPLY_DESCRIPTION_R6 and humanoid.RigType == rigType
 		local donor, skinDonor
 		local function buildDonor(rigOverride)
@@ -2661,7 +3153,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		local function doSwap()
 			local records
 			if isR15 then
-				R15.swap(character, humanoid, donor, description, targetPlayer)
+				R15.swap(character, humanoid, donor, description, targetPlayer, animTable)
 			else
 				records = applyDonorData(character, humanoid, donor, {
 					description = description,
@@ -2732,12 +3224,12 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			if not isFirstPerson() then
 				oldGhost = makeGhost(character, root, humanoid, true)
 			end
-			local oldHeight = oldGhost and oldGhost.height
 			local useGhost = oldGhost ~= nil
 			if oldGhost then
 				visualOwner = currentRequest
 				hideCharacter(character)
 				retargetGray(oldGhost.model)
+				markShrinkTargets(oldGhost, donor and ghostKeySet(donor) or nil)
 			end
 			task.spawn(function()
 				local okChange, result = pcall(performChange)
@@ -2745,7 +3237,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				changeDone = true
 			end)
 			if oldGhost then
-				if not animateGhost(oldGhost, root, humanoid, 1, 1, MORPH_TIME, currentRequest, valid) then
+				if not shrinkGhost(oldGhost, root, humanoid, SHRINK_TIME, currentRequest, valid) then
 					destroyGhost()
 					return
 				end
@@ -2758,7 +3250,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				end
 				local g = ghostState
 				if g then
-					poseGhost(g, root, humanoid, 1, 0, 0)
+					holdShrunk(g, root, humanoid)
 				end
 				waitedChange += RunService.Heartbeat:Wait()
 			end
@@ -2777,16 +3269,8 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				local newGhost = makeGhost(character, root, humanoid, false)
 				if newGhost then
 					retargetGray(newGhost.model)
-					local startK = 1
-					local newHeight = newGhost.height
-					if oldHeight and newHeight and newHeight > 0.01 then
-						local ratio = oldHeight / newHeight
-						if math.abs(ratio - 1) > HEIGHT_EPSILON then
-							startK = math.clamp(ratio, 0.2, 5)
-						end
-					end
-					local duration = startK == 1 and MORPH_TIME or HEIGHT_TIME
-					if not animateGhost(newGhost, root, humanoid, startK, 1, duration, currentRequest, valid) then
+					pairGhosts(oldGhost, newGhost)
+					if not growGhost(newGhost, root, humanoid, GROW_TIME, currentRequest, valid) then
 						return
 					end
 				end
@@ -2859,6 +3343,7 @@ end
 function M.Stop(restoreAvatar)
 	requestId += 1
 	active = false
+	AnimOverride.unbind()
 	disconnectAll()
 	releaseGray(true)
 	clearTransformVisuals()
