@@ -1,4 +1,4 @@
-print("3ghf3gaiweihijgf")
+print("3ghHOUUUUUUSEEEeijgf")
 
 local M = {}
 local Players = game:GetService("Players")
@@ -2817,6 +2817,268 @@ function AnimTable.build(userId, username, description, targetPlayer)
 	return t
 end
 
+-- ---------------------------------------------------------------------------------------------------------
+-- Step 1 (READ): every id of the table is test-loaded in the Animator BEFORE anything is changed. An id that
+-- does not load (length 0) is tried once more by resolving the real Animation inside the catalog asset; if it
+-- still fails it is dropped, so that slot keeps the base animation instead of freezing the character.
+-- ---------------------------------------------------------------------------------------------------------
+function AnimTable.probe(animator, id, deadline)
+	local animation = Instance.new("Animation")
+	animation.AnimationId = "rbxassetid://" .. tostring(id)
+	local okLoad, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	if not okLoad or not track then
+		animation:Destroy()
+		return nil
+	end
+	while os.clock() < deadline do
+		local okLen, len = pcall(function()
+			return track.Length
+		end)
+		if okLen and len and len > 0 then
+			break
+		end
+		task.wait(0.05)
+	end
+	local length, looped = 0, nil
+	pcall(function()
+		length = track.Length
+		looped = track.Looped
+	end)
+	pcall(function()
+		track:Destroy()
+	end)
+	animation:Destroy()
+	if length and length > 0 then
+		return length, looped
+	end
+	return nil
+end
+
+function AnimTable.resolve(id)
+	local okObjects, objects = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(id))
+	end)
+	if not okObjects or type(objects) ~= "table" then
+		return nil
+	end
+	local found
+	for _, obj in ipairs(objects) do
+		if obj:IsA("Animation") then
+			found = obj
+		else
+			found = obj:FindFirstChildWhichIsA("Animation", true)
+		end
+		if found then
+			break
+		end
+	end
+	local result = found and numericAnimId(found.AnimationId) or nil
+	for _, obj in ipairs(objects) do
+		pcall(function()
+			obj:Destroy()
+		end)
+	end
+	return result
+end
+
+function AnimTable.fillMissing(t)
+	if t.ids.walk and not t.ids.run then
+		t.ids.run = t.ids.walk
+		t.source.run = "copiado de caminar"
+	elseif t.ids.run and not t.ids.walk then
+		t.ids.walk = t.ids.run
+		t.source.walk = "copiado de correr"
+	end
+end
+
+function AnimTable.validate(humanoid, t)
+	t.lengths = {}
+	local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 2)
+	if not animator then
+		dbg("sin Animator: no se pueden comprobar los ids, se usan tal cual")
+		return
+	end
+	local entries = {}
+	for slot, id in pairs(t.ids) do
+		table.insert(entries, { slot = slot, id = id })
+	end
+	if t.idleExtra then
+		table.insert(entries, { slot = "idle2", id = t.idleExtra })
+	end
+	local pending = #entries
+	local deadline = os.clock() + 4
+	for _, entry in ipairs(entries) do
+		task.spawn(function()
+			local length, looped = AnimTable.probe(animator, entry.id, deadline)
+			if not length then
+				local realId = AnimTable.resolve(entry.id)
+				if realId and realId ~= entry.id then
+					length, looped = AnimTable.probe(animator, realId, os.clock() + 2)
+					if length then
+						entry.resolvedFrom = entry.id
+						entry.id = realId
+					end
+				end
+			end
+			entry.length, entry.looped = length, looped
+			pending -= 1
+		end)
+	end
+	local guard = os.clock() + 9
+	while pending > 0 and os.clock() < guard do
+		task.wait(0.05)
+	end
+	for _, entry in ipairs(entries) do
+		if entry.length then
+			if entry.slot == "idle2" then
+				t.idleExtra = entry.id
+			else
+				t.ids[entry.slot] = entry.id
+			end
+			t.lengths[entry.id] = entry.length
+			dbg(
+				string.format(
+					"OK    %-6s %s  (%.2fs%s)%s",
+					entry.slot,
+					tostring(entry.id),
+					entry.length,
+					entry.looped and ", loop" or "",
+					entry.resolvedFrom and (" [resuelto desde " .. tostring(entry.resolvedFrom) .. "]") or ""
+				)
+			)
+		else
+			dbg(string.format("FALLA %-6s %s no carga -> se mantiene la animación base", entry.slot, tostring(entry.id)))
+			if entry.slot == "idle2" then
+				t.idleExtra = nil
+			else
+				t.ids[entry.slot] = nil
+			end
+		end
+	end
+	AnimTable.fillMissing(t)
+end
+
+-- ---------------------------------------------------------------------------------------------------------
+-- Step 2 (WRITE) + Step 3 (VERIFY): after the table has been read and checked, ALL ids are written at once
+-- into the Animate script (same thing as the simple script: animate.walk.WalkAnim.AnimationId = ...). Then it
+-- is checked that the Animate script really plays the new set and that the pose is not frozen. If not, the
+-- Animate script is reloaded from a copy that already contains the new ids.
+-- ---------------------------------------------------------------------------------------------------------
+function R15.animateTracks(character, humanoid)
+	local animate = character:FindFirstChild("Animate")
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	local list = {}
+	if not animate or not animator then
+		return list, animate, animator
+	end
+	local okTracks, tracks = pcall(function()
+		return animator:GetPlayingAnimationTracks()
+	end)
+	if okTracks then
+		for _, track in ipairs(tracks) do
+			local anim = track.Animation
+			if anim and anim:IsDescendantOf(animate) then
+				table.insert(list, track)
+			end
+		end
+	end
+	return list, animate, animator
+end
+
+function R15.animationsHealthy(character, humanoid, animTable)
+	local list, animate, animator = R15.animateTracks(character, humanoid)
+	if not animate or not animator then
+		return true, "sin Animate/Animator, nada que comprobar"
+	end
+	if humanoid.Health <= 0 then
+		return true, "personaje muerto"
+	end
+	if #list == 0 then
+		return false, "ninguna animación del Animate se está reproduciendo"
+	end
+	local lengths = animTable and animTable.lengths or {}
+	local before = {}
+	for _, track in ipairs(list) do
+		local expected = lengths[numericAnimId(track.Animation.AnimationId)]
+		if expected and math.abs(track.Length - expected) > 0.02 then
+			return false, "se reproduce una pista cargada con un id anterior (" .. tostring(track.Animation.Name) .. ")"
+		end
+		before[track] = track.TimePosition
+	end
+	task.wait(0.3)
+	for _, track in ipairs(list) do
+		local okMoving = pcall(function()
+			if track.IsPlaying and track.Length > 0.1 and track.Speed ~= 0 and track.WeightCurrent > 0.05 then
+				if track.TimePosition == before[track] then
+					error("frozen")
+				end
+			end
+		end)
+		if not okMoving then
+			return false, "la pose está congelada (" .. tostring(track.Animation.Name) .. ")"
+		end
+	end
+	return true, "ok"
+end
+
+function R15.reloadAnimate(character, humanoid)
+	local list, old = R15.animateTracks(character, humanoid)
+	if not old then
+		return false
+	end
+	local previous = old.Archivable
+	pcall(function()
+		old.Archivable = true
+	end)
+	local copy
+	local okClone = pcall(function()
+		copy = old:Clone()
+	end)
+	pcall(function()
+		old.Archivable = previous
+	end)
+	if not okClone or not copy then
+		return false
+	end
+	old:Destroy()
+	for _, track in ipairs(list) do
+		pcall(function()
+			track:Stop(0.1)
+		end)
+	end
+	copy.Parent = character
+	return true
+end
+
+function R15.finalizeAnimations(character, humanoid, description, targetPlayer, animTable, isCurrent)
+	if not isCurrent() then
+		return
+	end
+	R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
+	task.wait(0.7)
+	if not isCurrent() then
+		return
+	end
+	local healthy, reason = R15.animationsHealthy(character, humanoid, animTable)
+	if healthy then
+		dbg("animaciones verificadas:", reason)
+		return
+	end
+	dbg("animaciones NO verificadas (" .. tostring(reason) .. ") -> recargando el script Animate")
+	if not R15.reloadAnimate(character, humanoid) then
+		dbg("no se pudo recargar Animate")
+		return
+	end
+	task.wait(1)
+	if not isCurrent() then
+		return
+	end
+	local healthy2, reason2 = R15.animationsHealthy(character, humanoid, animTable)
+	dbg("tras recargar Animate:", healthy2 and "ok" or "sigue fallando", reason2)
+end
+
 function R15.manualAttach(accessory, character)
 	local handle = accessory:FindFirstChild("Handle")
 	if not handle or not handle:IsA("BasePart") then
@@ -3166,7 +3428,6 @@ end
 function R15.swap(character, humanoid, donor, description, targetPlayer, animTable)
 	R15.applyDonorData(character, humanoid, donor)
 	R15.syncRoot(character, humanoid, donor)
-	R15.applyAnimations(character, humanoid, description, targetPlayer, animTable)
 end
 
 
@@ -3253,6 +3514,18 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				return
 			end
 		end
+		-- READ step: test-load every id while the donor model is being built
+		local animReady = true
+		if isR15 and animTable then
+			animReady = false
+			task.spawn(function()
+				local okValidate, errValidate = pcall(AnimTable.validate, humanoid, animTable)
+				if not okValidate then
+					dbg("validación de animaciones falló:", errValidate)
+				end
+				animReady = true
+			end)
+		end
 		local useDescription = (not isR15) and USE_APPLY_DESCRIPTION_R6 and humanoid.RigType == rigType
 		local donor, skinDonor
 		local function buildDonor(rigOverride)
@@ -3308,6 +3581,10 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 					return
 				end
 			end
+		end
+		local animWait = os.clock()
+		while not animReady and os.clock() - animWait < 12 do
+			task.wait(0.05)
 		end
 		if not waitTransformFree(currentRequest) or not stillValid() then
 			cleanupDonors()
@@ -3367,6 +3644,17 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				pcall(repairAccessoryFx, character, donor)
 			end
 			recoverCharacter(character, humanoid)
+			-- WRITE + VERIFY step, once the body is settled: all ids at once, then check they really play
+			if isR15 and animTable then
+				task.spawn(function()
+					local okFinal, errFinal = pcall(R15.finalizeAnimations, character, humanoid, description, targetPlayer, animTable, function()
+						return currentRequest == requestId and character.Parent ~= nil and humanoid.Health > 0
+					end)
+					if not okFinal then
+						dbg("finalizeAnimations error:", errFinal)
+					end
+				end)
+			end
 		end
 		if not animated then
 			transforming = true
