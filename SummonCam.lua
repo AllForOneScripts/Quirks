@@ -1,8 +1,3 @@
---[[
-    SummonCam – Versión adaptada para clon
-    Usa _G.cloneRoot (HumanoidRootPart del clon) como referencia.
-]]
-
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
 
