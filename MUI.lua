@@ -2113,7 +2113,7 @@ end
 if MUIAutoOk then
     task.spawn(function()
         local okStart, errStart = pcall(M.Start)
-        if not okStart then warn("[MUI2] Error al iniciar: " .. tostring(errStart)) end
+        if not okStart then warn("[MUI] Error al iniciar: " .. tostring(errStart)) end
     end)
 end
 
