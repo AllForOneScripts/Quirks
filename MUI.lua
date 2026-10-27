@@ -74,8 +74,6 @@ M.Config = {
     FallSafetyY = -250,
     FallSafetyScanRadius = 360,
     FallSafetyPlatformLifetime = 7,
-    -- Antes era X, que choca con la tecla de Lock (X) y cancelaba el esquive/alertas sin querer.
-    ForceDismissKey = Enum.KeyCode.Backspace,
 }
 
 local MUIEnabled = false
@@ -107,7 +105,6 @@ local MUIRenderConnection = nil
 local MUIPlayerAddedConnection = nil
 local MUIPlayerRemovingConnection = nil
 local MUICharacterRemovingConnection = nil
-local MUIInputConnection = nil
 
 local MUICloneModel = nil
 local MUICloneRoot = nil
@@ -2365,10 +2362,6 @@ function M.Start(MUIOverrides)
         MUIRenderThreatLines()
         MUIUpdateTopTimer(os.clock())
     end)
-    MUIInputConnection = MUIUserInputService.InputBegan:Connect(function(MUIInput)
-        if MUIUserInputService:GetFocusedTextBox() then return end
-        if MUIInput.KeyCode == M.Config.ForceDismissKey then MUIForceDismissAll() end
-    end)
 end
 
 function M.Stop()
@@ -2384,11 +2377,9 @@ function M.Stop()
     MUIDisconnect(MUIHeartbeatConnection)
     MUIDisconnect(MUIRenderConnection)
     MUIDisconnect(MUICharacterRemovingConnection)
-    MUIDisconnect(MUIInputConnection)
     MUIHeartbeatConnection = nil
     MUIRenderConnection = nil
     MUICharacterRemovingConnection = nil
-    MUIInputConnection = nil
     for _, MUIThreat in pairs(MUIThreats) do MUIDismissThreat(MUIThreat) end
     if MUIHud then MUIHud:Destroy() end
     if MUIRealBodyLineDraw then pcall(function() MUIRealBodyLineDraw:Remove() end) MUIRealBodyLineDraw = nil end
