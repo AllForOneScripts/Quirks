@@ -28,23 +28,25 @@ M.Config = {
     },
 
     SkyAltitude = 1500,
-    LiftSpeed = 900,
-    LiftTimeout = 4,
     HoldForce = 9e8,
-    SkySnapTolerance = 42,
-    SkySafetyGrace = 0.35,
     SameAnimationCooldown = 0.20,
     RefreshOnRepeatedTrigger = true,
 
     AllowCloneMovement = true,
-    CloneWalkSpeed = 105,
+    CloneWalkSpeed = 202.5,          -- igual que el clon de Omniblock
     CloneHeadOffset = 3,
     CloneJumpVelocity = 52,
-    CloneJumpGravity = workspace.Gravity,
+    CloneJumpGravity = nil,          -- nil = usa workspace.Gravity en vivo
     CloneGroundEpsilon = 0.03,
-    GroundProbeHeight = 220,
-    GroundProbeDepth = 520,
-    MaxGroundStepPerSecond = 28,
+    -- Seguimiento de terreno (mismo algoritmo que Omniblock)
+    GroundNormalMin = 0.35,
+    GroundScanUp = 160,
+    GroundScanDown = 420,
+    MaxAutoRecoveryRise = 24,
+
+    -- Contador superior "CLON EN x.xs" (se basa en el Delay de cada Dodge)
+    ShowCloneTimer = true,
+    CloneTimerTopOffset = 48,
 
     ActivationSoundId = "140694363106746",
     DeactivationSoundId = "130457690489621",
@@ -64,7 +66,6 @@ M.Config = {
     ThreatAlertLifetime = 8,
     ThreatHudTopOffset = 330,
     ThreatHudRightOffset = 18,
-    ThreatLineOuterThickness = 18,
     ThreatFarLightRange = 72,
     ImpulseRadius = 38,
     ImpulseWallHeight = 64,
@@ -73,7 +74,8 @@ M.Config = {
     FallSafetyY = -250,
     FallSafetyScanRadius = 360,
     FallSafetyPlatformLifetime = 7,
-    ForceDismissKey = Enum.KeyCode.X,
+    -- Antes era X, que choca con la tecla de Lock (X) y cancelaba el esquive/alertas sin querer.
+    ForceDismissKey = Enum.KeyCode.Backspace,
 }
 
 local MUIEnabled = false
@@ -88,7 +90,10 @@ local MUIActiveDuration = 0
 local MUIActiveDodgeName = nil
 local MUIActiveStyle = nil
 local MUIActiveSource = nil
-local MUIActiveSources = {}
+local MUIPendingPlayer = nil
+local MUIPendingTotal = 0
+local MUIPendingLabel = ""
+local MUIOmniDriven = false
 
 local MUIDodgeByAnimationId = {}
 local MUILastTriggerAt = {}
@@ -119,14 +124,20 @@ local MUICloneFootOffset = 3
 local MUICloneJumpOffset = 0
 local MUICloneJumpVelocity = 0
 local MUICloneTracks = {}
+local MUICloneMotorPairs = nil
+local MUILastPairRebuild = 0
+local MUIMovementBound = false
+local MUITopTimer = nil
 local MUICloneHighlight = nil
 local MUIHud = nil
 local MUIHudCards = nil
 local MUIRealBodyLineDraw = nil
 local MUILastHudUpdate = 0
-local MUISkySafetyStartedAt = 0
+local MUILastWatchdog = 0
 local MUIHudDismissButton = nil
 local MUIForceDismissAll
+local MUIBindMovement
+local MUIUnbindMovement
 local MUIDestroyTogaAlert
 local TogaAlertGuiInstance = nil
 local TogaImpulseCount = 0
@@ -145,6 +156,8 @@ local MUIFallPlatformLastTouched = 0
 local MUIStrings = {
     es = {
         threat = "⚠ AMENAZA DETECTADA",
+        clone_in = "⏳ CLON EN",
+        return_in = "↩ VUELVES EN",
         impulse = "DEFENSA IMPULSE",
         dodge = "DEFENSA DODGE",
         mui_dialogue_step1 = "Puedes esquivar por\ntu cuenta si presionas\nel número 5 o si me\ndas click a mi",
@@ -152,6 +165,8 @@ local MUIStrings = {
     },
     en = {
         threat = "⚠ THREAT DETECTED",
+        clone_in = "⏳ CLONE IN",
+        return_in = "↩ RETURN IN",
         impulse = "IMPULSE DEFENSE",
         dodge = "DODGE DEFENSE",
         mui_dialogue_step1 = "You can dodge on your\nown if you press the\nnumber 5 or if you\nclick on me",
@@ -210,6 +225,16 @@ local function getDialogueStep1()
         end
     end
     return translated
+end
+
+local function MUIIsOmniActive()
+    if not _getgenv then return false end
+    local MUIOk, MUIRes = pcall(function()
+        local MUIEnv = _getgenv()
+        local MUIApi = type(MUIEnv) == "table" and rawget(MUIEnv, "AFO_OMNIBLOCK_API") or nil
+        return MUIApi and type(MUIApi.Is4DActive) == "function" and MUIApi.Is4DActive() == true
+    end)
+    return MUIOk and MUIRes == true
 end
 
 local function MUIDisconnect(MUIConnection)
@@ -380,6 +405,7 @@ local function MUIDestroyClone()
     MUICloneJumpOffset = 0
     MUICloneJumpVelocity = 0
     MUICloneTracks = {}
+    MUICloneMotorPairs = nil
 end
 
 local function MUIDestroyCameraSubject()
@@ -402,6 +428,29 @@ local function MUIRestoreRealCharacter()
         if MUIInstance.Parent then pcall(function() MUIInstance.LocalTransparencyModifier = MUITransparency end) end
     end
     MUIOriginalTransparency = setmetatable({}, { __mode = "k" })
+end
+
+-- Empareja cada Motor6D del personaje real con el del clon (se calcula una vez, no por frame)
+local function MUIBuildMotorPairs(MUICharacter, MUIClone)
+    local MUIList = {}
+    for _, MUIMotor in ipairs(MUICharacter:GetDescendants()) do
+        if MUIMotor:IsA("Motor6D") then
+            local MUINames = {}
+            local MUINode = MUIMotor
+            while MUINode and MUINode ~= MUICharacter do
+                table.insert(MUINames, 1, MUINode.Name)
+                MUINode = MUINode.Parent
+            end
+            local MUITarget = MUIClone
+            for _, MUIName in ipairs(MUINames) do
+                MUITarget = MUITarget and MUITarget:FindFirstChild(MUIName)
+            end
+            if MUITarget and MUITarget:IsA("Motor6D") then
+                table.insert(MUIList, { MUIMotor, MUITarget })
+            end
+        end
+    end
+    return MUIList
 end
 
 local function MUICreateClone(MUICharacter, MUIStartCFrame)
@@ -436,6 +485,8 @@ local function MUICreateClone(MUICharacter, MUIStartCFrame)
         MUIClone.PrimaryPart = MUICloneRoot
     end
     MUIClone:PivotTo(MUIStartCFrame)
+    MUICloneMotorPairs = MUIBuildMotorPairs(MUICharacter, MUIClone)
+    MUILastPairRebuild = os.clock()
     return MUIClone, MUICloneRoot
 end
 
@@ -490,23 +541,20 @@ local function MUISyncCloneAnimation(MUICharacter)
         end
     end
 
-    for _, MUIMotor in ipairs(MUICharacter:GetDescendants()) do
-        if MUIMotor:IsA("Motor6D") then
-            local MUINames = {}
-            local MUINode = MUIMotor
-            while MUINode and MUINode ~= MUICharacter do
-                table.insert(MUINames, 1, MUINode.Name)
-                MUINode = MUINode.Parent
-            end
-            
-            local MUITarget = MUICloneModel
-            for _, MUIName in ipairs(MUINames) do
-                MUITarget = MUITarget and MUITarget:FindFirstChild(MUIName)
-            end
-            
-            if MUITarget and MUITarget:IsA("Motor6D") then
-                MUITarget.Transform = MUIMotor.Transform
-            end
+end
+
+-- Copia la pose (Motor6D.Transform) del personaje real al clon. Independiente del Animator.
+local function MUISyncClonePose(MUICharacter)
+    if not MUICloneModel or not MUICharacter then return end
+    local MUINow = os.clock()
+    if not MUICloneMotorPairs or MUINow - MUILastPairRebuild > 1 then
+        MUICloneMotorPairs = MUIBuildMotorPairs(MUICharacter, MUICloneModel)
+        MUILastPairRebuild = MUINow
+    end
+    for _, MUIPair in ipairs(MUICloneMotorPairs) do
+        local MUISource, MUITarget = MUIPair[1], MUIPair[2]
+        if MUISource.Parent and MUITarget.Parent then
+            MUITarget.Transform = MUISource.Transform
         end
     end
 end
@@ -759,16 +807,73 @@ local function MUICreateDivineCloneVFX()
     end
 end
 
-local function MUIGroundPosition(MUIPosition, MUICharacter)
-    local MUIRayParams = RaycastParams.new()
-    MUIRayParams.FilterType = Enum.RaycastFilterType.Exclude
-    MUIRayParams.FilterDescendantsInstances = { MUICharacter, MUICloneModel, MUICameraSubject }
-    local MUIOrigin = Vector3.new(MUIPosition.X, MUIPosition.Y + M.Config.GroundProbeHeight, MUIPosition.Z)
-    local MUIHit = workspace:Raycast(MUIOrigin, Vector3.new(0, -M.Config.GroundProbeDepth, 0), MUIRayParams)
-    if MUIHit then
-        return Vector3.new(MUIPosition.X, MUIHit.Position.Y + MUIFootOffset, MUIPosition.Z)
+-- Terreno: mismo algoritmo que Omniblock (rayo cercano con filtro de normal + escaneo de recuperacion)
+local function MUIMakeGroundParams(MUICharacter)
+    local MUIParams = RaycastParams.new()
+    MUIParams.FilterType = Enum.RaycastFilterType.Exclude
+    local MUIExclude = {}
+    if MUICharacter then table.insert(MUIExclude, MUICharacter) end
+    if MUICloneModel then table.insert(MUIExclude, MUICloneModel) end
+    if MUICameraSubject then table.insert(MUIExclude, MUICameraSubject) end
+    if MUIImpulseFolder then table.insert(MUIExclude, MUIImpulseFolder) end
+    for _, MUIOther in ipairs(MUIPlayers:GetPlayers()) do
+        if MUIOther.Character and MUIOther.Character ~= MUICharacter then
+            table.insert(MUIExclude, MUIOther.Character)
+        end
     end
+    MUIParams.FilterDescendantsInstances = MUIExclude
+    return MUIParams
+end
+
+local function MUIGetGroundHeight(MUIPosition, MUICharacter)
+    local MUIParams = MUIMakeGroundParams(MUICharacter)
+    local MUIMinNormal = M.Config.GroundNormalMin
+    local MUIMaxRise = M.Config.MaxAutoRecoveryRise
+
+    local MUINearHit = workspace:Raycast(Vector3.new(MUIPosition.X, MUIPosition.Y + 5, MUIPosition.Z), Vector3.new(0, -70, 0), MUIParams)
+    if MUINearHit and MUINearHit.Normal.Y >= MUIMinNormal then
+        return MUINearHit.Position.Y + MUIFootOffset
+    end
+
+    if MUINearHit and MUINearHit.Instance:IsA("BasePart") then
+        local MUIPart = MUINearHit.Instance
+        local MUITopY = MUIPart.Position.Y + MUIPart.Size.Y * 0.5 + 0.1
+        local MUITopHit = workspace:Raycast(Vector3.new(MUIPosition.X, MUITopY, MUIPosition.Z), Vector3.new(0, -math.max(MUIPart.Size.Y + 1, 3), 0), MUIParams)
+        if MUITopHit and MUITopHit.Instance == MUIPart and MUITopHit.Normal.Y >= MUIMinNormal then
+            local MUIRecovered = MUITopHit.Position.Y + MUIFootOffset
+            if MUIRecovered - MUIPosition.Y <= MUIMaxRise then return MUIRecovered end
+        end
+    end
+
+    local MUIOrigin = Vector3.new(MUIPosition.X, MUIPosition.Y + M.Config.GroundScanUp, MUIPosition.Z)
+    local MUIDirection = Vector3.new(0, -M.Config.GroundScanDown, 0)
+    for _ = 1, 8 do
+        local MUIHit = workspace:Raycast(MUIOrigin, MUIDirection, MUIParams)
+        if not MUIHit then break end
+        if MUIHit.Normal.Y >= MUIMinNormal then
+            local MUIRecovered = MUIHit.Position.Y + MUIFootOffset
+            if MUIRecovered - MUIPosition.Y <= MUIMaxRise then return MUIRecovered end
+            break
+        end
+        local MUIUsed = (MUIHit.Position - MUIOrigin).Magnitude + 0.05
+        if MUIUsed >= MUIDirection.Magnitude then break end
+        MUIOrigin = MUIHit.Position + MUIDirection.Unit * 0.05
+        MUIDirection = Vector3.new(0, -(MUIDirection.Magnitude - MUIUsed), 0)
+    end
+    return nil
+end
+
+local function MUIGroundPosition(MUIPosition, MUICharacter)
+    local MUIY = MUIGetGroundHeight(MUIPosition, MUICharacter)
+    if MUIY then return Vector3.new(MUIPosition.X, MUIY, MUIPosition.Z) end
     return MUIPosition
+end
+
+local function MUIFollowGround(MUIPrev, MUIDesired, MUICharacter)
+    local MUINew = Vector3.new(MUIDesired.X, MUIPrev.Y, MUIDesired.Z)
+    local MUIY = MUIGetGroundHeight(MUINew, MUICharacter)
+    if MUIY then MUINew = Vector3.new(MUINew.X, MUIY, MUINew.Z) end
+    return MUINew
 end
 
 local function MUIBuildHud()
@@ -818,6 +923,98 @@ local function MUIBuildHud()
     MUIHudDismissButton.Activated:Connect(function()
         if MUIForceDismissAll then MUIForceDismissAll() end
     end)
+
+    -- Contador superior: "CLON EN x.xs" (segun el Delay del dodge) / "VUELVES EN x.xs" (segun Duration)
+    local MUITimerFrame = Instance.new("Frame")
+    MUITimerFrame.Name = "MUICloneTimer"
+    MUITimerFrame.AnchorPoint = Vector2.new(0.5, 0)
+    MUITimerFrame.Position = UDim2.new(0.5, 0, 0, M.Config.CloneTimerTopOffset)
+    MUITimerFrame.Size = UDim2.fromOffset(250, 76)
+    MUITimerFrame.BackgroundColor3 = Color3.fromRGB(6, 4, 12)
+    MUITimerFrame.BackgroundTransparency = 0.15
+    MUITimerFrame.BorderSizePixel = 0
+    MUITimerFrame.Visible = false
+    MUITimerFrame.Parent = MUIHud
+    Instance.new("UICorner", MUITimerFrame).CornerRadius = UDim.new(0, 8)
+    local MUITimerStroke = Instance.new("UIStroke")
+    MUITimerStroke.Color = Color3.fromRGB(255, 215, 35)
+    MUITimerStroke.Thickness = 1.5
+    MUITimerStroke.Transparency = 0.2
+    MUITimerStroke.Parent = MUITimerFrame
+
+    local function MUITimerLabel(MUIName, MUIY, MUIH, MUIFont, MUISize, MUIColor)
+        local MUILabel = Instance.new("TextLabel")
+        MUILabel.Name = MUIName
+        MUILabel.BackgroundTransparency = 1
+        MUILabel.Position = UDim2.fromOffset(8, MUIY)
+        MUILabel.Size = UDim2.new(1, -16, 0, MUIH)
+        MUILabel.Font = MUIFont
+        MUILabel.TextSize = MUISize
+        MUILabel.TextColor3 = MUIColor
+        MUILabel.TextTruncate = Enum.TextTruncate.AtEnd
+        MUILabel.Text = ""
+        MUILabel.Parent = MUITimerFrame
+        return MUILabel
+    end
+    local MUITimerTitle = MUITimerLabel("Title", 5, 16, Enum.Font.GothamBold, 12, Color3.fromRGB(235, 235, 235))
+    local MUITimerTime = MUITimerLabel("Time", 19, 30, Enum.Font.GothamBlack, 26, Color3.fromRGB(255, 222, 56))
+    local MUITimerSub = MUITimerLabel("Sub", 48, 13, Enum.Font.Gotham, 10, Color3.fromRGB(170, 150, 210))
+
+    local MUITimerBarBg = Instance.new("Frame")
+    MUITimerBarBg.Name = "BarBg"
+    MUITimerBarBg.Position = UDim2.new(0, 12, 1, -12)
+    MUITimerBarBg.Size = UDim2.new(1, -24, 0, 6)
+    MUITimerBarBg.BackgroundColor3 = Color3.fromRGB(30, 18, 50)
+    MUITimerBarBg.BorderSizePixel = 0
+    MUITimerBarBg.Parent = MUITimerFrame
+    Instance.new("UICorner", MUITimerBarBg).CornerRadius = UDim.new(1, 0)
+    local MUITimerFill = Instance.new("Frame")
+    MUITimerFill.Name = "Fill"
+    MUITimerFill.Size = UDim2.fromScale(1, 1)
+    MUITimerFill.BackgroundColor3 = Color3.fromRGB(255, 222, 56)
+    MUITimerFill.BorderSizePixel = 0
+    MUITimerFill.Parent = MUITimerBarBg
+    Instance.new("UICorner", MUITimerFill).CornerRadius = UDim.new(1, 0)
+
+    MUITopTimer = { Frame = MUITimerFrame, Stroke = MUITimerStroke, Title = MUITimerTitle, Time = MUITimerTime, Sub = MUITimerSub, Fill = MUITimerFill }
+end
+
+local function MUIUpdateTopTimer(MUINow)
+    local MUITimer = MUITopTimer
+    if not MUITimer or not MUITimer.Frame or not MUITimer.Frame.Parent then return end
+    if not M.Config.ShowCloneTimer then MUITimer.Frame.Visible = false; return end
+
+    local MUIRemaining, MUITotal, MUITitle, MUISub, MUIColor
+    if MUIDefenseActive then
+        MUIRemaining = math.max(0, MUIActiveUntil - MUINow)
+        MUITotal = math.max(MUIActiveDuration, 0.001)
+        MUITitle = MUIGetText("return_in")
+        MUISub = MUIActiveDodgeName and MUIActiveDodgeName:gsub("_", " ") or ""
+        local MUIDodgeData
+        for _, MUIEntry in pairs(MUIDodgeByAnimationId) do
+            if MUIEntry.Name == MUIActiveDodgeName then MUIDodgeData = MUIEntry break end
+        end
+        if MUIDodgeData then MUISub = MUIGetDodgeDisplayName(MUIDodgeData) end
+        MUIColor = Color3.fromRGB(110, 210, 255)
+    elseif MUIPendingDodge and MUIPendingDodgeExpectedTime then
+        MUIRemaining = math.max(0, MUIPendingDodgeExpectedTime - MUINow)
+        MUITotal = math.max(MUIPendingTotal, 0.001)
+        MUITitle = MUIGetText("clone_in")
+        MUISub = MUIPendingLabel
+        MUIColor = MUIRemaining <= 1 and Color3.fromRGB(255, 90, 70) or Color3.fromRGB(255, 222, 56)
+    else
+        MUITimer.Frame.Visible = false
+        return
+    end
+
+    MUITimer.Frame.Visible = true
+    MUITimer.Title.Text = MUITitle
+    MUITimer.Time.Text = string.format("%.1fs", MUIRemaining)
+    MUITimer.Time.TextColor3 = MUIColor
+    MUITimer.Sub.Text = MUISub or ""
+    MUITimer.Fill.BackgroundColor3 = MUIColor
+    MUITimer.Fill.Size = UDim2.fromScale(math.clamp(MUIRemaining / MUITotal, 0, 1), 1)
+    MUITimer.Stroke.Color = MUIColor
 end
 
 local function MUISetText(MUIObject, MUIText)
@@ -998,15 +1195,30 @@ local function MUIDismissThreat(MUIThreat)
     MUIThreats[MUIThreat.Player] = nil
 end
 
+-- Recrea la baliza (!) si el personaje del atacante aparecio, cambio o fue reemplazado
+local function MUIRefreshBeacon(MUIThreat)
+    local MUIRoot = MUIGetRoot(MUIThreat.Player.Character)
+    if not MUIRoot then return end
+    if MUIThreat.Beacon and MUIThreat.Beacon.Parent and MUIThreat.Beacon.Adornee == MUIRoot then return end
+    if MUIThreat.Beacon then MUIThreat.Beacon:Destroy() end
+    if MUIThreat.FarLight then MUIThreat.FarLight:Destroy() end
+    MUIThreat.Beacon = nil
+    MUIThreat.FarLight = nil
+    MUIThreat.BeaconScale = nil
+    MUICreateFarLight(MUIThreat)
+end
+
 local function MUIMarkThreat(MUIPlayer, MUIDodge)
     if not MUIPlayer or MUIPlayer == MUILocalPlayer then return end
     local MUINow = os.clock()
+    -- La alerta debe vivir al menos hasta que termine todo el ciclo (Delay + Duration)
+    local MUILife = math.max(M.Config.ThreatAlertLifetime, (MUIDodge.Delay or 0) + (MUIDodge.Duration or 0) + 1)
     local MUIThreat = MUIThreats[MUIPlayer]
     if MUIThreat then
         MUIThreat.DodgeName = MUIDodge.Name
         MUIThreat.DodgeDisplayName = MUIGetDodgeDisplayName(MUIDodge)
         MUIThreat.Style = MUIDodge.Style
-        MUIThreat.ExpiresAt = MUINow + M.Config.ThreatAlertLifetime
+        MUIThreat.ExpiresAt = MUINow + MUILife
         MUIThreat.Removing = false
         return
     end
@@ -1017,7 +1229,7 @@ local function MUIMarkThreat(MUIPlayer, MUIDodge)
         DodgeDisplayName = MUIGetDodgeDisplayName(MUIDodge),
         Style = MUIDodge.Style,
         MarkedAt = MUINow,
-        ExpiresAt = MUINow + M.Config.ThreatAlertLifetime,
+        ExpiresAt = MUINow + MUILife,
     }
     MUIThreats[MUIPlayer] = MUIThreat
     MUICreateThreatCard(MUIThreat)
@@ -1032,30 +1244,58 @@ local function MUIThreatList()
     return MUIList
 end
 
+-- Origen de las distancias/lineas: el clon si existe, sino la posicion virtual (en el suelo), sino el cuerpo real
+local function MUIGetOriginPosition()
+    if MUIDefenseActive then
+        if MUICloneRoot and MUICloneRoot.Parent then return MUICloneRoot.Position end
+        if MUIVirtualRootPosition then return MUIVirtualRootPosition end
+    end
+    local MUIRoot = MUIGetRoot(MUILocalPlayer and MUILocalPlayer.Character)
+    return (MUIRoot and MUIRoot.Position) or MUIVirtualRootPosition
+end
+
 local function MUIUpdateThreatHud(MUINow)
     local MUIList = MUIThreatList()
     local MUICount = #MUIList
     if MUIHudDismissButton then MUIHudDismissButton.Visible = MUICount > 0 or MUIDefenseActive end
     local MUICardWidth = math.max(118, 238 - math.max(0, MUICount - 1) * 22)
     local MUICardHeight = math.max(74, 108 - math.max(0, MUICount - 1) * 7)
-    local MUIOriginRoot = MUIDefenseActive and MUICloneRoot or MUIGetRoot(MUILocalPlayer and MUILocalPlayer.Character)
-    local MUIOriginPosition = MUIOriginRoot and MUIOriginRoot.Position or MUIVirtualRootPosition
+    local MUIOriginPosition = MUIGetOriginPosition()
 
     for MUIIndex, MUIThreat in ipairs(MUIList) do
         local MUICharacter = MUIThreat.Player.Character
         local MUIRoot = MUIGetRoot(MUICharacter)
         local MUIHumanoid = MUIGetHumanoid(MUICharacter)
-        if not MUIRoot or not MUIHumanoid or MUIHumanoid.Health <= 0 then
+
+        -- Solo se descarta si el atacante MURIO de verdad. Que se vuelva invisible, pierda el
+        -- Humanoid/Root momentaneamente o salga del streaming NO significa que la amenaza no exista.
+        if MUIHumanoid and MUIHumanoid.Health <= 0 then
             MUIDismissThreat(MUIThreat)
         else
-            if MUIThreat.Card and MUIThreat.Card.Parent then
+            if MUIRoot then MUIThreat.LastPosition = MUIRoot.Position end
+
+            -- Si la tarjeta no existe (HUD reconstruido) se vuelve a crear
+            if (not MUIThreat.Card or not MUIThreat.Card.Parent) and not MUIThreat.Removing and MUIHudCards then
+                MUICreateThreatCard(MUIThreat)
+            end
+            MUIRefreshBeacon(MUIThreat)
+
+            if MUIThreat.Card and MUIThreat.Card.Parent and MUIThreat.CardLabels then
                 MUIThreat.Card.AnchorPoint = Vector2.new(1, 0)
                 MUIThreat.Card.Position = UDim2.new(1, -M.Config.ThreatHudRightOffset - (MUIIndex - 1) * (MUICardWidth + 8), 0, M.Config.ThreatHudTopOffset)
                 MUIThreat.Card.Size = UDim2.fromOffset(MUICardWidth, MUICardHeight)
-                local MUIDistance = MUIOriginPosition and (MUIRoot.Position - MUIOriginPosition).Magnitude or 0
+                local MUIThreatPosition = MUIRoot and MUIRoot.Position or MUIThreat.LastPosition
                 MUISetText(MUIThreat.CardLabels.Name, MUIThreat.Player.DisplayName or MUIThreat.Player.Name)
-                MUISetText(MUIThreat.CardLabels.Distance, string.format("%.0f studs", MUIDistance))
-                MUISetText(MUIThreat.CardLabels.Health, string.format("❤️ %.0f / %.0f", math.max(0, MUIHumanoid.Health), MUIHumanoid.MaxHealth))
+                if MUIOriginPosition and MUIThreatPosition then
+                    MUISetText(MUIThreat.CardLabels.Distance, string.format("%.0f studs", (MUIThreatPosition - MUIOriginPosition).Magnitude))
+                else
+                    MUISetText(MUIThreat.CardLabels.Distance, "--- studs")
+                end
+                if MUIHumanoid then
+                    MUISetText(MUIThreat.CardLabels.Health, string.format("❤️ %.0f / %.0f", math.max(0, MUIHumanoid.Health), MUIHumanoid.MaxHealth))
+                else
+                    MUISetText(MUIThreat.CardLabels.Health, "❤️ ---")
+                end
                 MUISetText(MUIThreat.CardLabels.Ability, MUIThreat.DodgeDisplayName)
             end
             if MUIThreat.BeaconScale then MUIThreat.BeaconScale.Scale = 0.92 + math.abs(math.sin(MUINow * 7)) * 0.18 end
@@ -1065,8 +1305,7 @@ end
 
 local function MUIRenderThreatLines()
     local MUICamera = workspace.CurrentCamera
-    local MUIOriginRoot = MUIDefenseActive and MUICloneRoot or MUIGetRoot(MUILocalPlayer and MUILocalPlayer.Character)
-    local MUIOriginPosition = MUIOriginRoot and MUIOriginRoot.Position or MUIVirtualRootPosition
+    local MUIOriginPosition = MUIGetOriginPosition()
     
     if not MUICamera or not MUIOriginPosition then
         if MUIRealBodyLineDraw then MUIRealBodyLineDraw.Visible = false end
@@ -1102,6 +1341,12 @@ local function MUIRenderThreatLines()
     for _, MUIThreat in pairs(MUIThreats) do
         local d = MUIThreat.ESP
         local MUITargetVisualPos = MUIGetVisualPosition(MUIThreat.Player.Character)
+        -- Atacante invisible/sin personaje: la linea apunta a su ultima posicion conocida
+        if MUITargetVisualPos then
+            MUIThreat.LastVisualPos = MUITargetVisualPos
+        else
+            MUITargetVisualPos = MUIThreat.LastVisualPos
+        end
         
         if not d or not MUITargetVisualPos or not MUIOriginVisible then
             if d then d.line.Visible = false; d.outline.Visible = false; d.glow.Visible = false end
@@ -1268,32 +1513,43 @@ end
 local MUIDeactivate
 
 local function MUIBegin(MUIDodge, MUISource)
-    if MUIDefenseActive then return end
+    if MUIDefenseActive then return true end
     local MUICharacter = MUILocalPlayer and MUILocalPlayer.Character
     local MUIRoot = MUIGetRoot(MUICharacter)
     local MUIHumanoid = MUIGetHumanoid(MUICharacter)
-    if not MUICharacter or not MUIRoot or not MUIHumanoid or MUIHumanoid.Health <= 0 then return end
+    if not MUICharacter or not MUIRoot or not MUIHumanoid or MUIHumanoid.Health <= 0 then return false end
 
     MUIFootOffset = MUIGetFootOffset(MUICharacter)
-    MUIVirtualRootPosition = MUIGroundPosition(MUIRoot.Position, MUICharacter)
-    
-    if MUIDodge.Style == "Dodge" then
-        local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
-        local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
 
-        if not isOmniActive then
-            local _, MUIYaw = MUIRoot.CFrame:ToOrientation()
-            local MUICloneCFrame = CFrame.new(MUIVirtualRootPosition) * CFrame.Angles(0, MUIYaw, 0)
-            MUICloneModel, MUICloneRoot = MUICreateClone(MUICharacter, MUICloneCFrame)
-            if not MUICloneRoot then
-                MUIDestroyClone(); MUIVirtualRootPosition = nil
-                return
-            end
-            MUICloneFootOffset = MUIGetCloneFootOffset(MUICloneModel, MUICloneRoot)
+    -- Si el 4D de Omniblock ya esta activo, EL controla clon, camara y fuerzas del cielo.
+    -- MUI solo registra el estado (alarma, contador, amenazas) para no pelear con el.
+    local MUIOmni = MUIIsOmniActive()
+    MUIOmniDriven = (MUIDodge.Style == "Dodge") and MUIOmni
+
+    if MUIOmniDriven then
+        local MUIFar = workspace:Raycast(MUIRoot.Position, Vector3.new(0, -(M.Config.SkyAltitude + 600), 0), MUIMakeGroundParams(MUICharacter))
+        if MUIFar then
+            MUIVirtualRootPosition = Vector3.new(MUIRoot.Position.X, MUIFar.Position.Y + MUIFootOffset, MUIRoot.Position.Z)
         else
-            MUICloneModel = nil
-            MUICloneRoot = nil
+            MUIVirtualRootPosition = MUIRoot.Position - Vector3.new(0, M.Config.SkyAltitude, 0)
         end
+    else
+        MUIVirtualRootPosition = MUIGroundPosition(MUIRoot.Position, MUICharacter)
+    end
+
+    if MUIDodge.Style == "Dodge" and not MUIOmni then
+        local _, MUIYaw = MUIRoot.CFrame:ToOrientation()
+        local MUICloneCFrame = CFrame.new(MUIVirtualRootPosition) * CFrame.Angles(0, MUIYaw, 0)
+        MUICloneModel, MUICloneRoot = MUICreateClone(MUICharacter, MUICloneCFrame)
+        if not MUICloneRoot then
+            MUIDestroyClone(); MUIVirtualRootPosition = nil
+            MUIOmniDriven = false
+            return false
+        end
+        MUICloneFootOffset = MUIGetCloneFootOffset(MUICloneModel, MUICloneRoot)
+    else
+        MUICloneModel = nil
+        MUICloneRoot = nil
     end
 
     MUIDefenseActive = true
@@ -1304,14 +1560,15 @@ local function MUIBegin(MUIDodge, MUISource)
     MUIActiveDuration = MUIDodge.Duration
     MUIActiveUntil = os.clock() + MUIDodge.Duration
     MUIActiveSource = MUISource
-    MUIActiveSources = {}
-    
+
     MUIPendingDodge = nil
     MUIPendingDodgeExpectedTime = nil
+    MUIPendingPlayer = nil
     MUISkyY = MUIVirtualRootPosition.Y + M.Config.SkyAltitude
-    MUISkySafetyStartedAt = os.clock()
-    MUICameraSubject = MUICreateCameraSubject(MUIVirtualRootPosition)
-    MUIHideRealCharacter(MUICharacter)
+    if not MUIOmniDriven then
+        MUICameraSubject = MUICreateCameraSubject(MUIVirtualRootPosition)
+        MUIHideRealCharacter(MUICharacter)
+    end
     if MUICloneRoot then
         MUICreateDivineCloneVFX()
         MUICreateCloneCountdown()
@@ -1319,20 +1576,24 @@ local function MUIBegin(MUIDodge, MUISource)
         MUICreateImpulseZone(MUISource)
     end
 
-    local MUICamera = workspace.CurrentCamera
-    if MUICamera then MUICamera.CameraSubject = MUICameraSubject end
-    MUIStartSkyLift(MUIRoot, MUIToken)
+    if not MUIOmniDriven then
+        local MUICamera = workspace.CurrentCamera
+        if MUICamera then MUICamera.CameraSubject = MUICameraSubject end
+        MUIStartSkyLift(MUIRoot, MUIToken)
+    end
+    MUIBindMovement()
     MUIPlayLocalSound(M.Config.ActivationSoundId)
+    return true
 end
 
 MUIDeactivate = function(MUIReturnToClone)
     if not MUIDefenseActive then return end
-    
-    local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
-    local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
+
+    local MUISkipLanding = MUIOmniDriven or MUIIsOmniActive()
 
     MUIDefenseActive = false
     MUIActivationToken = MUIActivationToken + 1
+    MUIUnbindMovement()
     MUIDestroySkyForces()
     if TogaCloseFn then pcall(TogaCloseFn) end
 
@@ -1340,7 +1601,7 @@ MUIDeactivate = function(MUIReturnToClone)
     local MUIRoot = MUIGetRoot(MUICharacter)
     local MUIHumanoid = MUIGetHumanoid(MUICharacter)
 
-    if not isOmniActive then
+    if not MUISkipLanding then
         if MUIReturnToClone and MUIRoot and MUIHumanoid and MUIHumanoid.Health > 0 then
             local baseLandingPos = MUIVirtualRootPosition
             local MUIYaw = 0
@@ -1371,10 +1632,8 @@ MUIDeactivate = function(MUIReturnToClone)
         if MUICamera and MUIHumanoid and MUIHumanoid.Parent then 
             MUICamera.CameraSubject = MUIHumanoid 
         end
-        MUIRestoreRealCharacter()
-    else
-        MUIRestoreRealCharacter()
     end
+    MUIRestoreRealCharacter()
 
     MUIDestroyClone()
     MUIDestroyCameraSubject()
@@ -1385,7 +1644,7 @@ MUIDeactivate = function(MUIReturnToClone)
     MUIDestroyImpulseZone()
     MUIActiveDuration = 0
     MUIActiveSource = nil
-    MUIActiveSources = {}
+    MUIOmniDriven = false
     MUIPlayLocalSound(M.Config.DeactivationSoundId)
 end
 
@@ -1393,9 +1652,9 @@ MUIForceDismissAll = function()
     MUIPendingToken = MUIPendingToken + 1
     MUIPendingDodge = nil
     MUIPendingDodgeExpectedTime = nil
+    MUIPendingPlayer = nil
     local MUIList = MUIThreatList()
     for _, MUIThreat in ipairs(MUIList) do MUIDismissThreat(MUIThreat) end
-    MUIActiveSources = {}
     if TogaCloseFn then pcall(TogaCloseFn) else MUIDestroyTogaAlert() end
     if MUIDefenseActive then MUIDeactivate(true) end
 end
@@ -1677,45 +1936,50 @@ local function MUIMoveClone(MUIDeltaTime, MUICharacter)
     if not M.Config.AllowCloneMovement or not MUIVirtualRootPosition then return end
     local MUICamera = workspace.CurrentCamera
     if not MUICamera then return end
+    local MUITyping = MUIUserInputService:GetFocusedTextBox() ~= nil
+
     local MUILook = MUICamera.CFrame.LookVector
     local MUIRight = MUICamera.CFrame.RightVector
     local MUIForwardFlat = Vector3.new(MUILook.X, 0, MUILook.Z)
     local MUIRightFlat = Vector3.new(MUIRight.X, 0, MUIRight.Z)
     if MUIForwardFlat.Magnitude > 0 then MUIForwardFlat = MUIForwardFlat.Unit end
     if MUIRightFlat.Magnitude > 0 then MUIRightFlat = MUIRightFlat.Unit end
+
     local MUIMovement = Vector3.zero
-    if MUIUserInputService:IsKeyDown(Enum.KeyCode.W) then MUIMovement = MUIMovement + MUIForwardFlat end
-    if MUIUserInputService:IsKeyDown(Enum.KeyCode.S) then MUIMovement = MUIMovement - MUIForwardFlat end
-    if MUIUserInputService:IsKeyDown(Enum.KeyCode.D) then MUIMovement = MUIMovement + MUIRightFlat end
-    if MUIUserInputService:IsKeyDown(Enum.KeyCode.A) then MUIMovement = MUIMovement - MUIRightFlat end
-    local MUIProposed = MUIVirtualRootPosition
+    if not MUITyping then
+        if MUIUserInputService:IsKeyDown(Enum.KeyCode.W) then MUIMovement = MUIMovement + MUIForwardFlat end
+        if MUIUserInputService:IsKeyDown(Enum.KeyCode.S) then MUIMovement = MUIMovement - MUIForwardFlat end
+        if MUIUserInputService:IsKeyDown(Enum.KeyCode.D) then MUIMovement = MUIMovement + MUIRightFlat end
+        if MUIUserInputService:IsKeyDown(Enum.KeyCode.A) then MUIMovement = MUIMovement - MUIRightFlat end
+    end
+
+    local MUIPrev = MUIVirtualRootPosition
+    local MUIDesired = MUIPrev
     if MUIMovement.Magnitude > 0 then
-        MUIProposed = MUIProposed + MUIMovement.Unit * M.Config.CloneWalkSpeed * MUIDeltaTime
+        MUIDesired = MUIPrev + MUIMovement.Unit * M.Config.CloneWalkSpeed * MUIDeltaTime
     end
-    local MUIGrounded = MUIGroundPosition(MUIProposed, MUICharacter)
-    local MUIYDelta = MUIGrounded.Y - MUIVirtualRootPosition.Y
-    if MUIYDelta < 0 then
-        MUIYDelta = math.max(MUIYDelta, -M.Config.MaxGroundStepPerSecond * MUIDeltaTime)
-    end
-    if MUIUserInputService:IsKeyDown(Enum.KeyCode.Space) and MUICloneJumpVelocity == 0 and MUICloneJumpOffset == 0 then
+    -- Mismo seguimiento de terreno que Omniblock: el clon se pega al suelo sin limite de descenso
+    MUIVirtualRootPosition = MUIFollowGround(MUIPrev, MUIDesired, MUICharacter)
+
+    local MUIGravity = M.Config.CloneJumpGravity or workspace.Gravity
+    if not MUITyping and MUIUserInputService:IsKeyDown(Enum.KeyCode.Space) and MUICloneJumpVelocity == 0 and MUICloneJumpOffset == 0 then
         MUICloneJumpVelocity = M.Config.CloneJumpVelocity
     end
     if MUICloneJumpVelocity ~= 0 then
-        local MUINextOffset = MUICloneJumpOffset + MUICloneJumpVelocity * MUIDeltaTime - 0.5 * M.Config.CloneJumpGravity * MUIDeltaTime * MUIDeltaTime
-        MUICloneJumpVelocity = MUICloneJumpVelocity - M.Config.CloneJumpGravity * MUIDeltaTime
+        local MUINextOffset = MUICloneJumpOffset + MUICloneJumpVelocity * MUIDeltaTime - 0.5 * MUIGravity * MUIDeltaTime * MUIDeltaTime
+        MUICloneJumpVelocity = MUICloneJumpVelocity - MUIGravity * MUIDeltaTime
         if MUINextOffset <= 0 then
             MUICloneJumpOffset, MUICloneJumpVelocity = 0, 0
         else
             MUICloneJumpOffset = MUINextOffset
         end
     end
-    MUIVirtualRootPosition = Vector3.new(MUIProposed.X, MUIVirtualRootPosition.Y + MUIYDelta, MUIVirtualRootPosition.Z)
 end
 
 local function MUIUpdateCloneAndCamera()
     if not MUIVirtualRootPosition then return end
     local MUICamera = workspace.CurrentCamera
-    local MUIYaw = 0
+    local MUIYaw
     if MUICamera then
         local MUILook = MUICamera.CFrame.LookVector
         if Vector3.new(MUILook.X, 0, MUILook.Z).Magnitude > 0.01 then
@@ -1724,7 +1988,12 @@ local function MUIUpdateCloneAndCamera()
     end
     local MUICharacter = MUILocalPlayer and MUILocalPlayer.Character
     if MUICloneModel and MUICloneRoot then
+        if not MUIYaw then
+            local _, MUICurrentYaw = MUICloneRoot.CFrame:ToOrientation()
+            MUIYaw = MUICurrentYaw
+        end
         MUISyncCloneAnimation(MUICharacter)
+        MUISyncClonePose(MUICharacter)
         MUICloneFootOffset = MUIGetCloneFootOffset(MUICloneModel, MUICloneRoot)
         local MUIGroundSurfaceY = MUIVirtualRootPosition.Y - MUIFootOffset
         local MUIClonePosition = Vector3.new(
@@ -1740,6 +2009,46 @@ local function MUIUpdateCloneAndCamera()
     if MUISkyPosition and MUISkyY then
         MUISkyPosition.Position = Vector3.new(MUIVirtualRootPosition.X, MUISkyY, MUIVirtualRootPosition.Z)
     end
+end
+
+-- Se ejecuta en RenderStepped (justo antes de la camara) para que el movimiento no tenga tirones
+local function MUIDefenseStep(MUIDeltaTime)
+    if not MUIDefenseActive then return end
+    local MUIDt = math.min(MUIDeltaTime or 0.016, 0.1)
+    local MUICharacter = MUILocalPlayer and MUILocalPlayer.Character
+
+    if MUIOmniDriven then
+        local MUIRoot = MUIGetRoot(MUICharacter)
+        if MUIRoot and MUIVirtualRootPosition then
+            MUIVirtualRootPosition = Vector3.new(MUIRoot.Position.X, MUIVirtualRootPosition.Y, MUIRoot.Position.Z)
+        end
+        return
+    end
+
+    if MUIActiveStyle == "Dodge" then MUIMoveClone(MUIDt, MUICharacter) end
+    MUIUpdateCloneAndCamera()
+
+    -- Algunos juegos reasignan CameraSubject al Humanoid: se vuelve a fijar al clon
+    local MUICamera = workspace.CurrentCamera
+    if MUICamera and MUICameraSubject and MUICamera.CameraSubject ~= MUICameraSubject then
+        MUICamera.CameraSubject = MUICameraSubject
+    end
+    MUIUpdateCloneCountdown(os.clock())
+end
+
+MUIUnbindMovement = function()
+    if MUIMovementBound then
+        pcall(function() MUIRunService:UnbindFromRenderStep("MUICloneMovement") end)
+        MUIMovementBound = false
+    end
+end
+
+MUIBindMovement = function()
+    MUIUnbindMovement()
+    local MUIOk = pcall(function()
+        MUIRunService:BindToRenderStep("MUICloneMovement", Enum.RenderPriority.Camera.Value - 1, MUIDefenseStep)
+    end)
+    MUIMovementBound = MUIOk
 end
 
 local function MUIUpdateExposedData()
@@ -1761,6 +2070,7 @@ local function MUIUpdateExposedData()
     local tpTimeVal = ensureValue("MUI_TeleportTime", "BoolValue")
     local stateVal = ensureValue("MUI_SkyCloneState", "BoolValue")
     local threatsVal = ensureValue("MUI_ThreatsData", "StringValue")
+    local countdownVal = ensureValue("MUI_CloneCountdown", "NumberValue")
 
     local hasThreats = false
     local threatList = {}
@@ -1786,6 +2096,12 @@ local function MUIUpdateExposedData()
     end
     if tpTimeVal.Value ~= isTeleportingSoon then tpTimeVal.Value = isTeleportingSoon end
 
+    local cloneCountdown = 0
+    if MUIPendingDodge and MUIPendingDodgeExpectedTime then
+        cloneCountdown = math.max(0, MUIPendingDodgeExpectedTime - os.clock())
+    end
+    if math.abs(countdownVal.Value - cloneCountdown) > 0.02 then countdownVal.Value = cloneCountdown end
+
     local ok, json = pcall(function() return HttpService:JSONEncode(threatList) end)
     local newJson = ok and json or "[]"
     if threatsVal.Value ~= newJson then threatsVal.Value = newJson end
@@ -1806,7 +2122,12 @@ local function MUITrigger(MUIDodge, MUIPlayer, MUITrack)
         end
         return
     end
-    if MUIPendingDodge then return end
+
+    local MUIExpected = MUINow + MUIDodge.Delay
+    if MUIPendingDodge then
+        -- Ya hay una cuenta regresiva en curso: solo se reemplaza si esta amenaza llegaria ANTES
+        if not (MUIPendingDodgeExpectedTime and MUIExpected < MUIPendingDodgeExpectedTime - 0.05) then return end
+    end
     
     if MUIDodge.Delay <= 0 or MUIGetPingSeconds() >= M.Config.PingInstantThreshold then
         MUIBegin(MUIDodge, MUIPlayer)
@@ -1814,29 +2135,31 @@ local function MUITrigger(MUIDodge, MUIPlayer, MUITrack)
     end
     
     MUIPendingDodge = MUIDodge.Name
+    MUIPendingPlayer = MUIPlayer
+    MUIPendingTotal = MUIDodge.Delay
+    MUIPendingLabel = MUIGetDodgeDisplayName(MUIDodge)
+        .. (MUIPlayer and (" · " .. (MUIPlayer.DisplayName or MUIPlayer.Name)) or "")
     MUIPendingToken = MUIPendingToken + 1
     local MUIToken = MUIPendingToken
-    MUIPendingDodgeExpectedTime = os.clock() + MUIDodge.Delay
+    MUIPendingDodgeExpectedTime = MUIExpected
     
     MUIOpenTogaAlert(MUIDodge, MUIPlayer)
 
-    -- Esquive automatico tras el Delay (si el jugador no lo activo antes a mano)
+    -- Esquive automatico tras el Delay (si el jugador no lo activo antes a mano).
+    -- IMPORTANTE: ya NO existe la "falsa alarma". Que el atacante se vuelva invisible, cancele o
+    -- termine su animacion no cancela el esquive: una amenaza detectada siempre se esquiva.
     task.delay(MUIDodge.Delay, function()
         if MUIToken ~= MUIPendingToken then return end
 
         MUIPendingDodge = nil
         MUIPendingDodgeExpectedTime = nil
+        MUIPendingPlayer = nil
 
-        -- La animacion se cancelo antes de tiempo: falsa alarma
-        if MUITrack and not MUITrack.IsPlaying then
-            local MUIThreat = MUIPlayer and MUIThreats[MUIPlayer]
-            if MUIThreat then MUIDismissThreat(MUIThreat) end
-            if TogaCloseFn then pcall(TogaCloseFn) else MUIDestroyTogaAlert() end
-            return
-        end
-
-        if MUIEnabled and not MUIDefenseActive then
-            MUIBegin(MUIDodge, MUIPlayer)
+        for _ = 1, 6 do
+            if not MUIEnabled or MUIToken ~= MUIPendingToken then return end
+            if MUIDefenseActive then return end
+            if MUIBegin(MUIDodge, MUIPlayer) then return end
+            task.wait(0.1) -- personaje aun no listo: reintenta
         end
     end)
 end
@@ -1860,11 +2183,31 @@ local function MUIDisconnectWatch(MUIPlayer)
     if MUIThreat then MUIDismissThreat(MUIThreat) end
 end
 
+local function MUIAttachAnimator(MUIPlayer, MUIWatch, MUIAnimator)
+    if MUIWatch.Animator == MUIAnimator and MUIWatch.AnimationPlayed then return end
+    MUIDisconnect(MUIWatch.AnimationPlayed)
+    MUIWatch.Animator = MUIAnimator
+    MUIWatch.Seen = setmetatable({}, { __mode = "k" })
+    MUIWatch.AnimationPlayed = MUIAnimator.AnimationPlayed:Connect(function(MUITrack)
+        MUIWatch.Seen[MUITrack] = true
+        MUIOnAnimation(MUIPlayer, MUITrack)
+    end)
+    -- Pistas que ya estaban sonando antes de engancharnos
+    local MUIOk, MUITracks = pcall(function() return MUIAnimator:GetPlayingAnimationTracks() end)
+    if MUIOk and MUITracks then
+        for _, MUITrack in ipairs(MUITracks) do
+            MUIWatch.Seen[MUITrack] = true
+            MUIOnAnimation(MUIPlayer, MUITrack)
+        end
+    end
+end
+
 local function MUIHookCharacter(MUIPlayer, MUICharacter)
     local MUIWatch = MUIPlayerWatches[MUIPlayer]
     if not MUIWatch then return end
     MUIDisconnect(MUIWatch.AnimationPlayed)
     MUIWatch.AnimationPlayed = nil
+    MUIWatch.Animator = nil
     task.spawn(function()
         local MUIHumanoid = MUICharacter:WaitForChild("Humanoid", 5)
         if not MUIEnabled or MUIPlayer.Character ~= MUICharacter or MUIPlayerWatches[MUIPlayer] ~= MUIWatch or not MUIHumanoid then return end
@@ -1874,9 +2217,7 @@ local function MUIHookCharacter(MUIPlayer, MUICharacter)
             MUIAnimator = Instance.new("Animator")
             MUIAnimator.Parent = MUIHumanoid
         end
-        MUIWatch.AnimationPlayed = MUIAnimator.AnimationPlayed:Connect(function(MUITrack)
-            MUIOnAnimation(MUIPlayer, MUITrack)
-        end)
+        MUIAttachAnimator(MUIPlayer, MUIWatch, MUIAnimator)
     end)
 end
 
@@ -1888,13 +2229,47 @@ local function MUIWatchRemotePlayer(MUIPlayer)
     if MUIPlayer.Character then MUIHookCharacter(MUIPlayer, MUIPlayer.Character) end
 end
 
+-- Perro guardian: si el Animator del atacante fue reemplazado (streaming, invisibilidad, respawn de
+-- partes) el enganche original quedaba muerto y la amenaza nunca se detectaba. Aqui se re-engancha y
+-- ademas se revisan las animaciones activas por si AnimationPlayed no llego a dispararse.
+local function MUIWatchdog()
+    for MUIPlayer, MUIWatch in pairs(MUIPlayerWatches) do
+        local MUIHumanoid = MUIGetHumanoid(MUIPlayer.Character)
+        local MUIAnimator = MUIHumanoid and MUIHumanoid:FindFirstChildOfClass("Animator")
+        if MUIAnimator then
+            if MUIWatch.Animator ~= MUIAnimator then
+                MUIAttachAnimator(MUIPlayer, MUIWatch, MUIAnimator)
+            elseif MUIWatch.Seen then
+                local MUIOk, MUITracks = pcall(function() return MUIAnimator:GetPlayingAnimationTracks() end)
+                if MUIOk and MUITracks then
+                    for _, MUITrack in ipairs(MUITracks) do
+                        if not MUIWatch.Seen[MUITrack] then
+                            MUIWatch.Seen[MUITrack] = true
+                            MUIOnAnimation(MUIPlayer, MUITrack)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function MUIHeartbeat(MUIDeltaTime)
     local MUINow = os.clock()
     for _, MUIThreat in pairs(MUIThreats) do
-        if MUIThreat.ExpiresAt <= MUINow and MUIThreat.Player ~= MUIActiveSource then
+        -- Una amenaza no expira mientras su esquive este pendiente o activo
+        local MUIHolding = (MUIPendingDodge ~= nil and MUIPendingPlayer == MUIThreat.Player)
+            or (MUIDefenseActive and MUIThreat.Player == MUIActiveSource)
+        if MUIThreat.ExpiresAt <= MUINow and not MUIHolding then
             MUIDismissThreat(MUIThreat)
         end
     end
+
+    if MUINow - MUILastWatchdog >= 0.35 then
+        MUILastWatchdog = MUINow
+        MUIWatchdog()
+    end
+
     if MUINow - MUILastHudUpdate >= 0.1 then
         MUILastHudUpdate = MUINow
         MUIUpdateThreatHud(MUINow)
@@ -1920,24 +2295,16 @@ local function MUIHeartbeat(MUIDeltaTime)
         return
     end
     
-    MUIEnforceSkySafety(MUIRoot, MUIHumanoid)
+    if not MUIOmniDriven then MUIEnforceSkySafety(MUIRoot, MUIHumanoid) end
     if MUIActiveStyle == "Impulse" then MUIEnforceImpulseDistance(MUIRoot) end
     
     if MUINow >= MUIActiveUntil then
-        local omniApi = _getgenv and type(_getgenv()) == "table" and rawget(_getgenv(), "AFO_OMNIBLOCK_API") or nil
-        local isOmniActive = omniApi and type(omniApi.Is4DActive) == "function" and omniApi.Is4DActive()
-        
-        if isOmniActive then
-            MUIDeactivate(false)
-        else
-            MUIDeactivate(true)
-        end
+        MUIDeactivate(not (MUIOmniDriven or MUIIsOmniActive()))
         return
     end
-    
-    if MUIActiveStyle == "Dodge" then MUIMoveClone(MUIDeltaTime, MUICharacter) end
-    MUIUpdateCloneAndCamera()
-    MUIUpdateCloneCountdown(MUINow)
+
+    -- Respaldo: si BindToRenderStep no estuvo disponible, el movimiento corre aqui
+    if not MUIMovementBound then MUIDefenseStep(MUIDeltaTime) end
 end
 
 local function MUIStopWatchingEveryone()
@@ -1985,9 +2352,19 @@ function M.Start(MUIOverrides)
     for _, MUIPlayer in ipairs(MUIPlayers:GetPlayers()) do MUIWatchRemotePlayer(MUIPlayer) end
     MUIPlayerAddedConnection = MUIPlayers.PlayerAdded:Connect(MUIWatchRemotePlayer)
     MUIPlayerRemovingConnection = MUIPlayers.PlayerRemoving:Connect(MUIDisconnectWatch)
-    MUICharacterRemovingConnection = MUILocalPlayer.CharacterRemoving:Connect(function() MUIDeactivate(false) end)
+    MUICharacterRemovingConnection = MUILocalPlayer.CharacterRemoving:Connect(function()
+        -- Al morir/respawnear se cancela cualquier cuenta regresiva pendiente
+        MUIPendingToken = MUIPendingToken + 1
+        MUIPendingDodge = nil
+        MUIPendingDodgeExpectedTime = nil
+        MUIPendingPlayer = nil
+        MUIDeactivate(false)
+    end)
     MUIHeartbeatConnection = MUIRunService.Heartbeat:Connect(MUIHeartbeat)
-    MUIRenderConnection = MUIRunService.RenderStepped:Connect(MUIRenderThreatLines)
+    MUIRenderConnection = MUIRunService.RenderStepped:Connect(function()
+        MUIRenderThreatLines()
+        MUIUpdateTopTimer(os.clock())
+    end)
     MUIInputConnection = MUIUserInputService.InputBegan:Connect(function(MUIInput)
         if MUIUserInputService:GetFocusedTextBox() then return end
         if MUIInput.KeyCode == M.Config.ForceDismissKey then MUIForceDismissAll() end
@@ -1998,6 +2375,8 @@ function M.Stop()
     MUIPendingToken = MUIPendingToken + 1
     MUIPendingDodge = nil
     MUIPendingDodgeExpectedTime = nil
+    MUIPendingPlayer = nil
+    MUIUnbindMovement()
     MUIDestroyTogaAlert()
     if MUIDefenseActive then MUIDeactivate(true) end
     MUIEnabled = false
@@ -2019,10 +2398,13 @@ function M.Stop()
     MUIHud = nil
     MUIHudCards = nil
     MUIHudDismissButton = nil
+    MUITopTimer = nil
+    MUIOmniDriven = false
     MUILastHudUpdate = 0
+    MUILastWatchdog = 0
     local MUIChar = MUILocalPlayer and MUILocalPlayer.Character
     if MUIChar then
-        for _, MUIName in ipairs({ "MUI_Alarm", "MUI_TeleportTime", "MUI_SkyCloneState", "MUI_ThreatsData" }) do
+        for _, MUIName in ipairs({ "MUI_Alarm", "MUI_TeleportTime", "MUI_SkyCloneState", "MUI_ThreatsData", "MUI_CloneCountdown" }) do
             local MUIVal = MUIChar:FindFirstChild(MUIName)
             if MUIVal then pcall(function() MUIVal:Destroy() end) end
         end
@@ -2037,6 +2419,13 @@ function M.TriggerDodge(MUIDodgeName)
         end
     end
     return false
+end
+
+function M.GetCloneCountdown()
+    if MUIPendingDodge and MUIPendingDodgeExpectedTime then
+        return math.max(0, MUIPendingDodgeExpectedTime - os.clock())
+    end
+    return 0
 end
 
 function M.IsDefenseActive() return MUIDefenseActive end
