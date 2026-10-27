@@ -4,6 +4,7 @@
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TextService      = game:GetService("TextService")
 
 local function isnan(v)
     return v ~= v
@@ -231,6 +232,28 @@ local function loadAvatarImage()
     end)
 end
 
+-- Reduce el tamaño de letra hasta que el texto quepa en el ancho de la etiqueta.
+-- Roblox permite nombres de hasta 20 caracteres; en el peor caso (ej. "WWWW...")
+-- el texto se escala hacia abajo hasta minSize. Solo recalcula si el texto cambió.
+local function fitText(lbl, maxSize, minSize)
+    local text = lbl.Text
+    if lbl:GetAttribute("FitText") == text then return end
+    lbl:SetAttribute("FitText", text)
+
+    local availW = lbl.AbsoluteSize.X
+    if availW <= 0 then availW = 132 end -- ancho por defecto del panel (250 - 118)
+
+    local size = maxSize
+    while size > minSize do
+        local okB, bounds = pcall(function()
+            return TextService:GetTextSize(text, size, lbl.Font, Vector2.new(10000, 100))
+        end)
+        if not okB or bounds.X <= availW then break end
+        size = size - 1
+    end
+    lbl.TextSize = size
+end
+
 local function createLockInfoGui(parentFrame)
     if not L.systemEnabled or not L.lockActive or not L.lockedTarget then return end
 
@@ -271,7 +294,7 @@ local function createLockInfoGui(parentFrame)
     local infoFrame = Instance.new("Frame")
     infoFrame.Name                  = "LockInfoPanel"
     infoFrame.Size                  = UDim2.new(0, 250, 0, 122)
-    infoFrame.Position              = UDim2.new(1, -262, 0, 80)
+    infoFrame.Position              = UDim2.new(1, -262, 0, 44)
     infoFrame.AnchorPoint           = Vector2.new(0, 0)
     infoFrame.BackgroundColor3      = C_BLACK
     infoFrame.BackgroundTransparency = 0.15
@@ -407,11 +430,15 @@ local function updateLockInfoGui()
         local dn = target.DisplayName
         if not dn or dn == "" then dn = target.Name end
         nameLabel.Text = dn
+        fitText(nameLabel, 13, 7)
     end
 
     -- 2) @Nombre real
     local userLabel = gui:FindFirstChild("UserLabel")
-    if userLabel then userLabel.Text = "@" .. target.Name end
+    if userLabel then
+        userLabel.Text = "@" .. target.Name
+        fitText(userLabel, 10, 7)
+    end
 
     -- 3) Distancia en studs (desde tu personaje; si no existe, desde la cámara)
     local dist = 0
