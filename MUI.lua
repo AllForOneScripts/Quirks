@@ -240,6 +240,13 @@ local function MUIDisconnect(MUIConnection)
     end
 end
 
+-- Ejecuta un paso protegido: si falla, avisa en consola cual fue y deja continuar al resto.
+local function MUISafe(MUILabel, MUIFn, ...)
+    local MUIOk, MUIErr = pcall(MUIFn, ...)
+    if not MUIOk then warn("[MUI] " .. tostring(MUILabel) .. ": " .. tostring(MUIErr)) end
+    return MUIOk
+end
+
 -- Devuelve un contenedor valido y protegido para ScreenGuis (gethui > PlayerGui > CoreGui)
 local function MUIGetGuiContainer()
     if _gethui then
@@ -2336,18 +2343,29 @@ function M.GetDodgeKey()
 end
 
 function M.Start(MUIOverrides)
-    if MUIEnabled then M.Stop() end
+    -- Siempre se parte de cero: aunque un Stop anterior se hubiera cortado a medias, el estado queda limpio
+    MUISafe("Start/LimpiezaPrevia", M.Stop)
+
     if typeof(MUIOverrides) == "Instance" and MUIOverrides:IsA("Player") then MUIOverrides = nil end
-    if MUIOverrides then M.Configure(MUIOverrides) else MUIRebuildDodgeIndex() end
-    
+    if type(MUIOverrides) == "table" then MUISafe("Start/Configure", M.Configure, MUIOverrides) end
+    MUISafe("Start/Dodges", MUIRebuildDodgeIndex)
+
     MUILocalPlayer = MUIPlayers.LocalPlayer or MUIPlayers:GetPropertyChangedSignal("LocalPlayer"):Wait() and MUIPlayers.LocalPlayer
     assert(MUILocalPlayer, "MUI4DDodge must run on the client")
-    
+
     MUIEnabled = true
-    MUIBuildHud()
-    _reloadLocale()
-    for _, MUIPlayer in ipairs(MUIPlayers:GetPlayers()) do MUIWatchRemotePlayer(MUIPlayer) end
-    MUIPlayerAddedConnection = MUIPlayers.PlayerAdded:Connect(MUIWatchRemotePlayer)
+    MUILastHudUpdate = 0
+    MUILastWatchdog = 0
+
+    -- Cada paso va protegido: si uno falla avisa en consola cual fue, pero el resto sigue encendiendose
+    MUISafe("Start/HUD", MUIBuildHud)
+    MUISafe("Start/Idioma", _reloadLocale)
+    for _, MUIPlayer in ipairs(MUIPlayers:GetPlayers()) do
+        MUISafe("Start/Vigilar " .. tostring(MUIPlayer.Name), MUIWatchRemotePlayer, MUIPlayer)
+    end
+    MUIPlayerAddedConnection = MUIPlayers.PlayerAdded:Connect(function(MUIPlayer)
+        MUISafe("PlayerAdded", MUIWatchRemotePlayer, MUIPlayer)
+    end)
     MUIPlayerRemovingConnection = MUIPlayers.PlayerRemoving:Connect(MUIDisconnectWatch)
     MUICharacterRemovingConnection = MUILocalPlayer.CharacterRemoving:Connect(function()
         -- Al morir/respawnear se cancela cualquier cuenta regresiva pendiente
@@ -2355,7 +2373,7 @@ function M.Start(MUIOverrides)
         MUIPendingDodge = nil
         MUIPendingDodgeExpectedTime = nil
         MUIPendingPlayer = nil
-        MUIDeactivate(false)
+        MUISafe("CharacterRemoving", MUIDeactivate, false)
     end)
     MUIHeartbeatConnection = MUIRunService.Heartbeat:Connect(MUIHeartbeat)
     MUIRenderConnection = MUIRunService.RenderStepped:Connect(function()
@@ -2365,32 +2383,69 @@ function M.Start(MUIOverrides)
 end
 
 function M.Stop()
+    -- Lo primero es marcarlo apagado y invalidar cuentas regresivas pendientes
+    MUIEnabled = false
     MUIPendingToken = MUIPendingToken + 1
     MUIPendingDodge = nil
     MUIPendingDodgeExpectedTime = nil
     MUIPendingPlayer = nil
-    MUIUnbindMovement()
-    MUIDestroyTogaAlert()
-    if MUIDefenseActive then MUIDeactivate(true) end
-    MUIEnabled = false
-    MUIStopWatchingEveryone()
+
+    -- Se cortan primero los bucles y conexiones, para que nada siga corriendo mientras se limpia
     MUIDisconnect(MUIHeartbeatConnection)
     MUIDisconnect(MUIRenderConnection)
     MUIDisconnect(MUICharacterRemovingConnection)
     MUIHeartbeatConnection = nil
     MUIRenderConnection = nil
     MUICharacterRemovingConnection = nil
-    for _, MUIThreat in pairs(MUIThreats) do MUIDismissThreat(MUIThreat) end
-    if MUIHud then MUIHud:Destroy() end
+    MUISafe("Stop/Vigilantes", MUIStopWatchingEveryone)
+    MUIDisconnect(MUIPlayerAddedConnection)
+    MUIDisconnect(MUIPlayerRemovingConnection)
+    MUIPlayerAddedConnection = nil
+    MUIPlayerRemovingConnection = nil
+
+    MUISafe("Stop/Movimiento", MUIUnbindMovement)
+    MUISafe("Stop/Toga", MUIDestroyTogaAlert)
+
+    if MUIDefenseActive then
+        local MUIOk = MUISafe("Stop/Deactivate", MUIDeactivate, true)
+        if not MUIOk then
+            -- Si Deactivate fallo, se restaura a mano lo esencial
+            MUISafe("Stop/RestoreBody", MUIRestoreRealCharacter)
+            MUISafe("Stop/Clon", MUIDestroyClone)
+            MUISafe("Stop/Camara", MUIDestroyCameraSubject)
+            MUISafe("Stop/Cielo", MUIDestroySkyForces)
+            MUISafe("Stop/Camara2", function()
+                local MUICamera = workspace.CurrentCamera
+                local MUIHum = MUIGetHumanoid(MUILocalPlayer and MUILocalPlayer.Character)
+                if MUICamera and MUIHum then MUICamera.CameraSubject = MUIHum end
+            end)
+        end
+    end
+    -- Aunque algo haya fallado arriba, el estado de defensa queda apagado de verdad
+    MUIDefenseActive = false
+    MUIOmniDriven = false
+    MUIActiveDodgeName = nil
+    MUIActiveStyle = nil
+    MUIActiveSource = nil
+    MUIActiveUntil = 0
+    MUIActiveDuration = 0
+    MUIVirtualRootPosition = nil
+    MUISkyY = nil
+
+    local MUIList = {}
+    for _, MUIThreat in pairs(MUIThreats) do table.insert(MUIList, MUIThreat) end
+    for _, MUIThreat in ipairs(MUIList) do MUISafe("Stop/Amenaza", MUIDismissThreat, MUIThreat) end
+    for MUIKey in pairs(MUIThreats) do MUIThreats[MUIKey] = nil end
+
+    if MUIHud then pcall(function() MUIHud:Destroy() end) end
     if MUIRealBodyLineDraw then pcall(function() MUIRealBodyLineDraw:Remove() end) MUIRealBodyLineDraw = nil end
-    MUIDestroyImpulseZone()
-    if MUIImpulseFolder then MUIImpulseFolder:Destroy(); MUIImpulseFolder = nil end
-    if MUIFallPlatform then MUIFallPlatform:Destroy(); MUIFallPlatform = nil end
+    MUISafe("Stop/ZonaImpulse", MUIDestroyImpulseZone)
+    if MUIImpulseFolder then pcall(function() MUIImpulseFolder:Destroy() end) MUIImpulseFolder = nil end
+    if MUIFallPlatform then pcall(function() MUIFallPlatform:Destroy() end) MUIFallPlatform = nil end
     MUIHud = nil
     MUIHudCards = nil
     MUIHudDismissButton = nil
     MUITopTimer = nil
-    MUIOmniDriven = false
     MUILastHudUpdate = 0
     MUILastWatchdog = 0
     local MUIChar = MUILocalPlayer and MUILocalPlayer.Character
