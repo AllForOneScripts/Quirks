@@ -650,9 +650,12 @@ local function angleBetween(from, to)
     return axis.Unit, angle
 end
 
--- Se ejecuta DESPUÉS del script de cámara de Roblox (ver startLockSystem), así
--- nadie sobrescribe la corrección. En vez de "mirar al centro del objetivo" se
--- gira la cámara para que el pivote quede justo donde sale tu disparo:
+-- Se ejecuta DESPUÉS del script de cámara de Roblox (ver startLockSystem).
+-- La cámara en 3ª persona ORBITA alrededor de tu personaje (Camera.Focus). Si se
+-- gira sobre sí misma, el script la reposiciona en órbita cada frame y aparece
+-- un arrastre circular. Por eso la corrección rota la cámara ALREDEDOR DEL MISMO
+-- PIVOTE (Focus): la posición y la orientación quedan siempre coherentes con lo
+-- que Roblox espera, y el objetivo queda justo donde sale tu disparo:
 --   · bajo el cursor (aimAtCursor) o en el centro de pantalla (shift-lock / 1ª persona).
 local function updateLockCamera(dt)
     L.aimPoint = nil
@@ -669,10 +672,16 @@ local function updateLockCamera(dt)
     if not aimPoint then return end
     L.aimPoint = aimPoint
 
-    local camCF  = cam.CFrame
-    local camPos = camCF.Position
-    local toTarget = aimPoint - camPos
-    if toTarget.Magnitude < 0.5 then return end
+    if (aimPoint - cam.CFrame.Position).Magnitude < 0.5 then return end
+
+    -- Pivote de órbita: el Focus de la cámara (si es fiable); si no, la propia cámara
+    local pivot = cam.CFrame.Position
+    if cam.CameraType ~= Enum.CameraType.Scriptable then
+        local focusPos = cam.Focus.Position
+        if safepos(focusPos) and (focusPos - pivot).Magnitude < 100 then
+            pivot = focusPos
+        end
+    end
 
     -- Punto de pantalla por donde sale realmente el disparo
     local screenPoint
@@ -681,18 +690,28 @@ local function updateLockCamera(dt)
     else
         screenPoint = cam.ViewportSize / 2
     end
-    local currentDir = cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction.Unit
 
-    local axis, angle = angleBetween(currentDir, toTarget.Unit)
-    if not axis then return end
+    local baseAlpha = 1 - math.exp(-L.trackStiffness * dt)
 
-    -- Suavizado independiente de los FPS; si el error es pequeño se corrige entero
-    local alpha = 1 - math.exp(-L.trackStiffness * dt)
-    if angle <= L.snapAngle then alpha = 1 end
+    -- Un paso de corrección; devuelve true si quedó aplicado al 100 %
+    local function step(alpha)
+        local cf     = cam.CFrame
+        local toAim  = aimPoint - cf.Position
+        if toAim.Magnitude < 0.5 then return false end
+        local dir = cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction.Unit
+        local axis, angle = angleBetween(dir, toAim.Unit)
+        if not axis then return true end
+        if angle <= L.snapAngle then alpha = 1 end
+        local rot = CFrame.fromAxisAngle(axis, angle * alpha)
+        -- Rotar posición y orientación alrededor del pivote
+        cam.CFrame = CFrame.new(pivot) * rot * (cf - pivot)
+        return alpha >= 1
+    end
 
-    local rot = CFrame.fromAxisAngle(axis, angle * alpha)
-    -- Rota alrededor de la posición de la cámara (sin trasladarla)
-    pcall(function() cam.CFrame = CFrame.new(camPos) * rot * (camCF - camPos) end)
+    local ok, exact = pcall(step, baseAlpha)
+    -- Al girar alrededor del pivote cambia la posición de la cámara (paralaje):
+    -- una segunda pasada deja el error en ~0 cuando ya se estaba encima del objetivo
+    if ok and exact then pcall(step, 1) end
 end
 
 -- ──────────────────────────────────────────────────────────────────
