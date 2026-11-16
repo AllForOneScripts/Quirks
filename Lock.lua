@@ -76,9 +76,17 @@ local L = {
     lockLabels     = nil,
 
     lockConn       = nil,
-    lockRenderConn = nil,
 
-    lockCameraLerp = 0.18,
+    -- Puntería
+    aimPart         = nil,   -- nil = automático (UpperTorso > Torso > HumanoidRootPart). Ej: "Head"
+    aimOffset       = Vector3.zero,
+    aimAtCursor     = true,  -- true: el objetivo queda bajo el cursor; false: centro de pantalla
+    trackStiffness  = 40,    -- más alto = sigue más pegado (independiente de los FPS)
+    snapAngle       = math.rad(1.5), -- por debajo de este error se corrige al 100 %
+    projectileSpeed = 0,     -- studs/s de tu esfera; 0 = sin predicción de movimiento
+    aimPoint        = nil,   -- último punto de puntería calculado (Vector3)
+
+    renderName     = "AFO_LockCamera",
 }
 
 local lplr   = nil
@@ -87,6 +95,56 @@ local camera = nil
 local function refreshCamera()
     camera = workspace.CurrentCamera or camera
     return camera
+end
+
+-- ──────────────────────────────────────────────────────────────────
+-- [3b] PIVOTE Y PUNTO DE PUNTERÍA
+-- ──────────────────────────────────────────────────────────────────
+-- Un único lugar decide A DÓNDE se apunta, así cámara, icono y selección
+-- usan siempre el mismo pivote (antes: UpperTorso o HRP según el módulo,
+-- y R6 caía siempre al HRP).
+local AIM_FALLBACKS = { "UpperTorso", "Torso", "HumanoidRootPart" }
+
+local function getAimPart(char)
+    if not char then return nil end
+    if L.aimPart then
+        local custom = char:FindFirstChild(L.aimPart)
+        if custom and custom:IsA("BasePart") then return custom end
+    end
+    for _, name in ipairs(AIM_FALLBACKS) do
+        local part = char:FindFirstChild(name)
+        if part and part:IsA("BasePart") then return part end
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    return hum and hum.RootPart or nil
+end
+
+-- Punto 3D al que hay que apuntar. Si projectileSpeed > 0 se adelanta
+-- la posición según la velocidad del objetivo (tiempo de vuelo de la esfera).
+local function getAimPoint(char, originPos)
+    local part = getAimPart(char)
+    if not part then return nil end
+    local point = part.Position + L.aimOffset
+    if not safepos(point) then return nil end
+
+    local speed = L.projectileSpeed
+    if speed and speed > 0 and originPos then
+        local root = char:FindFirstChild("HumanoidRootPart") or part
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        local vel  = root.AssemblyLinearVelocity
+        if safepos(vel) and vel.Magnitude < 200 then
+            -- en suelo ignoramos la velocidad vertical (rampas / saltitos)
+            if not (hum and hum:GetState() == Enum.HumanoidStateType.Freefall) then
+                vel = Vector3.new(vel.X, 0, vel.Z)
+            end
+            local t = (point - originPos).Magnitude / speed
+            for _ = 1, 2 do
+                t = ((point + vel * t) - originPos).Magnitude / speed
+            end
+            point = point + vel * t
+        end
+    end
+    return point
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -115,16 +173,17 @@ local function getClosestLockTarget()
         if not isTargetValidForLock(player) then continue end
         local targetChar = player.Character
         if not targetChar then continue end
-        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+        local targetRoot = getAimPart(targetChar)
         if not targetRoot then continue end
         
+        -- WorldToViewportPoint usa el mismo sistema de coordenadas que GetMouseLocation
         local ok3, screenPos, onScreen = pcall(function()
-            return camera:WorldToScreenPoint(targetRoot.Position)
+            return camera:WorldToViewportPoint(targetRoot.Position)
         end)
         
         if not ok3 or not onScreen then continue end
         local mousePos   = UserInputService:GetMouseLocation()
-        local screenDist = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+        local screenDist = (mousePos - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
         
         if isnan(screenDist) or screenDist > 300 then continue end
         local worldDist  = myRoot and (myRoot.Position - targetRoot.Position).Magnitude or 0
@@ -140,6 +199,77 @@ local function getClosestLockTarget()
 end
 
 -- ──────────────────────────────────────────────────────────────────
+-- [4b] AUTOCOMPLETADO DE JUGADORES (apodo / nombre)
+-- ──────────────────────────────────────────────────────────────────
+-- Detección con comillas:
+--   "Cool    →  APODO (DisplayName). La comilla de cierre es opcional: "Cool"
+--   Cool     →  NOMBRE de usuario (Name)
+local MAX_SUGGESTIONS = 12
+
+local function trimText(text)
+    return (tostring(text or ""):match("^%s*(.-)%s*$")) or ""
+end
+
+-- Devuelve (consulta, modoApodo)
+local function parseQuery(text)
+    text = trimText(text)
+    text = (text:gsub("\u{201C}", '"'):gsub("\u{201D}", '"'))
+    local inside = text:match('^"(.-)"?$')
+    if inside then
+        return trimText(inside), true
+    end
+    return text, false
+end
+
+local function displayNameOf(player)
+    local dn = player.DisplayName
+    if not dn or dn == "" then dn = player.Name end
+    return dn
+end
+
+-- Jugadores del servidor (sin contarte a ti) que encajan, mejor coincidencia primero
+local function searchPlayers(query, nickMode)
+    local q = (query or ""):lower()
+    if q == "" then return {} end
+    local found = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == lplr then continue end
+        local field = (nickMode and displayNameOf(player) or player.Name):lower()
+        local score = 0
+        if field == q then
+            score = 3
+        elseif field:sub(1, #q) == q then
+            score = 2
+        elseif field:find(q, 1, true) then
+            score = 1
+        end
+        if score > 0 then
+            table.insert(found, { player = player, score = score, key = field })
+        end
+    end
+    table.sort(found, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        return a.key < b.key
+    end)
+    local results = {}
+    for i = 1, math.min(#found, MAX_SUGGESTIONS) do
+        results[i] = found[i].player
+    end
+    return results
+end
+
+-- Devuelve (jugador, textoCompletado, modoApodo). Si no hay coincidencia: (nil, textoOriginal, modoApodo)
+local function autocompletePlayer(text)
+    local query, nickMode = parseQuery(text)
+    local player = searchPlayers(query, nickMode)[1]
+    if not player then
+        return nil, text, nickMode
+    end
+    local completed = nickMode and ('"' .. displayNameOf(player) .. '"') or player.Name
+    return player, completed, nickMode
+end
+
+-- ──────────────────────────────────────────────────────────────────
 -- [5]  ICONO DE LOCK + HIGHLIGHT
 -- ──────────────────────────────────────────────────────────────────
 local function removeLockIcon()
@@ -152,8 +282,7 @@ end
 local function applyLockIcon(player)
     if not L.systemEnabled or not L.lockActive or player ~= L.lockedTarget then return end
     removeLockIcon()
-    local chest = player.Character and player.Character:FindFirstChild("UpperTorso")
-    local torso = chest or (player.Character and player.Character:FindFirstChild("HumanoidRootPart"))
+    local torso = getAimPart(player.Character)
     if not torso then return end
     L.lockIconGui = Instance.new("BillboardGui", torso)
     L.lockIconGui.Name        = "LockIcon"
@@ -513,31 +642,57 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [7]  CÁMARA DE LOCK
 -- ──────────────────────────────────────────────────────────────────
-local function updateLockCamera()
+-- Rotación mínima (eje + ángulo) que lleva el vector `from` hasta `to`
+local function angleBetween(from, to)
+    local angle = math.acos(math.clamp(from:Dot(to), -1, 1))
+    local axis  = from:Cross(to)
+    if angle < 1e-4 or axis.Magnitude < 1e-6 then return nil, 0 end
+    return axis.Unit, angle
+end
+
+-- Se ejecuta DESPUÉS del script de cámara de Roblox (ver startLockSystem), así
+-- nadie sobrescribe la corrección. En vez de "mirar al centro del objetivo" se
+-- gira la cámara para que el pivote quede justo donde sale tu disparo:
+--   · bajo el cursor (aimAtCursor) o en el centro de pantalla (shift-lock / 1ª persona).
+local function updateLockCamera(dt)
+    L.aimPoint = nil
     if not L.lockActive or not L.lockedTarget then return end
     local targetChar = L.lockedTarget.Character
-    if not targetChar then clearLock(); return end
-    if not isTargetValidForLock(L.lockedTarget) then clearLock(); return end
+    if not targetChar or not isTargetValidForLock(L.lockedTarget) then clearLock(); return end
+    local cam = refreshCamera()
+    if not cam then return end
 
-    local myChar     = lplr and lplr.Character
-    local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myChar = lplr and lplr.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-    local targetPart = targetChar:FindFirstChild("UpperTorso")
-        or targetChar:FindFirstChild("HumanoidRootPart")
-    if not targetPart then return end
-    if not refreshCamera() then return end
+    local aimPoint = getAimPoint(targetChar, myRoot and myRoot.Position)
+    if not aimPoint then return end
+    L.aimPoint = aimPoint
 
-    local worldDist = myRoot and (myRoot.Position - targetPart.Position).Magnitude or 999
-    if isnan(worldDist) then worldDist = 999 end
+    local camCF  = cam.CFrame
+    local camPos = camCF.Position
+    local toTarget = aimPoint - camPos
+    if toTarget.Magnitude < 0.5 then return end
 
-    local currentPos = camera.CFrame.Position
-    local lerpFactor = L.lockCameraLerp
-    if worldDist < 8  then lerpFactor = lerpFactor * 0.25
-    elseif worldDist < 20 then lerpFactor = lerpFactor * 0.6 end
-    lerpFactor = math.clamp(lerpFactor, 0, 1)
+    -- Punto de pantalla por donde sale realmente el disparo
+    local screenPoint
+    if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+        screenPoint = UserInputService:GetMouseLocation()
+    else
+        screenPoint = cam.ViewportSize / 2
+    end
+    local currentDir = cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction.Unit
 
-    local desiredCF = CFrame.new(currentPos, targetPart.Position)
-    pcall(function() camera.CFrame = camera.CFrame:Lerp(desiredCF, lerpFactor) end)
+    local axis, angle = angleBetween(currentDir, toTarget.Unit)
+    if not axis then return end
+
+    -- Suavizado independiente de los FPS; si el error es pequeño se corrige entero
+    local alpha = 1 - math.exp(-L.trackStiffness * dt)
+    if angle <= L.snapAngle then alpha = 1 end
+
+    local rot = CFrame.fromAxisAngle(axis, angle * alpha)
+    -- Rota alrededor de la posición de la cámara (sin trasladarla)
+    pcall(function() cam.CFrame = CFrame.new(camPos) * rot * (camCF - camPos) end)
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -566,10 +721,18 @@ local function updateExposedCharacterData()
         isValid = true
     end
 
+    local aimVal = char:FindFirstChild("AFO_AimPoint")
+    if not aimVal then
+        aimVal = Instance.new("Vector3Value")
+        aimVal.Name = "AFO_AimPoint"
+        aimVal.Parent = char
+    end
+
     activeVal.Value = isValid
     
     if isValid then
         targetVal.Value = L.lockedTarget
+        if L.aimPoint then aimVal.Value = L.aimPoint end
     else
         targetVal.Value = nil
     end
@@ -578,18 +741,27 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [9]  TOGGLE / START / STOP
 -- ──────────────────────────────────────────────────────────────────
+-- Bloquea a un jugador concreto (también sirve para cambiar de objetivo en caliente)
+local function lockOnPlayer(player)
+    if not L.systemEnabled or not player or player == lplr then return false end
+    if not isTargetValidForLock(player) then return false end
+    L.avatarRequestId = L.avatarRequestId + 1
+    L.lockedTarget    = player
+    L.lockActive      = true
+    applyLockIcon(player)
+    updateLockHighlight()
+    createLockInfoGui(L.infoGuiParent)
+    loadAvatarImage()
+    return true
+end
+
 local function toggleLock()
     if not L.systemEnabled then return end
 
     if not L.lockActive then
         local found = getClosestLockTarget()
         if found and isTargetValidForLock(found) then
-            L.lockedTarget = found
-            L.lockActive   = true
-            applyLockIcon(found)
-            updateLockHighlight()
-            createLockInfoGui(L.infoGuiParent)
-            loadAvatarImage()
+            lockOnPlayer(found)
         end
     else
         clearLock()
@@ -598,17 +770,18 @@ end
 
 local function startLockSystem()
     if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
-    if L.lockRenderConn then L.lockRenderConn:Disconnect(); L.lockRenderConn = nil end
+    pcall(function() RunService:UnbindFromRenderStep(L.renderName) end)
 
     L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
         if not L.systemEnabled or gpe or isTyping() then return end
         if input.KeyCode == L.lockKey then toggleLock() end
     end)
 
-    L.lockRenderConn = RunService.RenderStepped:Connect(function()
+    -- Prioridad justo después de la cámara por defecto: la corrección es la última palabra del frame
+    RunService:BindToRenderStep(L.renderName, Enum.RenderPriority.Camera.Value + 1, function(dt)
         if not L.systemEnabled then return end
+        updateLockCamera(dt)
         updateLockInfoGui()
-        updateLockCamera()
         updateLockHighlight()
         updateExposedCharacterData()
     end)
@@ -617,8 +790,8 @@ end
 local function stopLockSystem()
     L.systemEnabled = false
     L.avatarRequestId = L.avatarRequestId + 1
-    if L.lockConn       then L.lockConn:Disconnect();       L.lockConn       = nil end
-    if L.lockRenderConn then L.lockRenderConn:Disconnect(); L.lockRenderConn = nil end
+    if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
+    pcall(function() RunService:UnbindFromRenderStep(L.renderName) end)
     clearLock()
     if L.lockHighlight then
         pcall(function() L.lockHighlight:Destroy() end)
@@ -630,7 +803,7 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [10] GUI EMBEBIBLE — sección "LOCK" del HUD externo
 -- ──────────────────────────────────────────────────────────────────
-local HUD_SECTION_HEIGHT = 38
+local HUD_SECTION_HEIGHT = 66
 
 local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
@@ -640,7 +813,7 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     lockSec.Parent = expandZone
 
     local ROW_H   = 22
-    local lockRow = makeRow(lockSec, (HUD_SECTION_HEIGHT - ROW_H) / 2)
+    local lockRow = makeRow(lockSec, 8)
 
     local lockIconEmoji = Instance.new("TextLabel", lockRow)
     lockIconEmoji.Size                 = UDim2.new(0, 18, 1, 0)
@@ -676,6 +849,70 @@ local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
     lockHint.TextYAlignment       = Enum.TextYAlignment.Center
 
     L.lockLabels = { label = lockLabel, hint = lockHint }
+
+    -- Fila 2: cuadro con autocompletado.  "apodo  /  nombre   (Enter = completar + lock)
+    local searchRow = makeRow(lockSec, 8 + ROW_H + 6)
+    local searchBox = Instance.new("TextBox", searchRow)
+    searchBox.Name                   = "LockSearchBox"
+    searchBox.Size                   = UDim2.new(1, 0, 1, 0)
+    searchBox.BackgroundColor3       = Color3.fromRGB(18, 12, 30)
+    searchBox.BorderSizePixel        = 0
+    searchBox.Font                   = Enum.Font.Gotham
+    searchBox.TextSize               = 10
+    searchBox.TextColor3             = C_TEXT
+    searchBox.PlaceholderText        = 'Jugador  ·  " para apodo'
+    searchBox.PlaceholderColor3      = C_SUBTEXT
+    searchBox.Text                   = ""
+    searchBox.ClearTextOnFocus       = false
+    searchBox.ClipsDescendants       = true
+    searchBox.TextXAlignment         = Enum.TextXAlignment.Left
+    Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 5)
+    local searchPad = Instance.new("UIPadding", searchBox)
+    searchPad.PaddingLeft = UDim.new(0, 6)
+    local searchStroke = Instance.new("UIStroke", searchBox)
+    searchStroke.Thickness = 1
+
+    local C_NICK = Color3.fromRGB(80, 200, 255)
+    local flashToken = 0
+
+    -- Borde morado = busca por nombre; celeste = modo apodo (se detectó la comilla)
+    local function paintStroke()
+        local _, nickMode = parseQuery(searchBox.Text)
+        searchStroke.Color        = nickMode and C_NICK or C_ACCENT
+        searchStroke.Transparency = nickMode and 0.2 or 0.6
+    end
+    paintStroke()
+
+    local function flash(color)
+        flashToken = flashToken + 1
+        local token = flashToken
+        searchStroke.Color        = color
+        searchStroke.Transparency = 0
+        task.delay(0.6, function()
+            if token == flashToken and searchStroke.Parent then paintStroke() end
+        end)
+    end
+
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        if searchBox:IsFocused() then paintStroke() end
+    end)
+
+    searchBox.FocusLost:Connect(function(enterPressed)
+        if trimText(searchBox.Text) == "" then paintStroke() return end
+        local player, completed = autocompletePlayer(searchBox.Text)
+        if not player then
+            flash(Color3.fromRGB(255, 80, 80))
+            return
+        end
+        searchBox.Text = completed
+        if enterPressed then
+            flash(lockOnPlayer(player) and Color3.fromRGB(80, 255, 150) or Color3.fromRGB(255, 80, 80))
+        else
+            paintStroke()
+        end
+    end)
+
+    L.searchBox = searchBox
     return lockSec
 end
 
@@ -714,6 +951,31 @@ function M.SetLockKey(keyCode)
         if input.KeyCode == L.lockKey then toggleLock() end
     end)
 end
+
+-- Autocompletado: "apodo -> DisplayName, nombre -> usuario
+function M.ParseQuery(text)         return parseQuery(text) end
+function M.AutocompletePlayer(text) return autocompletePlayer(text) end
+function M.SearchPlayers(text)
+    local query, nickMode = parseQuery(text)
+    return searchPlayers(query, nickMode)
+end
+-- Acepta un Player o un texto ("apodo / nombre) y lo bloquea
+function M.LockOnPlayer(playerOrText)
+    local player = playerOrText
+    if type(playerOrText) == "string" then
+        player = autocompletePlayer(playerOrText)
+    end
+    return lockOnPlayer(player)
+end
+
+-- Puntería: usa estos valores para ajustar el pivote desde fuera
+function M.SetAimPart(name)           L.aimPart = name end             -- "Head", "UpperTorso"... o nil (auto)
+function M.SetAimOffset(v3)           L.aimOffset = v3 or Vector3.zero end
+function M.SetAimAtCursor(enabled)    L.aimAtCursor = enabled == true end
+function M.SetTrackStiffness(n)       L.trackStiffness = math.max(tonumber(n) or 40, 1) end
+function M.SetProjectileSpeed(n)      L.projectileSpeed = math.max(tonumber(n) or 0, 0) end
+-- Punto exacto al que apunta la cámara (úsalo para lanzar tus esferas)
+function M.GetAimPoint()              return L.aimPoint end
 
 function M.GetLockKey()  return L.lockKey   end
 function M.IsActive()    return L.lockActive end
