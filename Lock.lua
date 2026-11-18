@@ -83,6 +83,11 @@ local L = {
     aimAtCursor     = true,  -- true: el objetivo queda bajo el cursor; false: centro de pantalla
     trackStiffness  = 40,    -- más alto = sigue más pegado (independiente de los FPS)
     snapAngle       = math.rad(1.5), -- por debajo de este error se corrige al 100 %
+    trackBoost      = 60,    -- extra de rapidez según el error: giros rápidos = sin "deslizamiento"
+    maxPitch        = math.rad(70),  -- límite vertical de la corrección (Roblox permite ±80°)
+    nearMinHz       = 1.5,   -- objetivo a menos de esto (horizontal) del pivote: la cámara NO se toca
+    nearFullHz      = 4,     -- a partir de esta distancia la corrección es 100 %; entre ambos se desvanece
+    pitchMinHz      = 4,     -- distancia horizontal mínima "virtual" para calcular el pitch
     projectileSpeed = 0,     -- studs/s de tu esfera; 0 = sin predicción de movimiento
     aimPoint        = nil,   -- último punto de puntería calculado (Vector3)
 
@@ -642,21 +647,107 @@ end
 -- ──────────────────────────────────────────────────────────────────
 -- [7]  CÁMARA DE LOCK
 -- ──────────────────────────────────────────────────────────────────
--- Rotación mínima (eje + ángulo) que lleva el vector `from` hasta `to`
-local function angleBetween(from, to)
-    local angle = math.acos(math.clamp(from:Dot(to), -1, 1))
-    local axis  = from:Cross(to)
-    if angle < 1e-4 or axis.Magnitude < 1e-6 then return nil, 0 end
-    return axis.Unit, angle
+-- CÓMO FUNCIONA (sin bucles de realimentación):
+--   La cámara en 3ª persona orbita alrededor de un pivote (Camera.Focus ≈ tu
+--   cabeza). Para que el objetivo quede bajo el cursor basta con que la cámara
+--   mire en la dirección pivote→objetivo; el zoom no influye.
+--   ANTES se medía el error contra el rayo actual y se giraba alrededor del
+--   pivote con un eje cualquiera. Con el objetivo muy cerca cada giro movía tanto
+--   la cámara que el error crecía en vez de bajar: la cámara salía disparada hacia
+--   arriba y giraba en círculos. Además un eje arbitrario acumula ROLL
+--   (inclinación) en giros rápidos, que es lo que se sentía como "deslizarse".
+--   AHORA:
+--     · yaw/pitch deseados se calculan directamente (no dependen del frame anterior)
+--     · la cámara se reconstruye con yaw+pitch y roll = 0 (siempre recta)
+--     · si el objetivo está pegado a ti la corrección se desvanece, y el pitch
+--       nunca se calcula con un ángulo vertical imposible
+--     · el seguimiento acelera con el error: en giros rápidos no se queda atrás
+local function wrapAngle(a)
+    return (a + math.pi) % (2 * math.pi) - math.pi
 end
 
--- Se ejecuta DESPUÉS del script de cámara de Roblox (ver startLockSystem).
--- La cámara en 3ª persona ORBITA alrededor de tu personaje (Camera.Focus). Si se
--- gira sobre sí misma, el script la reposiciona en órbita cada frame y aparece
--- un arrastre circular. Por eso la corrección rota la cámara ALREDEDOR DEL MISMO
--- PIVOTE (Focus): la posición y la orientación quedan siempre coherentes con lo
--- que Roblox espera, y el objetivo queda justo donde sale tu disparo:
---   · bajo el cursor (aimAtCursor) o en el centro de pantalla (shift-lock / 1ª persona).
+-- yaw / pitch de un vector (yaw 0 = mirando a -Z, igual que la cámara de Roblox).
+-- minHz > 0 evita que el pitch se dispare a ±90° cuando el objetivo está casi
+-- encima/debajo (distancia horizontal ~0).
+local function dirToAngles(v, minHz)
+    local hz = math.sqrt(v.X * v.X + v.Z * v.Z)
+    return math.atan2(-v.X, -v.Z), math.atan2(v.Y, math.max(hz, minHz or 0))
+end
+
+-- 0 = objetivo pegado a tu pivote (no se toca la cámara), 1 = distancia normal.
+local function nearGain(hz, minHz, fullHz)
+    local t = math.clamp((hz - minHz) / math.max(fullHz - minHz, 1e-3), 0, 1)
+    return t * t * (3 - 2 * t)
+end
+
+-- Calcula el yaw/pitch (SIN roll) que debe tener la cámara para que el objetivo
+-- quede bajo `screenPoint`. Solución cerrada, sin iterar sobre el frame anterior:
+--   · pivote→objetivo expresado en el espacio de la cámara:  u = offset + k·rayo
+--   · se busca la rotación yaw+pitch que lleva `u` a la dirección real pivote→objetivo
+-- Devuelve goalYaw, goalPitch, curYaw, curPitch, offsetLocal  (o nil si no es calculable)
+local function solveAim(cam, pivot, aimPoint, screenPoint, pitchMinHz, maxPitch)
+    local cf     = cam.CFrame
+    local toAim  = aimPoint - pivot
+    local D      = toAim.Magnitude
+    if D < 0.5 then return nil end
+
+    local curYaw, curPitch = dirToAngles(cf.LookVector)
+    local localOff = cf:VectorToObjectSpace(cf.Position - pivot)
+    local lv = cf:VectorToObjectSpace(cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction)
+
+    local b    = lv:Dot(localOff)
+    local disc = b * b - localOff:Dot(localOff) + D * D
+    local u    = localOff + lv * (-b + math.sqrt(math.max(disc, 0)))
+    if u.Magnitude < 1e-3 then return nil end
+    u = u.Unit
+
+    local wYaw, wPitch = dirToAngles(toAim, pitchMinHz)
+
+    -- Pitch: (cos p)·u.Y - (sin p)·u.Z = sin(wPitch)
+    local A, B = u.Y, -u.Z
+    local m = math.sqrt(A * A + B * B)
+    local pitch = curPitch
+    if m > 1e-6 then
+        local base = math.atan2(B, A)
+        local off  = math.acos(math.clamp(math.sin(wPitch) / m, -1, 1))
+        local p1, p2 = wrapAngle(base + off), wrapAngle(base - off)
+        -- de las dos soluciones, la más cercana al pitch actual (evita saltos)
+        pitch = (math.abs(wrapAngle(p1 - curPitch)) <= math.abs(wrapAngle(p2 - curPitch))) and p1 or p2
+    end
+    -- Nunca se manda la cámara más arriba/abajo del límite (evita volteos)
+    local lim = math.max(maxPitch, math.abs(curPitch))
+    pitch = math.clamp(pitch, -lim, lim)
+
+    -- Yaw con el pitch ya definido
+    local alpha = math.atan2(-u.X, -(math.sin(pitch) * u.Y + math.cos(pitch) * u.Z))
+    local yaw   = wrapAngle(wYaw - alpha)
+
+    return yaw, pitch, curYaw, curPitch, localOff
+end
+
+-- Pivote de órbita: Focus (≈ tu cabeza) si es fiable; en 1ª persona o con la
+-- cámara Scriptable se gira la cámara sobre sí misma.
+local function getOrbitPivot(cam, isBadFn)
+    local camPos = cam.CFrame.Position
+    local pivot  = camPos
+    if cam.CameraType ~= Enum.CameraType.Scriptable then
+        local focusPos = cam.Focus.Position
+        if not isBadFn(focusPos) and (focusPos - camPos).Magnitude < 100 then
+            pivot = focusPos
+        end
+    end
+    if (camPos - pivot).Magnitude < 1.5 then pivot = camPos end
+    return pivot
+end
+
+-- Reconstruye la cámara con yaw+pitch y roll = 0 (horizonte siempre recto),
+-- conservando zoom y desplazamiento de hombro (offset local).
+local function applyCameraAngles(cam, pivot, yaw, pitch, localOff)
+    if yaw ~= yaw or pitch ~= pitch then return end
+    local rot = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+    cam.CFrame = CFrame.new(pivot + rot:VectorToWorldSpace(localOff)) * rot
+end
+
 local function updateLockCamera(dt)
     L.aimPoint = nil
     if not L.lockActive or not L.lockedTarget then return end
@@ -672,46 +763,40 @@ local function updateLockCamera(dt)
     if not aimPoint then return end
     L.aimPoint = aimPoint
 
-    if (aimPoint - cam.CFrame.Position).Magnitude < 0.5 then return end
+    dt = math.min(dt or 0.016, 0.1)
 
-    -- Pivote de órbita: el Focus de la cámara (si es fiable); si no, la propia cámara
-    local pivot = cam.CFrame.Position
-    if cam.CameraType ~= Enum.CameraType.Scriptable then
-        local focusPos = cam.Focus.Position
-        if safepos(focusPos) and (focusPos - pivot).Magnitude < 100 then
-            pivot = focusPos
+    local ok = pcall(function()
+        local pivot = getOrbitPivot(cam, function(v) return not safepos(v) end)
+
+        -- Objetivo pegado a ti: no mover la cámara (evita el giro frenético)
+        local toAim = aimPoint - pivot
+        local gain = nearGain(math.sqrt(toAim.X * toAim.X + toAim.Z * toAim.Z), L.nearMinHz, L.nearFullHz)
+        if gain <= 0 then return end
+
+        -- Punto de pantalla por donde sale realmente el disparo
+        local screenPoint
+        if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+            screenPoint = UserInputService:GetMouseLocation()
+        else
+            screenPoint = cam.ViewportSize / 2
         end
-    end
 
-    -- Punto de pantalla por donde sale realmente el disparo
-    local screenPoint
-    if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-        screenPoint = UserInputService:GetMouseLocation()
-    else
-        screenPoint = cam.ViewportSize / 2
-    end
+        local goalYaw, goalPitch, curYaw, curPitch, localOff =
+            solveAim(cam, pivot, aimPoint, screenPoint, L.pitchMinHz, L.maxPitch)
+        if not goalYaw then return end
 
-    local baseAlpha = 1 - math.exp(-L.trackStiffness * dt)
+        local errYaw   = wrapAngle(goalYaw - curYaw)
+        local errPitch = goalPitch - curPitch
+        local err      = math.max(math.abs(errYaw), math.abs(errPitch))
 
-    -- Un paso de corrección; devuelve true si quedó aplicado al 100 %
-    local function step(alpha)
-        local cf     = cam.CFrame
-        local toAim  = aimPoint - cf.Position
-        if toAim.Magnitude < 0.5 then return false end
-        local dir = cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction.Unit
-        local axis, angle = angleBetween(dir, toAim.Unit)
-        if not axis then return true end
-        if angle <= L.snapAngle then alpha = 1 end
-        local rot = CFrame.fromAxisAngle(axis, angle * alpha)
-        -- Rotar posición y orientación alrededor del pivote
-        cam.CFrame = CFrame.new(pivot) * rot * (cf - pivot)
-        return alpha >= 1
-    end
+        -- Rapidez independiente de los FPS que crece con el error
+        local alpha = 1 - math.exp(-(L.trackStiffness + err * L.trackBoost) * dt)
+        if err <= L.snapAngle then alpha = 1 end
+        alpha = alpha * gain
 
-    local ok, exact = pcall(step, baseAlpha)
-    -- Al girar alrededor del pivote cambia la posición de la cámara (paralaje):
-    -- una segunda pasada deja el error en ~0 cuando ya se estaba encima del objetivo
-    if ok and exact then pcall(step, 1) end
+        applyCameraAngles(cam, pivot, curYaw + errYaw * alpha, curPitch + errPitch * alpha, localOff)
+    end)
+    if not ok then return end
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -992,6 +1077,7 @@ function M.SetAimPart(name)           L.aimPart = name end             -- "Head"
 function M.SetAimOffset(v3)           L.aimOffset = v3 or Vector3.zero end
 function M.SetAimAtCursor(enabled)    L.aimAtCursor = enabled == true end
 function M.SetTrackStiffness(n)       L.trackStiffness = math.max(tonumber(n) or 40, 1) end
+function M.SetTrackBoost(n)           L.trackBoost = math.max(tonumber(n) or 60, 0) end
 function M.SetProjectileSpeed(n)      L.projectileSpeed = math.max(tonumber(n) or 0, 0) end
 -- Punto exacto al que apunta la cámara (úsalo para lanzar tus esferas)
 function M.GetAimPoint()              return L.aimPoint end
