@@ -6,6 +6,10 @@ local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 
 local Theme = {
+    -- Versión que se muestra en el badge junto al título.
+    -- Acepta número (8.42) o texto ("8.42"). Se puede cambiar en vivo con Theme.SetVersion("9.10").
+    Version = 8.42,
+
     Accent = Color3.fromRGB(135, 18, 195),
     GlowColor = Color3.fromRGB(140, 22, 215),
     Crimson = Color3.fromRGB(220, 20, 60),
@@ -84,12 +88,33 @@ Theme.Assets = {
     AmbientGlow = "rbxassetid://1868803131",
 }
 
+-- Formatea la versión con dos decimales, salvo cuando termina en 00:
+--   9.00 -> "9.0"   |   9.10 -> "9.10"   |   8.4 -> "8.40"   |   8.42 -> "8.42"
+local function formatVersion(v)
+    local s
+    if type(v) == "number" then
+        s = string.format("%.2f", v)
+    else
+        s = tostring(v or "")
+    end
+    local major, frac = s:match("(%d+)%.?(%d*)")
+    if not major then return "0.0" end
+    frac = (frac .. "00"):sub(1, 2)
+    if frac == "00" then
+        return major .. ".0"
+    end
+    return major .. "." .. frac
+end
+
+Theme.FormatVersion = formatVersion
+
 Theme.BuildDesign = function(Window)
     local Root = Window.Root
     local acrylicFrame = Window.AcrylicPaint.Frame
     local lp = Players.LocalPlayer
     local rand = math.random
     local WHITE = Color3.new(1, 1, 1)
+    local BLACK = Color3.new(0, 0, 0)
 
     -- Paleta (más inclinada a violetas oscuros)
     local DEEP = Color3.fromRGB(70, 10, 115)
@@ -643,7 +668,7 @@ Theme.BuildDesign = function(Window)
     end
 
     ---------------------------------------------------------------------
-    -- 8) TÍTULO (letras justificadas) Y TARJETA DE USUARIO
+    -- 8) TÍTULO (letras justificadas), BADGE DE VERSIÓN Y TARJETA DE USUARIO
     ---------------------------------------------------------------------
     local TITLE = "All For One"
     local TITLE_BASE = Color3.fromRGB(232, 220, 250)
@@ -744,19 +769,97 @@ Theme.BuildDesign = function(Window)
         titleLabel = label
     end
 
-    -- Oculta por completo el badge de versión ("2.0")
-    local function hideBadge(lbl)
+    -- Badge de versión dinámico: fondo negro, texto blanco, número siempre centrado.
+    -- El ancho se ajusta solo al texto y se re-aplica si la UI intenta cambiarlo.
+    local badge = { lbl = nil, box = nil, applying = false }
+
+    local function applyBadge()
+        local lbl, box = badge.lbl, badge.box
+        if not (lbl and box and lbl.Parent and box.Parent) or badge.applying then return end
+        badge.applying = true
+
+        local txt = formatVersion(Theme.Version)
+
+        -- Texto: blanco y centrado
+        lbl.AutomaticSize = Enum.AutomaticSize.None
+        lbl.TextScaled = false
+        lbl.TextWrapped = false
+        lbl.RichText = false
+        if lbl.TextSize < 10 then lbl.TextSize = 12 end
+        lbl.Text = txt
+        lbl.TextColor3 = WHITE
+        lbl.TextTransparency = 0
+        lbl.TextStrokeTransparency = 1
+        lbl.TextXAlignment = Enum.TextXAlignment.Center
+        lbl.TextYAlignment = Enum.TextYAlignment.Center
+
+        -- Fondo: negro sólido (se anula cualquier degradado/relleno verde)
+        box.AutomaticSize = Enum.AutomaticSize.None
+        box.BackgroundColor3 = BLACK
+        box.BackgroundTransparency = 0
+        box.BorderSizePixel = 0
+        for _, ch in ipairs(box:GetChildren()) do
+            if ch:IsA("UIGradient") then
+                ch.Enabled = false
+            elseif ch:IsA("UIPadding") then
+                ch.PaddingLeft, ch.PaddingRight = UDim.new(0, 0), UDim.new(0, 0)
+                ch.PaddingTop, ch.PaddingBottom = UDim.new(0, 0), UDim.new(0, 0)
+            elseif ch:IsA("UIStroke") then
+                ch.Color = Theme.ElementBorder
+            end
+        end
+        if not box:FindFirstChildOfClass("UICorner") then
+            round(box, UDim.new(0, 6))
+        end
+
+        -- Ancho dinámico según el texto (más padding simétrico)
+        local w = TextService:GetTextSize(txt, lbl.TextSize, lbl.Font, Vector2.new(1000, 100)).X + 16
+        local h = math.max(box.AbsoluteSize.Y, lbl.TextSize + 8)
+        box.Size = UDim2.fromOffset(math.ceil(w), math.ceil(h))
+        box.Visible = true
+
+        -- Si el texto vive dentro de un marco, lo anclamos al centro exacto
+        if box ~= lbl then
+            lbl.BackgroundTransparency = 1
+            lbl.AnchorPoint = Vector2.new(0.5, 0.5)
+            lbl.Position = UDim2.fromScale(0.5, 0.5)
+            lbl.Size = UDim2.fromScale(1, 1)
+        end
+
+        badge.applying = false
+    end
+
+    local function setupBadge(lbl)
+        if badge.lbl then
+            -- Ya hay un badge gestionado: cualquier duplicado se oculta
+            lbl:SetAttribute("AFO", true)
+            lbl.Visible = false
+            return
+        end
         lbl:SetAttribute("AFO", true)
-        local target = lbl
+
+        local box = lbl
         local par = lbl.Parent
         if lbl.BackgroundTransparency >= 1 and par and par:IsA("GuiObject") and par ~= Root
             and par.BackgroundTransparency < 1 and par.AbsoluteSize.X < 100 then
-            target = par
+            box = par
         end
-        target.Visible = false
-        target:GetPropertyChangedSignal("Visible"):Connect(function()
-            if target.Visible then target.Visible = false end
-        end)
+        badge.lbl, badge.box = lbl, box
+
+        local function reapply() applyBadge() end
+        lbl:GetPropertyChangedSignal("Text"):Connect(reapply)
+        lbl:GetPropertyChangedSignal("TextColor3"):Connect(reapply)
+        box:GetPropertyChangedSignal("BackgroundColor3"):Connect(reapply)
+        box:GetPropertyChangedSignal("BackgroundTransparency"):Connect(reapply)
+        box:GetPropertyChangedSignal("Visible"):Connect(reapply)
+
+        applyBadge()
+    end
+
+    -- Cambia la versión en vivo: Theme.SetVersion("9.00") -> muestra "9.0"; ("9.10") -> "9.10"
+    Theme.SetVersion = function(v)
+        Theme.Version = v
+        applyBadge()
     end
 
     -- Tarjeta de usuario: arriba nombre visible, abajo @usuario. Oculto: Villain / @******
@@ -810,7 +913,7 @@ Theme.BuildDesign = function(Window)
                     local l = txt:lower()
                     if l:find("all for one", 1, true) or l:find("todo para uno", 1, true) then
                         titleCands[#titleCands + 1] = obj
-                    elseif txt:match("^%s*%(?%s*[vV]?%d+%.%d+%s*%)?%s*$") then
+                    elseif txt:match("^%s*%(?%s*[vV]?%d+%.%d+[%.%d]*%s*%)?%s*$") then
                         badgeCands[#badgeCands + 1] = obj
                     end
                 elseif not bottomCand and not userTop then
@@ -838,8 +941,8 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Badge de versión: se oculta
-        for _, c in ipairs(badgeCands) do hideBadge(c) end
+        -- Badge de versión: estilo negro/blanco, centrado y con versión dinámica
+        for _, c in ipairs(badgeCands) do setupBadge(c) end
 
         -- Tarjeta de usuario
         if bottomCand and not userTop then
