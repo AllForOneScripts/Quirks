@@ -37,13 +37,15 @@ local PLAT_VY_MAX = 60              -- velocidad vertical máxima al guiarte con
 -- AJUSTES EDITABLES (se muestran en el menú y se guardan en archivo)
 -- ==========================================
 local ARCHIVO_CONFIG = "AllForOne/gravattack_config.json"
+-- v2: la tecla del menú pasó a F6. Los archivos v1 guardaban otra (RightShift) y la pisaban.
+local VERSION_CONFIG = 2
 
 local SCHEMA = {
 	{ tipo = "titulo", texto = "TECLAS" },
 	{ tipo = "tecla", id = "Fly",      texto = "Volar (mantener)",         def = Enum.KeyCode.Space },
 	{ tipo = "tecla", id = "Platform", texto = "Caminar en el aire",       def = Enum.KeyCode.C },
 	{ tipo = "tecla", id = "Slam",     texto = "Slam / ZAAASH",            def = Enum.KeyCode.LeftControl },
-	{ tipo = "tecla", id = "Menu",     texto = "Abrir / cerrar este menú", def = Enum.KeyCode.RightShift },
+	{ tipo = "tecla", id = "Menu",     texto = "Abrir / cerrar este menú", def = Enum.KeyCode.F6 },
 
 	{ tipo = "titulo", texto = "CAMINAR EN EL AIRE" },
 	{ tipo = "num",  id = "velocidad",   texto = "Velocidad (aire y vuelo)",  def = 85, min = 20,  max = 250, paso = 5 },
@@ -70,7 +72,7 @@ end
 -- ==========================================
 local _conns = {}
 local _isActive = false
-local _hubKeys = nil   -- tabla Keys del hub (solo se refleja Platform, por compatibilidad)
+local _hubKeys = nil   -- tabla Keys del hub (se reflejan Platform y GravattackMenu)
 
 local isHoldingFly = false
 local isPlatformMode = false
@@ -127,7 +129,7 @@ local function GuardarAhora()
 		return false
 	end
 
-	local data = {}
+	local data = { _v = VERSION_CONFIG }
 	for _, item in ipairs(SCHEMA) do
 		if item.id then
 			local v = _cfg[item.id]
@@ -176,8 +178,11 @@ local function Cargar()
 	local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
 	if not ok2 or type(data) ~= "table" then return cargadas end
 
+	local version = (type(data._v) == "number") and data._v or 1
+
 	for _, item in ipairs(SCHEMA) do
 		local v = item.id and data[item.id]
+		if item.id == "Menu" and version < 2 then v = nil end -- tecla de menú antigua: se descarta
 		if v ~= nil then
 			if item.tipo == "tecla" and type(v) == "string" then
 				local okK, kc = pcall(function() return Enum.KeyCode[v] end)
@@ -201,6 +206,7 @@ end
 local function SincronizarHub()
 	if _hubKeys then
 		_hubKeys.Platform = _cfg.Platform
+		_hubKeys.GravattackMenu = _cfg.Menu
 	end
 end
 
@@ -758,14 +764,456 @@ local function SetupCharacter(newCharacter)
 end
 
 -- ==========================================
--- MENÚ DE AJUSTES
+-- MENÚ DE AJUSTES  (GUI centrada · estilo Operation Phoenix)
 -- ==========================================
-local _menuGui, _menuMain, _estadoLabel
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+
+local _menuGui = nil            -- ScreenGui vivo (nil = menú cerrado)
+local _menuUI = nil             -- referencias del menú abierto (se usan al animar el cierre)
+local _estadoLabel = nil
 local _menuConns = {}
 local _refrescadores = {}
 local _capturando = nil
-local _ultimaCaptura = 0
+local _ultimaCaptura = -10      -- os.clock() de la última captura de tecla (-10 = ninguna)
+local _menuEstado = "cerrado"   -- cerrado | abriendo | abierto | cerrando
+local _menuPendiente = nil      -- "abrir" | "cerrar": se pidió algo mientras animaba
+local _menuToken = 0            -- invalida animaciones/tareas de un menú que ya se destruyó
 
+local DestruirMenu, ConstruirMenu, CerrarMenuAnimado, AbrirMenu
+
+-- ------------------------------------------
+-- Primitivas neón (mismo lenguaje visual que Operation Phoenix)
+-- ------------------------------------------
+local UI = {}
+
+do
+	local C = {
+		NEGRO = Color3.fromRGB(10, 6, 18),
+		MORADO = Color3.fromRGB(155, 48, 255),
+		MORADO_BRILLO = Color3.fromRGB(200, 100, 255),
+		MORADO_OSC = Color3.fromRGB(52, 18, 92),
+		VERDE = Color3.fromRGB(0, 255, 120),
+		VERDE_OSC = Color3.fromRGB(4, 62, 34),
+		ROJO = Color3.fromRGB(255, 45, 110),
+		ROJO_OSC = Color3.fromRGB(74, 8, 30),
+		CIAN = Color3.fromRGB(70, 230, 255),   -- solo para el glitch
+		TEXTO = Color3.fromRGB(240, 235, 255),
+		FANTASMA = Color3.fromRGB(150, 125, 200),
+		AMBAR = Color3.fromRGB(255, 190, 90),
+	}
+
+	local FONT_TITLE = Enum.Font.Michroma
+	local FONT_MONO = Enum.Font.Code
+	local GLYPHS = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#%&/<>"
+	local BG_REST = Color3.fromRGB(190, 190, 190)
+
+	UI.C = C
+	UI.FONT_TITLE = FONT_TITLE
+	UI.FONT_MONO = FONT_MONO
+	UI.GUI_NAME = "GravattackMenu"
+	UI.MOUSE_BIND = "GravattackMenuMouse"
+
+	-- Contenedor transparente a tamaño completo
+	local function makeGroup(parent, z)
+		local g = Instance.new("Frame")
+		g.Size = UDim2.fromScale(1, 1)
+		g.BackgroundTransparency = 1
+		g.BorderSizePixel = 0
+		g.ZIndex = z
+		g.Parent = parent
+		return g
+	end
+	UI.makeGroup = makeGroup
+
+	-- Segmento neón entre dos puntos (núcleo brillante + 2 halos)
+	local function neonSeg(parent, x1, y1, x2, y2, color, thick, z, bag)
+		local dx, dy = x2 - x1, y2 - y1
+		local len = math.sqrt(dx * dx + dy * dy)
+		local ang = math.deg(math.atan2(dy, dx))
+		local cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+
+		local function make(t, transp, zi, round)
+			local f = Instance.new("Frame")
+			f.AnchorPoint = Vector2.new(0.5, 0.5)
+			f.Position = UDim2.fromOffset(cx, cy)
+			f.Size = UDim2.fromOffset(len + (round and t * 0.5 or 0), t)
+			f.Rotation = ang
+			f.BackgroundColor3 = color
+			f.BackgroundTransparency = transp
+			f.BorderSizePixel = 0
+			f.ZIndex = zi
+			if round then
+				local u = Instance.new("UICorner")
+				u.CornerRadius = UDim.new(0.5, 0)
+				u.Parent = f
+			end
+			f.Parent = parent
+			return f
+		end
+
+		make(thick * 5, 0.9, z, true)
+		make(thick * 2.6, 0.75, z, true)
+		local core = make(thick, 0, z + 1, false)
+		if bag then table.insert(bag, core) end
+		return core
+	end
+	UI.neonSeg = neonSeg
+
+	-- Nodo en forma de rombo (terminal de circuito)
+	local function neonDot(parent, x, y, color, z)
+		local function make(size, transp, zi)
+			local f = Instance.new("Frame")
+			f.AnchorPoint = Vector2.new(0.5, 0.5)
+			f.Position = UDim2.fromOffset(x, y)
+			f.Size = UDim2.fromOffset(size, size)
+			f.Rotation = 45
+			f.BackgroundColor3 = color
+			f.BackgroundTransparency = transp
+			f.BorderSizePixel = 0
+			f.ZIndex = zi
+			f.Parent = parent
+		end
+		make(12, 0.8, z)
+		make(5, 0, z + 1)
+	end
+	UI.neonDot = neonDot
+
+	-- Línea horizontal que se desvanece en los extremos. Devuelve (halo, núcleo).
+	local function fadeLine(parent, x, y, w, color, thick, z)
+		local function make(t, peak, zi)
+			local f = Instance.new("Frame")
+			f.Position = UDim2.fromOffset(x, y - t / 2)
+			f.Size = UDim2.fromOffset(w, t)
+			f.BackgroundColor3 = color
+			f.BackgroundTransparency = 0
+			f.BorderSizePixel = 0
+			f.ZIndex = zi
+			local g = Instance.new("UIGradient")
+			g.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.2, peak),
+				NumberSequenceKeypoint.new(0.8, peak),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			g.Parent = f
+			f.Parent = parent
+			return f
+		end
+		local glow = make(thick * 4, 0.82, z)
+		local core = make(thick, 0, z + 1)
+		return glow, core
+	end
+	UI.fadeLine = fadeLine
+
+	-- Chevron « o » (dir = -1 apunta a la izquierda, 1 a la derecha)
+	local function chevron(parent, tipX, cy, s, dir, color, z)
+		local ex = tipX - dir * s
+		neonSeg(parent, tipX, cy, ex, cy - s, color, 1.6, z)
+		neonSeg(parent, tipX, cy, ex, cy + s, color, 1.6, z)
+	end
+
+	-- Cristal oscuro: translúcido en el centro y se disuelve hacia los lados
+	function UI.crystalPlate(parent, z)
+		local plate = Instance.new("Frame")
+		plate.Size = UDim2.fromScale(1, 1)
+		plate.BackgroundColor3 = Color3.new(1, 1, 1)
+		plate.BorderSizePixel = 0
+		plate.ZIndex = z
+		plate.Parent = parent
+		local grad = Instance.new("UIGradient")
+		grad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(34, 14, 58)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(12, 6, 24)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(34, 14, 58)),
+		})
+		grad.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.1, 0.78),
+			NumberSequenceKeypoint.new(0.5, 0.5),
+			NumberSequenceKeypoint.new(0.9, 0.78),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		grad.Parent = plate
+		return plate
+	end
+
+	-- Parpadeo digital al aparecer / desaparecer un objeto
+	function UI.flickerIn(obj, delay)
+		task.spawn(function()
+			task.wait(delay or 0)
+			for _, v in ipairs({ true, false, true, false, true }) do
+				if not obj.Parent then return end
+				obj.Visible = v
+				task.wait(0.045)
+			end
+		end)
+	end
+
+	function UI.flickerOut(obj, delay)
+		task.spawn(function()
+			task.wait(delay or 0)
+			for _, v in ipairs({ false, true, false, true, false }) do
+				if not obj.Parent then return end
+				obj.Visible = v
+				task.wait(0.045)
+			end
+		end)
+	end
+
+	-- Texto que se "decodifica" desde caracteres aleatorios (o se corrompe si reverse = true)
+	function UI.scramble(label, finalText, duration, reverse)
+		local steps = 14
+		for i = 0, steps do
+			if not label.Parent then return end
+			local reveal = reverse and (1 - i / steps) or (i / steps)
+			local n = math.floor(#finalText * reveal)
+			local out = {}
+			for k = 1, #finalText do
+				local ch = finalText:sub(k, k)
+				if ch == " " or k <= n then
+					out[k] = ch
+				else
+					local r = math.random(1, #GLYPHS)
+					out[k] = GLYPHS:sub(r, r)
+				end
+			end
+			label.Text = table.concat(out)
+			task.wait(duration / steps)
+		end
+		if not reverse and label.Parent then label.Text = finalText end
+	end
+
+	-- Botón neón: hover, brillo que cruza, rebote y flash al click.
+	-- Devuelve un objeto { holder, btn, setText(t), setColor(c) }.
+	-- o.font / o.size = tipografía; o.chevrons = true dibuja los chevrones laterales.
+	function UI.neonButton(parent, anchor, pos, w, h, label, color, dimColor, onClick, o)
+		o = o or {}
+
+		local slot = Instance.new("Frame")
+		slot.AnchorPoint = anchor
+		slot.Position = pos
+		slot.Size = UDim2.fromOffset(w, h)
+		slot.BackgroundTransparency = 1
+		slot.BorderSizePixel = 0
+		slot.ZIndex = 5
+		slot.Parent = parent
+
+		local holder = Instance.new("Frame")
+		holder.AnchorPoint = Vector2.new(0.5, 0.5)
+		holder.Position = UDim2.fromScale(0.5, 0.5)
+		holder.Size = UDim2.fromOffset(w, h)
+		holder.BackgroundTransparency = 1
+		holder.BorderSizePixel = 0
+		holder.ZIndex = 5
+		holder.Parent = slot
+
+		local scale = Instance.new("UIScale")
+		scale.Parent = holder
+
+		local bg = Instance.new("Frame")
+		bg.Size = UDim2.fromScale(1, 1)
+		bg.BackgroundColor3 = BG_REST
+		bg.BackgroundTransparency = 0
+		bg.BorderSizePixel = 0
+		bg.ZIndex = 5
+		bg.Parent = holder
+		local grad = Instance.new("UIGradient")
+		grad.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.82),
+			NumberSequenceKeypoint.new(0.5, 0.55),
+			NumberSequenceKeypoint.new(1, 0.82),
+		})
+		grad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, dimColor),
+			ColorSequenceKeypoint.new(0.5, C.NEGRO),
+			ColorSequenceKeypoint.new(1, dimColor),
+		})
+		grad.Parent = bg
+
+		fadeLine(holder, 0, 1, w, color, 1.4, 6)
+		fadeLine(holder, 0, h - 1, w, color, 1.4, 6)
+
+		local hoverL, hoverR
+		if o.chevrons then
+			hoverL, hoverR = makeGroup(holder, 7), makeGroup(holder, 7)
+			local s = math.floor(h * 0.2)
+			local cy = h / 2
+			for i = 0, 1 do
+				chevron(hoverL, 10 + i * 9, cy, s, -1, color, 7)
+				chevron(hoverR, w - 10 - i * 9, cy, s, 1, color, 7)
+			end
+		end
+
+		-- Capa recortada para brillo y flash
+		local clip = Instance.new("Frame")
+		clip.Size = UDim2.fromScale(1, 1)
+		clip.BackgroundTransparency = 1
+		clip.ClipsDescendants = true
+		clip.ZIndex = 9
+		clip.Parent = holder
+
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.fromScale(1, 1)
+		btn.BackgroundTransparency = 1
+		btn.AutoButtonColor = false
+		btn.Font = o.font or FONT_TITLE
+		btn.Text = label
+		btn.TextColor3 = color
+		btn.TextSize = o.size or 11
+		btn.ZIndex = 20
+		btn.Parent = holder
+
+		local textGlow = Instance.new("UIStroke")
+		textGlow.Color = color
+		textGlow.Thickness = 1.4
+		textGlow.Transparency = 0.72
+		textGlow.Parent = btn
+
+		local hovered = false
+		local bright = color:Lerp(Color3.new(1, 1, 1), 0.4)
+		local tint = color:Lerp(Color3.new(1, 1, 1), 0.5)
+
+		local function shine()
+			local bar = Instance.new("Frame")
+			bar.Size = UDim2.new(0, 22, 1, 0)
+			bar.Position = UDim2.new(0, -30, 0, 0)
+			bar.BackgroundColor3 = tint
+			bar.BorderSizePixel = 0
+			bar.ZIndex = 9
+			local g = Instance.new("UIGradient")
+			g.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.5, 0.55),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			g.Parent = bar
+			bar.Parent = clip
+			TweenService:Create(bar, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Position = UDim2.new(0, w + 10, 0, 0) }):Play()
+			Debris:AddItem(bar, 0.45)
+		end
+
+		local function flash()
+			local f = Instance.new("Frame")
+			f.Size = UDim2.fromScale(1, 1)
+			f.BackgroundColor3 = tint
+			f.BackgroundTransparency = 0.2
+			f.BorderSizePixel = 0
+			f.ZIndex = 9
+			f.Parent = clip
+			TweenService:Create(f, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
+			Debris:AddItem(f, 0.4)
+		end
+
+		local function setScale(v, t, style, dir)
+			TweenService:Create(scale, TweenInfo.new(t, style, dir), { Scale = v }):Play()
+		end
+
+		local function setChevronShift(x, t, style)
+			if not hoverL then return end
+			local info = TweenInfo.new(t, style, Enum.EasingDirection.Out)
+			TweenService:Create(hoverL, info, { Position = UDim2.fromOffset(x, 0) }):Play()
+			TweenService:Create(hoverR, info, { Position = UDim2.fromOffset(-x, 0) }):Play()
+		end
+
+		btn.MouseEnter:Connect(function()
+			hovered = true
+			TweenService:Create(bg, TweenInfo.new(0.2), { BackgroundColor3 = Color3.new(1, 1, 1) }):Play()
+			TweenService:Create(textGlow, TweenInfo.new(0.2), { Transparency = 0.3 }):Play()
+			TweenService:Create(btn, TweenInfo.new(0.2), { TextColor3 = bright }):Play()
+			setScale(1.06, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+			setChevronShift(5, 0.25, Enum.EasingStyle.Back)
+			shine()
+		end)
+		btn.MouseLeave:Connect(function()
+			hovered = false
+			TweenService:Create(bg, TweenInfo.new(0.2), { BackgroundColor3 = BG_REST }):Play()
+			TweenService:Create(textGlow, TweenInfo.new(0.2), { Transparency = 0.72 }):Play()
+			TweenService:Create(btn, TweenInfo.new(0.2), { TextColor3 = color }):Play()
+			setScale(1, 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			setChevronShift(0, 0.2, Enum.EasingStyle.Quad)
+		end)
+		btn.MouseButton1Down:Connect(function()
+			setScale(0.93, 0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			setChevronShift(9, 0.07, Enum.EasingStyle.Quad)
+			TweenService:Create(textGlow, TweenInfo.new(0.07), { Transparency = 0.05 }):Play()
+		end)
+		btn.MouseButton1Up:Connect(function()
+			setScale(hovered and 1.06 or 1, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+			setChevronShift(hovered and 5 or 0, 0.25, Enum.EasingStyle.Back)
+		end)
+		btn.MouseButton1Click:Connect(function()
+			flash()
+			onClick()
+		end)
+
+		local obj = { holder = slot, btn = btn }
+
+		function obj.setText(t)
+			btn.Text = t
+		end
+
+		function obj.setColor(c)
+			color = c
+			bright = c:Lerp(Color3.new(1, 1, 1), 0.4)
+			tint = c:Lerp(Color3.new(1, 1, 1), 0.5)
+			btn.TextColor3 = hovered and bright or c
+			textGlow.Color = c
+		end
+
+		return obj
+	end
+
+	-- Coloca la GUI donde se pueda: gethui > CoreGui > PlayerGui
+	function UI.montarGui(gui)
+		if type(gethui) == "function" then
+			local ok, h = pcall(gethui)
+			if ok and h then
+				local ok2 = pcall(function() gui.Parent = h end)
+				if ok2 and gui.Parent then return true end
+			end
+		end
+
+		local ok3 = pcall(function() gui.Parent = game:GetService("CoreGui") end)
+		if ok3 and gui.Parent then return true end
+
+		local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+		if pg then
+			gui.Parent = pg
+			return gui.Parent ~= nil
+		end
+
+		return false
+	end
+
+	-- Borra copias huérfanas (de una carga anterior del script) en todos los sitios posibles
+	function UI.limpiarHuerfanos()
+		local raices = {}
+
+		if type(gethui) == "function" then
+			local ok, h = pcall(gethui)
+			if ok and h then table.insert(raices, h) end
+		end
+
+		pcall(function() table.insert(raices, game:GetService("CoreGui")) end)
+
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then table.insert(raices, pg) end
+
+		for _, raiz in ipairs(raices) do
+			pcall(function()
+				for _, hijo in ipairs(raiz:GetChildren()) do
+					if hijo.Name == UI.GUI_NAME then hijo:Destroy() end
+				end
+			end)
+		end
+	end
+end
+
+-- ------------------------------------------
+-- Lógica del menú (teclas, captura, estado)
+-- ------------------------------------------
 local function RefrescarMenu()
 	for _, f in ipairs(_refrescadores) do
 		pcall(f)
@@ -780,9 +1228,13 @@ local function CancelarCaptura()
 	_capturando = nil
 
 	if c.conn then c.conn:Disconnect() end
-	if c.boton and c.boton.Parent then
-		c.boton.Text = _cfg[c.id].Name
-	end
+
+	pcall(function()
+		c.b.setText(_cfg[c.id].Name)
+		c.b.setColor(UI.C.MORADO_BRILLO)
+	end)
+
+	ActualizarEstadoMenu()
 end
 
 local function AsignarTecla(id, kc)
@@ -802,10 +1254,11 @@ local function AsignarTecla(id, kc)
 	GuardarConRetardo()
 end
 
-local function IniciarCaptura(id, boton)
+local function IniciarCaptura(id, b)
 	CancelarCaptura()
 
-	boton.Text = "Pulsa una tecla..."
+	b.setText("PULSA UNA TECLA")
+	b.setColor(UI.C.VERDE)
 
 	local conn
 	conn = UserInputService.InputBegan:Connect(function(input)
@@ -821,158 +1274,282 @@ local function IniciarCaptura(id, boton)
 		CancelarCaptura()
 	end)
 
-	_capturando = { id = id, boton = boton, conn = conn }
+	_capturando = { id = id, b = b, conn = conn }
+	ActualizarEstadoMenu()
 end
 
 ActualizarEstadoMenu = function()
 	if not _estadoLabel or not _estadoLabel.Parent then return end
 
-	if _guardadoOk == true then
+	if _capturando then
+		_estadoLabel.Text = "PULSA LA NUEVA TECLA  //  ESC CANCELA"
+		_estadoLabel.TextColor3 = UI.C.VERDE
+	elseif _guardadoOk == true then
 		_estadoLabel.Text = "Guardado en " .. ARCHIVO_CONFIG
-		_estadoLabel.TextColor3 = Color3.fromRGB(120, 220, 140)
+		_estadoLabel.TextColor3 = UI.C.VERDE
 	elseif _guardadoOk == false then
 		_estadoLabel.Text = "No se pudo guardar (el ejecutor no tiene writefile)"
-		_estadoLabel.TextColor3 = Color3.fromRGB(240, 190, 90)
+		_estadoLabel.TextColor3 = UI.C.AMBAR
 	else
 		_estadoLabel.Text = "Los cambios se guardan solos"
-		_estadoLabel.TextColor3 = Color3.fromRGB(150, 158, 180)
+		_estadoLabel.TextColor3 = UI.C.FANTASMA
 	end
 end
 
-local function DestruirMenu()
+DestruirMenu = function()
+	_menuToken += 1
+
 	CancelarCaptura()
 
 	for _, c in ipairs(_menuConns) do
-		if c.Disconnect then c:Disconnect() end
+		pcall(function() c:Disconnect() end)
 	end
 	table.clear(_menuConns)
 	table.clear(_refrescadores)
 
 	if _menuGui then
-		_menuGui:Destroy()
+		pcall(function() _menuGui:Destroy() end)
 	end
 
-	_menuGui, _menuMain, _estadoLabel = nil, nil, nil
+	_menuGui, _menuUI, _estadoLabel = nil, nil, nil
+	_menuEstado = "cerrado"
+	_menuPendiente = nil
+
+	UI.limpiarHuerfanos()
 end
 
-local function AbrirMenu(visible)
-	if not _menuMain then return end
+-- ------------------------------------------
+-- Construcción de la GUI
+-- ------------------------------------------
+ConstruirMenu = function()
+	DestruirMenu()
 
-	if visible == nil then
-		visible = not _menuMain.Visible
-	end
+	local token = _menuToken
+	_menuEstado = "abriendo"
 
-	_menuMain.Visible = visible
+	local C = UI.C
+	local FONT_TITLE, FONT_MONO = UI.FONT_TITLE, UI.FONT_MONO
 
-	if not visible then
-		CancelarCaptura()
-	else
-		RefrescarMenu()
-	end
-end
-
-local function CrearMenu()
-	if _menuGui then return end
+	local W, H = 420, 540
+	local LISTA_Y, PIE_H = 72, 62
+	local TITULO = "GRAVATTACK"
+	local TITULO_POS = UDim2.fromOffset(20, 14)
 
 	local gui = Instance.new("ScreenGui")
-	gui.Name = "GravattackMenu"
+	gui.Name = UI.GUI_NAME
 	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true           -- centro real de la pantalla
 	gui.DisplayOrder = 1000
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-	local parentado = false
-
-	if type(gethui) == "function" then
-		parentado = pcall(function() gui.Parent = gethui() end) and gui.Parent ~= nil
-	end
-
-	if not parentado then
-		parentado = pcall(function() gui.Parent = game:GetService("CoreGui") end) and gui.Parent ~= nil
-	end
-
-	if not parentado then
-		gui.Parent = player:WaitForChild("PlayerGui")
+	if not UI.montarGui(gui) then
+		gui:Destroy()
+		error("no hay dónde colocar la GUI (gethui / CoreGui / PlayerGui)")
 	end
 
 	_menuGui = gui
 
-	local function redondear(obj, radio)
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, radio)
-		c.Parent = obj
+	local function vivo()
+		return token == _menuToken and gui.Parent ~= nil
 	end
 
-	local main = Instance.new("Frame")
-	main.Name = "Main"
-	main.Size = UDim2.fromOffset(360, 480)
-	main.Position = UDim2.new(0.5, -180, 0.5, -240)
-	main.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
-	main.BorderSizePixel = 0
-	main.Active = true
-	main.Visible = false
-	main.Parent = gui
-	redondear(main, 10)
-	_menuMain = main
+	-- Mientras el menú está abierto, el cursor queda libre (primera persona / shift lock)
+	local iconoPrevio = UserInputService.MouseIconEnabled
+	pcall(function()
+		RunService:BindToRenderStep(UI.MOUSE_BIND, Enum.RenderPriority.Last.Value, function()
+			if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+			if not UserInputService.MouseIconEnabled then
+				UserInputService.MouseIconEnabled = true
+			end
+		end)
+	end)
+	table.insert(_menuConns, {
+		Disconnect = function()
+			pcall(function() RunService:UnbindFromRenderStep(UI.MOUSE_BIND) end)
+			pcall(function() UserInputService.MouseIconEnabled = iconoPrevio end)
+		end,
+	})
 
-	local borde = Instance.new("UIStroke")
-	borde.Color = Color3.fromRGB(90, 140, 255)
-	borde.Thickness = 1.5
-	borde.Transparency = 0.3
-	borde.Parent = main
+	-- "clipper": revela el panel con un barrido de línea (centrado en pantalla)
+	local clipper = Instance.new("Frame")
+	clipper.Name = "MainFrame"
+	clipper.AnchorPoint = Vector2.new(0.5, 0.5)
+	clipper.Position = UDim2.fromScale(0.5, 0.5)
+	clipper.Size = UDim2.fromOffset(0, 2)
+	clipper.BackgroundTransparency = 1
+	clipper.BorderSizePixel = 0
+	clipper.ClipsDescendants = true
+	clipper.ZIndex = 2
+	clipper.Parent = gui
 
-	-- Barra de título (arrastrable)
-	local titulo = Instance.new("Frame")
-	titulo.Name = "Titulo"
-	titulo.Size = UDim2.new(1, 0, 0, 36)
-	titulo.BackgroundColor3 = Color3.fromRGB(26, 30, 44)
-	titulo.BorderSizePixel = 0
-	titulo.Parent = main
-	redondear(titulo, 10)
+	-- Si la pantalla es pequeña, el panel se reduce para caber
+	local escala = Instance.new("UIScale")
+	escala.Parent = clipper
 
-	local tl = Instance.new("TextLabel")
-	tl.BackgroundTransparency = 1
-	tl.Position = UDim2.fromOffset(12, 0)
-	tl.Size = UDim2.new(1, -56, 1, 0)
-	tl.Font = Enum.Font.GothamBold
-	tl.TextSize = 14
-	tl.TextColor3 = Color3.fromRGB(235, 240, 255)
-	tl.TextXAlignment = Enum.TextXAlignment.Left
-	tl.Text = "GRAVATTACK  ·  Ajustes"
-	tl.Parent = titulo
+	local function ajustarEscala()
+		local cam = workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+		escala.Scale = math.clamp(math.min((vp.X - 24) / W, (vp.Y - 24) / H), 0.4, 1)
+	end
+	ajustarEscala()
 
-	local cerrar = Instance.new("TextButton")
-	cerrar.Size = UDim2.fromOffset(28, 28)
-	cerrar.Position = UDim2.new(1, -32, 0, 4)
-	cerrar.BackgroundColor3 = Color3.fromRGB(60, 36, 44)
-	cerrar.BorderSizePixel = 0
-	cerrar.Font = Enum.Font.GothamBold
-	cerrar.TextSize = 13
-	cerrar.TextColor3 = Color3.fromRGB(255, 190, 190)
-	cerrar.Text = "X"
-	cerrar.AutoButtonColor = true
-	cerrar.Modal = true -- libera el mouse si estás en primera persona / shift lock
-	cerrar.Parent = titulo
-	redondear(cerrar, 6)
-	cerrar.MouseButton1Click:Connect(function() AbrirMenu(false) end)
+	if workspace.CurrentCamera then
+		table.insert(_menuConns, workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(ajustarEscala))
+	end
+
+	-- "content": tamaño fijo, centrado; todo el diseño vive aquí
+	local content = Instance.new("Frame")
+	content.Name = "Content"
+	content.AnchorPoint = Vector2.new(0.5, 0.5)
+	content.Position = UDim2.fromScale(0.5, 0.5)
+	content.Size = UDim2.fromOffset(W, H)
+	content.BackgroundTransparency = 1
+	content.BorderSizePixel = 0
+	content.ZIndex = 2
+	content.Parent = clipper
+
+	-- Línea de escaneo (aparece/desaparece con el panel)
+	local scanGlow = Instance.new("Frame")
+	scanGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+	scanGlow.Position = UDim2.fromScale(0.5, 0.5)
+	scanGlow.Size = UDim2.new(1, 0, 0, 7)
+	scanGlow.BackgroundColor3 = C.MORADO_BRILLO
+	scanGlow.BackgroundTransparency = 0.6
+	scanGlow.BorderSizePixel = 0
+	scanGlow.ZIndex = 29
+	scanGlow.Parent = clipper
+
+	local scanCore = Instance.new("Frame")
+	scanCore.AnchorPoint = Vector2.new(0.5, 0.5)
+	scanCore.Position = UDim2.fromScale(0.5, 0.5)
+	scanCore.Size = UDim2.new(1, 0, 0, 2)
+	scanCore.BackgroundColor3 = Color3.fromRGB(245, 235, 255)
+	scanCore.BackgroundTransparency = 0
+	scanCore.BorderSizePixel = 0
+	scanCore.ZIndex = 30
+	scanCore.Parent = clipper
+
+	-- Cristal oscuro
+	local plate = UI.crystalPlate(content, 2)
+	plate.Name = "Plate"
+
+	-- Barrido de luz periódico
+	local sweep = Instance.new("Frame")
+	sweep.Name = "Sweep"
+	sweep.Size = UDim2.fromOffset(40, H - 16)
+	sweep.Position = UDim2.fromOffset(20, 8)
+	sweep.BackgroundColor3 = C.MORADO_BRILLO
+	sweep.BackgroundTransparency = 1
+	sweep.BorderSizePixel = 0
+	sweep.ZIndex = 2
+	sweep.Parent = content
+	local sweepGrad = Instance.new("UIGradient")
+	sweepGrad.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.5, 0.82),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	sweepGrad.Parent = sweep
+
+	-- Marco geométrico: trazos con escalón y diagonales, simétrico por punto (180°)
+	local pulseBag = {}
+	local function drawPath(pts, flipped, withDot)
+		local p = {}
+		for i, v in ipairs(pts) do
+			p[i] = flipped and { W - v[1], H - v[2] } or { v[1], v[2] }
+		end
+		for i = 1, #p - 1 do
+			UI.neonSeg(content, p[i][1], p[i][2], p[i + 1][1], p[i + 1][2], C.MORADO, 1.8, 3, pulseBag)
+		end
+		if withDot then
+			UI.neonDot(content, p[#p][1], p[#p][2], C.MORADO_BRILLO, 3)
+		end
+	end
+
+	local pathA = { { 6, 30 }, { 6, 14 }, { 18, 2 }, { 100, 2 } }
+	local slash1 = { { 105, 10 }, { 113, 2 } }
+	local slash2 = { { 113, 10 }, { 121, 2 } }
+	local pathB = { { W - 6, 30 }, { W - 6, 14 }, { W - 18, 2 }, { W - 80, 2 }, { W - 88, 10 }, { W - 140, 10 } }
+
+	for _, flipped in ipairs({ false, true }) do
+		drawPath(pathA, flipped, true)
+		drawPath(slash1, flipped, false)
+		drawPath(slash2, flipped, false)
+		drawPath(pathB, flipped, true)
+	end
+
+	-- Título + subtítulo (muestra la tecla actual del menú)
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Size = UDim2.new(1, -40, 0, 24)
+	titleLabel.Position = TITULO_POS
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Font = FONT_TITLE
+	titleLabel.Text = ""
+	titleLabel.TextColor3 = C.TEXTO
+	titleLabel.TextSize = 18
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+	titleLabel.ZIndex = 10
+	titleLabel.Parent = content
+
+	local titleGlow = Instance.new("UIStroke")
+	titleGlow.Color = C.MORADO
+	titleGlow.Thickness = 2
+	titleGlow.Transparency = 0.5
+	titleGlow.Parent = titleLabel
+
+	local subtitulo = Instance.new("TextLabel")
+	subtitulo.Size = UDim2.new(1, -40, 0, 14)
+	subtitulo.Position = UDim2.fromOffset(20, 42)
+	subtitulo.BackgroundTransparency = 1
+	subtitulo.Font = FONT_MONO
+	subtitulo.TextSize = 11
+	subtitulo.TextColor3 = C.FANTASMA
+	subtitulo.TextXAlignment = Enum.TextXAlignment.Center
+	subtitulo.ZIndex = 10
+	subtitulo.Parent = content
+
+	local function pintarSubtitulo()
+		subtitulo.Text = "AJUSTES  //  [" .. string.upper(_cfg.Menu.Name) .. "] ABRE / CIERRA"
+	end
+	pintarSubtitulo()
+	table.insert(_refrescadores, pintarSubtitulo)
+
+	UI.fadeLine(content, 20, 64, W - 40, C.MORADO, 1.2, 4)
+
+	-- Asa de arrastre (la barra del título mueve el panel)
+	local asa = Instance.new("TextButton")
+	asa.Name = "Asa"
+	asa.Size = UDim2.fromOffset(W - 70, 62)
+	asa.Position = UDim2.fromOffset(0, 0)
+	asa.BackgroundTransparency = 1
+	asa.AutoButtonColor = false
+	asa.Text = ""
+	asa.ZIndex = 8
+	asa.Parent = content
 
 	local arrastrando = false
-	local desfase = Vector2.zero
+	local inicioArrastre = Vector3.new(0, 0, 0)
+	local posInicial = clipper.Position
 
-	titulo.InputBegan:Connect(function(input)
+	asa.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			arrastrando = true
-			desfase = Vector2.new(input.Position.X, input.Position.Y)
-				- Vector2.new(main.AbsolutePosition.X, main.AbsolutePosition.Y)
+			inicioArrastre = input.Position
+			posInicial = clipper.Position
 		end
 	end)
 
 	table.insert(_menuConns, UserInputService.InputChanged:Connect(function(input)
 		if arrastrando and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
-			main.Position = UDim2.fromOffset(
-				math.max(0, input.Position.X - desfase.X),
-				math.max(0, input.Position.Y - desfase.Y)
+			local d = input.Position - inicioArrastre
+			local k = escala.Scale
+			clipper.Position = UDim2.new(
+				posInicial.X.Scale, posInicial.X.Offset + d.X / k,
+				posInicial.Y.Scale, posInicial.Y.Offset + d.Y / k
 			)
 		end
 	end))
@@ -984,121 +1561,153 @@ local function CrearMenu()
 		end
 	end))
 
-	local pista = Instance.new("TextLabel")
-	pista.BackgroundTransparency = 1
-	pista.Position = UDim2.fromOffset(12, 40)
-	pista.Size = UDim2.new(1, -24, 0, 26)
-	pista.Font = Enum.Font.Gotham
-	pista.TextSize = 11
-	pista.TextWrapped = true
-	pista.TextXAlignment = Enum.TextXAlignment.Left
-	pista.TextColor3 = Color3.fromRGB(150, 158, 180)
-	pista.Text = "Clic en una tecla y pulsa la nueva (Esc cancela). Si repites una, se intercambian."
-	pista.Parent = main
+	-- Botón de cerrar (esquina superior derecha)
+	local cerrarBtn = UI.neonButton(content, Vector2.new(1, 0), UDim2.fromOffset(W - 22, 14), 26, 22, "X",
+		C.ROJO, C.ROJO_OSC, function() AbrirMenu(false) end, { font = FONT_TITLE, size = 10 })
+	cerrarBtn.holder.Visible = false
 
-	-- Lista con scroll
+	-- ------------------------------------------------------
+	-- Lista con scroll (filas del SCHEMA)
+	-- ------------------------------------------------------
 	local lista = Instance.new("ScrollingFrame")
-	lista.Position = UDim2.fromOffset(8, 70)
-	lista.Size = UDim2.new(1, -16, 1, -70 - 46)
+	lista.Name = "Lista"
+	lista.Position = UDim2.fromOffset(16, LISTA_Y)
+	lista.Size = UDim2.fromOffset(W - 32, H - LISTA_Y - PIE_H)
 	lista.BackgroundTransparency = 1
 	lista.BorderSizePixel = 0
-	lista.ScrollBarThickness = 4
+	lista.ScrollBarThickness = 3
+	lista.ScrollBarImageColor3 = C.MORADO_BRILLO
+	lista.ScrollBarImageTransparency = 0.2
+	lista.ScrollingDirection = Enum.ScrollingDirection.Y
+	lista.ElasticBehavior = Enum.ElasticBehavior.Never
 	lista.CanvasSize = UDim2.new(0, 0, 0, 0)
 	lista.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	lista.Parent = main
+	lista.ZIndex = 10
+	lista.Visible = false               -- se revela con parpadeo al terminar el barrido
+	lista.Parent = content
 
 	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 4)
+	layout.Padding = UDim.new(0, 5)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = lista
 
+	local relleno = Instance.new("UIPadding")
+	relleno.PaddingTop = UDim.new(0, 2)
+	relleno.PaddingBottom = UDim.new(0, 8)
+	relleno.PaddingRight = UDim.new(0, 8)
+	relleno.Parent = lista
+
+	local ANCHO_FILA = W - 32 - 8        -- ancho útil de una fila
 	local orden = 0
 
-	local function nuevaFila(altura)
+	local function nuevaFila(alto)
 		orden += 1
 		local f = Instance.new("Frame")
-		f.Size = UDim2.new(1, -8, 0, altura)
-		f.BackgroundColor3 = Color3.fromRGB(28, 32, 46)
+		f.Size = UDim2.new(1, 0, 0, alto)
+		f.BackgroundColor3 = Color3.new(1, 1, 1)
+		f.BackgroundTransparency = 0
 		f.BorderSizePixel = 0
 		f.LayoutOrder = orden
+		f.ZIndex = 2
 		f.Parent = lista
-		redondear(f, 6)
+
+		local g = Instance.new("UIGradient")
+		g.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(52, 22, 92)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 8, 30)),
+		})
+		g.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.45),
+			NumberSequenceKeypoint.new(1, 0.88),
+		})
+		g.Parent = f
+
+		-- Marca neón a la izquierda
+		local marca = Instance.new("Frame")
+		marca.Size = UDim2.new(0, 2, 1, -10)
+		marca.Position = UDim2.fromOffset(0, 5)
+		marca.BackgroundColor3 = C.MORADO
+		marca.BackgroundTransparency = 0.2
+		marca.BorderSizePixel = 0
+		marca.ZIndex = 3
+		marca.Parent = f
+
 		return f
 	end
 
-	local function etiqueta(padre, texto)
+	local function etiqueta(fila, texto)
 		local l = Instance.new("TextLabel")
 		l.BackgroundTransparency = 1
-		l.Position = UDim2.fromOffset(10, 0)
-		l.Size = UDim2.new(0.52, 0, 1, 0)
-		l.Font = Enum.Font.Gotham
+		l.Position = UDim2.fromOffset(12, 0)
+		l.Size = UDim2.new(1, -12 - 136, 1, 0)
+		l.Font = FONT_MONO
 		l.TextSize = 12
-		l.TextColor3 = Color3.fromRGB(215, 220, 235)
+		l.TextColor3 = C.TEXTO
 		l.TextXAlignment = Enum.TextXAlignment.Left
 		l.TextTruncate = Enum.TextTruncate.AtEnd
+		l.ZIndex = 5
 		l.Text = texto
-		l.Parent = padre
+		l.Parent = fila
 		return l
 	end
 
-	local function boton(padre, texto, ancho, derecha)
-		local b = Instance.new("TextButton")
-		b.AnchorPoint = Vector2.new(1, 0.5)
-		b.Position = UDim2.new(1, -derecha, 0.5, 0)
-		b.Size = UDim2.fromOffset(ancho, 22)
-		b.BackgroundColor3 = Color3.fromRGB(44, 52, 80)
-		b.BorderSizePixel = 0
-		b.Font = Enum.Font.GothamBold
-		b.TextSize = 12
-		b.TextColor3 = Color3.fromRGB(235, 240, 255)
-		b.Text = texto
-		b.AutoButtonColor = true
-		b.Parent = padre
-		redondear(b, 5)
-		return b
-	end
+	local ARRIBA_DER = Vector2.new(1, 0.5)
 
 	for _, item in ipairs(SCHEMA) do
 		if item.tipo == "titulo" then
 			orden += 1
+			local f = Instance.new("Frame")
+			f.Size = UDim2.new(1, 0, 0, 28)
+			f.BackgroundTransparency = 1
+			f.BorderSizePixel = 0
+			f.LayoutOrder = orden
+			f.ZIndex = 2
+			f.Parent = lista
+
 			local t = Instance.new("TextLabel")
-			t.Size = UDim2.new(1, -8, 0, 22)
 			t.BackgroundTransparency = 1
-			t.LayoutOrder = orden
-			t.Font = Enum.Font.GothamBold
-			t.TextSize = 11
-			t.TextColor3 = Color3.fromRGB(110, 160, 255)
+			t.Position = UDim2.fromOffset(4, 4)
+			t.Size = UDim2.new(1, -8, 0, 16)
+			t.Font = FONT_TITLE
+			t.TextSize = 10
+			t.TextColor3 = C.MORADO_BRILLO
 			t.TextXAlignment = Enum.TextXAlignment.Left
-			t.Text = "  " .. item.texto
-			t.Parent = lista
+			t.ZIndex = 5
+			t.Text = item.texto
+			t.Parent = f
+
+			UI.fadeLine(f, 0, 25, ANCHO_FILA, C.MORADO, 1.2, 4)
 
 		elseif item.tipo == "tecla" then
-			local fila = nuevaFila(30)
+			local fila = nuevaFila(32)
 			etiqueta(fila, item.texto)
-			local b = boton(fila, _cfg[item.id].Name, 136, 8)
-			b.MouseButton1Click:Connect(function() IniciarCaptura(item.id, b) end)
+
+			local b
+			b = UI.neonButton(fila, ARRIBA_DER, UDim2.new(1, -8, 0.5, 0), 124, 24, _cfg[item.id].Name,
+				C.MORADO_BRILLO, C.MORADO_OSC, function() IniciarCaptura(item.id, b) end,
+				{ font = FONT_MONO, size = 12 })
+
 			table.insert(_refrescadores, function()
-				if not (_capturando and _capturando.boton == b) then
-					b.Text = _cfg[item.id].Name
+				if not (_capturando and _capturando.b == b) then
+					b.setText(_cfg[item.id].Name)
 				end
 			end)
 
 		elseif item.tipo == "num" then
-			local fila = nuevaFila(30)
+			local fila = nuevaFila(32)
 			etiqueta(fila, item.texto)
 
-			local mas = boton(fila, "+", 24, 8)
 			local valor = Instance.new("TextLabel")
-			valor.AnchorPoint = Vector2.new(1, 0.5)
-			valor.Position = UDim2.new(1, -36, 0.5, 0)
-			valor.Size = UDim2.fromOffset(52, 22)
+			valor.AnchorPoint = ARRIBA_DER
+			valor.Position = UDim2.new(1, -38, 0.5, 0)
+			valor.Size = UDim2.fromOffset(56, 24)
 			valor.BackgroundTransparency = 1
-			valor.Font = Enum.Font.GothamBold
-			valor.TextSize = 12
-			valor.TextColor3 = Color3.fromRGB(255, 255, 255)
+			valor.Font = FONT_MONO
+			valor.TextSize = 14
+			valor.TextColor3 = C.TEXTO
+			valor.ZIndex = 5
 			valor.Text = tostring(_cfg[item.id])
 			valor.Parent = fila
-			local menos = boton(fila, "-", 24, 92)
 
 			local function cambiar(dir)
 				local v = _cfg[item.id] + dir * item.paso
@@ -1108,71 +1717,291 @@ local function CrearMenu()
 				GuardarConRetardo()
 			end
 
-			mas.MouseButton1Click:Connect(function() cambiar(1) end)
-			menos.MouseButton1Click:Connect(function() cambiar(-1) end)
+			UI.neonButton(fila, ARRIBA_DER, UDim2.new(1, -98, 0.5, 0), 26, 24, "-",
+				C.MORADO_BRILLO, C.MORADO_OSC, function() cambiar(-1) end,
+				{ font = FONT_MONO, size = 16 })
+			UI.neonButton(fila, ARRIBA_DER, UDim2.new(1, -8, 0.5, 0), 26, 24, "+",
+				C.MORADO_BRILLO, C.MORADO_OSC, function() cambiar(1) end,
+				{ font = FONT_MONO, size = 16 })
+
 			table.insert(_refrescadores, function() valor.Text = tostring(_cfg[item.id]) end)
 
 		elseif item.tipo == "bool" then
-			local fila = nuevaFila(30)
+			local fila = nuevaFila(32)
 			etiqueta(fila, item.texto)
-			local b = boton(fila, "", 60, 8)
 
+			local b
 			local function pintar()
-				b.Text = _cfg[item.id] and "ON" or "OFF"
-				b.BackgroundColor3 = _cfg[item.id] and Color3.fromRGB(46, 120, 76) or Color3.fromRGB(80, 50, 56)
+				b.setText(_cfg[item.id] and "ON" or "OFF")
+				b.setColor(_cfg[item.id] and C.VERDE or C.ROJO)
 			end
 
-			pintar()
-			b.MouseButton1Click:Connect(function()
-				_cfg[item.id] = not _cfg[item.id]
-				pintar()
-				GuardarConRetardo()
-			end)
+			b = UI.neonButton(fila, ARRIBA_DER, UDim2.new(1, -8, 0.5, 0), 70, 24,
+				_cfg[item.id] and "ON" or "OFF", _cfg[item.id] and C.VERDE or C.ROJO, C.MORADO_OSC,
+				function()
+					_cfg[item.id] = not _cfg[item.id]
+					pintar()
+					GuardarConRetardo()
+				end, { font = FONT_TITLE, size = 10 })
+
 			table.insert(_refrescadores, pintar)
 		end
 	end
 
+	-- ------------------------------------------------------
 	-- Pie: estado de guardado + restablecer
-	local pie = Instance.new("Frame")
-	pie.Position = UDim2.new(0, 8, 1, -40)
-	pie.Size = UDim2.new(1, -16, 0, 32)
-	pie.BackgroundTransparency = 1
-	pie.Parent = main
+	-- ------------------------------------------------------
+	local pie = UI.makeGroup(content, 10)
+	pie.Name = "Pie"
+	pie.Visible = false
+
+	UI.fadeLine(pie, 20, H - PIE_H + 2, W - 40, C.MORADO, 1.2, 4)
 
 	local estado = Instance.new("TextLabel")
 	estado.BackgroundTransparency = 1
-	estado.Size = UDim2.new(1, -110, 1, 0)
-	estado.Font = Enum.Font.Gotham
+	estado.Position = UDim2.fromOffset(22, H - PIE_H + 10)
+	estado.Size = UDim2.fromOffset(W - 44 - 150 - 10, 34)
+	estado.Font = FONT_MONO
 	estado.TextSize = 10
 	estado.TextWrapped = true
 	estado.TextXAlignment = Enum.TextXAlignment.Left
+	estado.TextYAlignment = Enum.TextYAlignment.Center
+	estado.ZIndex = 10
 	estado.Parent = pie
 	_estadoLabel = estado
 
-	local reset = Instance.new("TextButton")
-	reset.AnchorPoint = Vector2.new(1, 0.5)
-	reset.Position = UDim2.new(1, 0, 0.5, 0)
-	reset.Size = UDim2.fromOffset(100, 26)
-	reset.BackgroundColor3 = Color3.fromRGB(70, 44, 52)
-	reset.BorderSizePixel = 0
-	reset.Font = Enum.Font.GothamBold
-	reset.TextSize = 11
-	reset.TextColor3 = Color3.fromRGB(255, 205, 205)
-	reset.Text = "Restablecer"
-	reset.Parent = pie
-	redondear(reset, 6)
-
-	reset.MouseButton1Click:Connect(function()
-		CancelarCaptura()
-		for _, item in ipairs(SCHEMA) do
-			if item.id then _cfg[item.id] = item.def end
-		end
-		SincronizarHub()
-		RefrescarMenu()
-		GuardarConRetardo()
-	end)
+	UI.neonButton(pie, Vector2.new(1, 0), UDim2.fromOffset(W - 22, H - PIE_H + 12), 150, 30, "RESTABLECER",
+		C.ROJO, C.ROJO_OSC, function()
+			CancelarCaptura()
+			for _, it in ipairs(SCHEMA) do
+				if it.id then _cfg[it.id] = it.def end
+			end
+			SincronizarHub()
+			RefrescarMenu()
+			GuardarConRetardo()
+		end, { font = FONT_TITLE, size = 9, chevrons = true })
 
 	ActualizarEstadoMenu()
+
+	-- ------------------------------------------------------
+	-- Glitch en los bordes (cortes horizontales con separación cromática)
+	-- ------------------------------------------------------
+	local function slice(x, y, w, h, color, endX, life)
+		local f = Instance.new("Frame")
+		f.AnchorPoint = Vector2.new(0, 0.5)
+		f.Position = UDim2.fromOffset(x, y)
+		f.Size = UDim2.fromOffset(w, h)
+		f.BackgroundColor3 = color
+		f.BorderSizePixel = 0
+		f.ZIndex = 8
+		f.Parent = content
+		TweenService:Create(f, TweenInfo.new(life, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+			Position = UDim2.fromOffset(endX, y),
+			BackgroundTransparency = 1,
+		}):Play()
+		Debris:AddItem(f, life + 0.05)
+	end
+
+	local function glitchBurst(fuerte)
+		local n = fuerte and math.random(8, 11) or math.random(3, 6)
+		local cols = { C.MORADO_BRILLO, C.CIAN, C.ROJO }
+
+		for _ = 1, n do
+			task.spawn(function()
+				task.wait(math.random() * 0.14)
+				if not vivo() then return end
+				local izq = math.random() < 0.5
+				local y = math.random(4, H - 4)
+				local w = math.random(10, 40)
+				local h = math.random(1, 3)
+				local dist = math.random(16, fuerte and 52 or 36)
+				local life = 0.18 + math.random() * 0.2
+				local x0 = izq and math.random(0, 8) or (W - w - math.random(0, 8))
+				local x1 = izq and (x0 - dist) or (x0 + dist)
+				local sgn = izq and -1 or 1
+				slice(x0, y, w, h, cols[math.random(1, #cols)], x1, life)
+				slice(x0 + sgn * 2, y + 1, w, h, cols[math.random(1, #cols)], x1 + sgn * 6, life)
+			end)
+		end
+
+		-- Sacudida horizontal del panel y del título con destello cian
+		task.spawn(function()
+			titleGlow.Color = C.CIAN
+			for _, dx in ipairs({ -3, 3, -2, 2, 0 }) do
+				if not vivo() then return end
+				content.Position = UDim2.new(0.5, dx, 0.5, 0)
+				titleLabel.Position = UDim2.fromOffset(20 - dx, 14)
+				task.wait(0.03)
+			end
+			content.Position = UDim2.fromScale(0.5, 0.5)
+			titleLabel.Position = TITULO_POS
+			titleGlow.Color = C.MORADO
+		end)
+	end
+
+	_menuUI = {
+		clipper = clipper,
+		scanCore = scanCore,
+		scanGlow = scanGlow,
+		titleLabel = titleLabel,
+		lista = lista,
+		pie = pie,
+		cerrar = cerrarBtn.holder,
+		glitch = glitchBurst,
+		TITULO = TITULO,
+		W = W,
+	}
+
+	-- ------------------------------------------------------
+	-- Entrada: línea de escaneo, apertura vertical, título decodificado, lista y pie en parpadeo
+	-- ------------------------------------------------------
+	task.spawn(function()
+		TweenService:Create(clipper, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+			{ Size = UDim2.fromOffset(W, 2) }):Play()
+		task.wait(0.23)
+		if not vivo() then return end
+
+		TweenService:Create(clipper, TweenInfo.new(0.36, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+			{ Size = UDim2.fromOffset(W, H) }):Play()
+		task.spawn(function() UI.scramble(titleLabel, TITULO, 0.5, false) end)
+		task.wait(0.37)
+		if not vivo() then return end
+
+		clipper.ClipsDescendants = false
+		TweenService:Create(scanCore, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+		TweenService:Create(scanGlow, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+		UI.flickerIn(lista, 0)
+		UI.flickerIn(pie, 0.12)
+		UI.flickerIn(cerrarBtn.holder, 0.12)
+		task.wait(0.4)
+		if not vivo() then return end
+
+		_menuEstado = "abierto"
+		glitchBurst(true)
+
+		if _menuPendiente == "cerrar" then
+			_menuPendiente = nil
+			CerrarMenuAnimado()
+		end
+	end)
+
+	-- Glitch aleatorio recurrente
+	task.spawn(function()
+		while true do
+			task.wait(1.8 + math.random() * 2.4)
+			if not vivo() then break end
+			if _menuEstado == "abierto" then glitchBurst(false) end
+		end
+	end)
+
+	-- Pulso del marco y "respiración" del cristal
+	task.spawn(function()
+		local dim = true
+		while vivo() do
+			local info = TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+			for _, c in ipairs(pulseBag) do
+				TweenService:Create(c, info, { BackgroundTransparency = dim and 0.35 or 0 }):Play()
+			end
+			TweenService:Create(plate, info, { BackgroundTransparency = dim and 0.18 or 0 }):Play()
+			dim = not dim
+			task.wait(1.1)
+		end
+	end)
+
+	-- Barrido de luz periódico
+	task.spawn(function()
+		while vivo() do
+			sweep.Position = UDim2.fromOffset(20, 8)
+			sweep.BackgroundTransparency = 1
+			TweenService:Create(sweep, TweenInfo.new(0.5), { BackgroundTransparency = 0 }):Play()
+			TweenService:Create(sweep, TweenInfo.new(2.6, Enum.EasingStyle.Linear),
+				{ Position = UDim2.fromOffset(W - 60, 8) }):Play()
+			task.wait(2.1)
+			TweenService:Create(sweep, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+			task.wait(2.5)
+		end
+	end)
+end
+
+-- ------------------------------------------
+-- Cierre animado y apertura / alternancia
+-- ------------------------------------------
+CerrarMenuAnimado = function()
+	if _menuEstado ~= "abierto" or not _menuUI then return end
+
+	_menuEstado = "cerrando"
+	_menuPendiente = nil
+	CancelarCaptura()
+
+	local token = _menuToken
+	local u = _menuUI
+
+	task.spawn(function()
+		local function vivo()
+			return token == _menuToken and _menuGui ~= nil and _menuGui.Parent ~= nil
+		end
+
+		u.glitch(true)
+		task.spawn(function() UI.scramble(u.titleLabel, u.TITULO, 0.28, true) end)
+		UI.flickerOut(u.lista, 0.05)
+		UI.flickerOut(u.pie, 0.12)
+		UI.flickerOut(u.cerrar, 0.12)
+		task.wait(0.32)
+		if not vivo() then return end
+
+		u.clipper.ClipsDescendants = true
+		u.scanCore.BackgroundTransparency = 0
+		u.scanGlow.BackgroundTransparency = 0.6
+		TweenService:Create(u.clipper, TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+			{ Size = UDim2.fromOffset(u.W, 2) }):Play()
+		task.wait(0.27)
+		if not vivo() then return end
+
+		TweenService:Create(u.clipper, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+			{ Size = UDim2.fromOffset(0, 2) }):Play()
+		task.wait(0.21)
+		if token ~= _menuToken then return end
+
+		local pendiente = _menuPendiente
+		DestruirMenu()
+
+		-- Si se pidió abrirlo otra vez mientras se cerraba, se reabre
+		if pendiente == "abrir" then
+			AbrirMenu(true)
+		end
+	end)
+end
+
+-- visible = true abre, false cierra, nil alterna. Nunca falla en silencio: si la GUI no
+-- se puede crear, el motivo sale en la consola (F9) y el siguiente intento vuelve a probar.
+AbrirMenu = function(visible)
+	local est = _menuEstado
+
+	if visible == nil then
+		visible = not (est == "abierto" or est == "abriendo")
+	end
+
+	if visible then
+		if est == "cerrado" then
+			local ok, err = pcall(ConstruirMenu)
+			if not ok then
+				warn("[Gravattack] No se pudo crear el menú: " .. tostring(err))
+				pcall(DestruirMenu)
+			end
+		elseif est == "cerrando" then
+			_menuPendiente = "abrir"
+		elseif est == "abriendo" then
+			_menuPendiente = nil
+		end
+	else
+		if est == "abierto" then
+			CerrarMenuAnimado()
+		elseif est == "abriendo" then
+			_menuPendiente = "cerrar"
+		elseif est == "cerrando" then
+			_menuPendiente = nil
+		end
+	end
 end
 
 -- ==========================================
@@ -1343,10 +2172,15 @@ function M.Start(Keys)
 		GravedadNormal()
 	end
 
-	-- Prioridad de la tecla de plataforma: archivo guardado > hub > por defecto
+	-- Prioridad de las teclas: archivo guardado > hub > por defecto
 	local cargadas = Cargar()
-	if _hubKeys and typeof(_hubKeys.Platform) == "EnumItem" and not cargadas.Platform then
-		_cfg.Platform = _hubKeys.Platform
+	if _hubKeys then
+		if typeof(_hubKeys.Platform) == "EnumItem" and not cargadas.Platform then
+			_cfg.Platform = _hubKeys.Platform
+		end
+		if typeof(_hubKeys.GravattackMenu) == "EnumItem" and not cargadas.Menu then
+			_cfg.Menu = _hubKeys.GravattackMenu
+		end
 	end
 	SincronizarHub()
 
@@ -1357,7 +2191,9 @@ function M.Start(Keys)
 	isFloating = false
 	isSlamming = false
 
-	pcall(CrearMenu)
+	-- El menú se construye al abrirlo (AbrirMenu). Antes se creaba aquí dentro de un pcall:
+	-- si algo fallaba no salía ningún error y el menú simplemente "no salía".
+	DestruirMenu()
 
 	if player.Character then
 		SetupCharacter(player.Character)
@@ -1374,12 +2210,17 @@ function M.Start(Keys)
 	local inputBeganConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		-- Mientras se asigna una tecla (o justo después) no se ejecuta ninguna acción
 		if _capturando or os.clock() - _ultimaCaptura < 0.2 then return end
-		if gameProcessed then return end
 
+		-- Tecla del menú: NO se filtra por gameProcessed (el juego o el CoreGui pueden marcar
+		-- la tecla como procesada y el menú nunca abría). Solo se ignora si el jugador está
+		-- escribiendo en un TextBox (p. ej. el chat).
 		if Coincide(input, _cfg.Menu) then
+			if UserInputService:GetFocusedTextBox() then return end
 			AbrirMenu()
 			return
 		end
+
+		if gameProcessed then return end
 
 		if not humanoid or not rootPart then return end
 
@@ -1484,6 +2325,7 @@ end
 
 -- Compatible con el hub:  SetKey(kc)  -> tecla de plataforma
 -- Nuevo:                  SetKey("Slam", kc) / SetKey("Fly", kc) / SetKey("Menu", kc)
+-- Atajo para el menú:     SetMenuKey(kc)
 function M.SetKey(a, b)
 	local id, kc
 
@@ -1504,6 +2346,11 @@ function M.SetKey(a, b)
 	end
 end
 
+function M.SetMenuKey(kc)
+	if typeof(kc) ~= "EnumItem" then return end
+	AsignarTecla("Menu", kc)
+end
+
 function M.GetKeys()
 	local t = {}
 	for _, item in ipairs(SCHEMA) do
@@ -1520,6 +2367,7 @@ function M.GetConfig()
 	return t
 end
 
+function M.IsMenuOpen() return _menuEstado == "abierto" or _menuEstado == "abriendo" end
 function M.OpenMenu()   AbrirMenu(true)  end
 function M.CloseMenu()  AbrirMenu(false) end
 function M.ToggleMenu() AbrirMenu()      end
