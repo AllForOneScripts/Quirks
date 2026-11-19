@@ -7,9 +7,9 @@ local TextService = game:GetService("TextService")
 local HttpService = game:GetService("HttpService")
 
 local Theme = {
-    Version = 8.42,
+    Version = nil,
     Repo = "AllForOneScripts/Quirks",
-    BadgeOffsetX = 14,
+    BadgeOffsetX = 24,
 
     Accent = Color3.fromRGB(135, 18, 195),
     GlowColor = Color3.fromRGB(140, 22, 215),
@@ -107,6 +107,13 @@ end
 
 Theme.FormatVersion = formatVersion
 
+local function versionText()
+    local v = Theme.Version
+    if v == nil then return "..." end
+    if v == false then return "N/A" end
+    return formatVersion(v)
+end
+
 local function commitsToVersion(n)
     return string.format("%d.%02d", math.floor(n / 100), n % 100)
 end
@@ -121,53 +128,74 @@ local function getRequestFunction()
         or request
 end
 
-local function httpGet(url)
+local function httpGet(url, html)
+    local headers = {
+        ["Accept"] = html and "text/html" or "application/vnd.github+json",
+        ["User-Agent"] = "AllForOne-UI",
+    }
     local fn = getRequestFunction()
     if fn then
-        local ok, res = pcall(fn, {
-            Url = url,
-            Method = "GET",
-            Headers = {
-                ["Accept"] = "application/vnd.github+json",
-                ["User-Agent"] = "AllForOne-UI",
-            },
-        })
+        local ok, res = pcall(fn, { Url = url, Method = "GET", Headers = headers })
         if ok and type(res) == "table" then return res end
     end
     local ok, res = pcall(function()
-        return HttpService:RequestAsync({
-            Url = url,
-            Method = "GET",
-            Headers = {
-                ["Accept"] = "application/vnd.github+json",
-                ["User-Agent"] = "AllForOne-UI",
-            },
-        })
+        return HttpService:RequestAsync({ Url = url, Method = "GET", Headers = headers })
     end)
     if ok and type(res) == "table" then return res end
     return nil
 end
 
-local function fetchCommitCount()
-    local res = httpGet("https://api.github.com/repos/" .. Theme.Repo .. "/commits?per_page=1")
-    if not res then return nil end
+local function okStatus(res)
+    return (res.StatusCode or res.Status) == 200
+end
 
-    local status = res.StatusCode or res.Status
-    if status ~= 200 then return nil end
+local function commitsUrl()
+    return "https://api.github.com/repos/" .. Theme.Repo .. "/commits"
+end
 
-    local headers = res.Headers or {}
-    for k, v in pairs(headers) do
+local function countViaLinkHeader()
+    local res = httpGet(commitsUrl() .. "?per_page=1")
+    if not (res and okStatus(res)) then return nil end
+    for k, v in pairs(res.Headers or {}) do
         if tostring(k):lower() == "link" then
             local last = tostring(v):match('[?&]page=(%d+)[^>]*>%s*;%s*rel="last"')
             if last then return tonumber(last) end
         end
     end
+    return nil
+end
 
-    local ok, data = pcall(function()
-        return HttpService:JSONDecode(res.Body)
-    end)
-    if ok and type(data) == "table" then
-        return #data
+local function countViaPagination()
+    local total = 0
+    for page = 1, 100 do
+        local res = httpGet(commitsUrl() .. "?per_page=100&page=" .. page)
+        if not (res and okStatus(res)) then return nil end
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(res.Body)
+        end)
+        if not (ok and type(data) == "table") then return nil end
+        total = total + #data
+        if #data < 100 then return total end
+    end
+    return total
+end
+
+local function countViaHtml()
+    local res = httpGet("https://github.com/" .. Theme.Repo, true)
+    if not (res and okStatus(res)) then return nil end
+    local body = tostring(res.Body or "")
+    local n = body:match('"commitCount":"([%d,]+)"')
+        or body:match("([%d,]+)%s*</strong>%s*<span[^>]*>%s*[Cc]ommits?")
+        or body:match("([%d,]+)%s+[Cc]ommits")
+    if n then return tonumber((n:gsub(",", ""))) end
+    return nil
+end
+
+local function fetchCommitCount()
+    local steps = { countViaLinkHeader, countViaPagination, countViaHtml }
+    for _, step in ipairs(steps) do
+        local ok, n = pcall(step)
+        if ok and type(n) == "number" and n > 0 then return n end
     end
     return nil
 end
@@ -808,14 +836,14 @@ Theme.BuildDesign = function(Window)
         titleLabel = label
     end
 
-    local badge = { lbl = nil, box = nil, applying = false, basePos = nil }
+    local badge = { lbl = nil, box = nil, applying = false, holder = nil }
 
     local function applyBadge()
         local lbl, box = badge.lbl, badge.box
         if not (lbl and box and lbl.Parent and box.Parent) or badge.applying then return end
         badge.applying = true
 
-        local txt = formatVersion(Theme.Version)
+        local txt = versionText()
 
         lbl.AutomaticSize = Enum.AutomaticSize.None
         lbl.TextScaled = false
@@ -852,8 +880,11 @@ Theme.BuildDesign = function(Window)
         box.Size = UDim2.fromOffset(math.ceil(w), math.ceil(h))
         box.Visible = true
 
-        if badge.basePos then
-            box.Position = badge.basePos + UDim2.fromOffset(Theme.BadgeOffsetX or 0, 0)
+        if badge.holder then
+            local off = Theme.BadgeOffsetX or 0
+            badge.holder.Size = UDim2.fromOffset(math.ceil(w) + off, math.ceil(h))
+            badge.holder.Visible = true
+            box.Position = UDim2.fromOffset(off, 0)
         end
 
         if box ~= lbl then
@@ -881,7 +912,22 @@ Theme.BuildDesign = function(Window)
             box = par
         end
         badge.lbl, badge.box = lbl, box
-        badge.basePos = box.Position
+
+        local holder = Instance.new("Frame")
+        holder.Name = "AFO_BadgeHolder"
+        holder.BackgroundTransparency = 1
+        holder.BorderSizePixel = 0
+        holder.AnchorPoint = box.AnchorPoint
+        holder.Position = box.Position
+        holder.Size = box.Size
+        holder.LayoutOrder = box.LayoutOrder
+        holder.ZIndex = box.ZIndex
+        holder.Parent = box.Parent
+        box.AnchorPoint = Vector2.new(0, 0)
+        box.Position = UDim2.fromOffset(Theme.BadgeOffsetX or 0, 0)
+        box.LayoutOrder = 0
+        box.Parent = holder
+        badge.holder = holder
 
         local function reapply() applyBadge() end
         lbl:GetPropertyChangedSignal("Text"):Connect(reapply)
@@ -902,6 +948,8 @@ Theme.BuildDesign = function(Window)
         local ok, count = pcall(fetchCommitCount)
         if ok and type(count) == "number" and count > 0 then
             Theme.SetVersion(commitsToVersion(count))
+        else
+            Theme.SetVersion(false)
         end
     end)
 
