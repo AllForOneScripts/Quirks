@@ -1,14 +1,14 @@
--- You can create your own designs!
-
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
+local HttpService = game:GetService("HttpService")
 
 local Theme = {
-    -- Versión que se muestra en el badge junto al título.
-    -- Acepta número (8.42) o texto ("8.42"). Se puede cambiar en vivo con Theme.SetVersion("9.10").
     Version = 8.42,
+    Repo = "AllForOneScripts/Quirks",
+    VersionRefresh = 300,
+    BadgeOffsetX = 14,
 
     Accent = Color3.fromRGB(135, 18, 195),
     GlowColor = Color3.fromRGB(140, 22, 215),
@@ -88,8 +88,6 @@ Theme.Assets = {
     AmbientGlow = "rbxassetid://1868803131",
 }
 
--- Formatea la versión con dos decimales, salvo cuando termina en 00:
---   9.00 -> "9.0"   |   9.10 -> "9.10"   |   8.4 -> "8.40"   |   8.42 -> "8.42"
 local function formatVersion(v)
     local s
     if type(v) == "number" then
@@ -108,6 +106,73 @@ end
 
 Theme.FormatVersion = formatVersion
 
+local function commitsToVersion(n)
+    return string.format("%d.%02d", math.floor(n / 100), n % 100)
+end
+
+Theme.CommitsToVersion = commitsToVersion
+
+local function getRequestFunction()
+    return (syn and syn.request)
+        or (http and http.request)
+        or (fluxus and fluxus.request)
+        or http_request
+        or request
+end
+
+local function httpGet(url)
+    local fn = getRequestFunction()
+    if fn then
+        local ok, res = pcall(fn, {
+            Url = url,
+            Method = "GET",
+            Headers = {
+                ["Accept"] = "application/vnd.github+json",
+                ["User-Agent"] = "AllForOne-UI",
+            },
+        })
+        if ok and type(res) == "table" then return res end
+    end
+    local ok, res = pcall(function()
+        return HttpService:RequestAsync({
+            Url = url,
+            Method = "GET",
+            Headers = {
+                ["Accept"] = "application/vnd.github+json",
+                ["User-Agent"] = "AllForOne-UI",
+            },
+        })
+    end)
+    if ok and type(res) == "table" then return res end
+    return nil
+end
+
+local function fetchCommitCount()
+    local res = httpGet("https://api.github.com/repos/" .. Theme.Repo .. "/commits?per_page=1")
+    if not res then return nil end
+
+    local status = res.StatusCode or res.Status
+    if status ~= 200 then return nil end
+
+    local headers = res.Headers or {}
+    for k, v in pairs(headers) do
+        if tostring(k):lower() == "link" then
+            local last = tostring(v):match('[?&]page=(%d+)[^>]*>%s*;%s*rel="last"')
+            if last then return tonumber(last) end
+        end
+    end
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(res.Body)
+    end)
+    if ok and type(data) == "table" then
+        return #data
+    end
+    return nil
+end
+
+Theme.FetchCommitCount = fetchCommitCount
+
 Theme.BuildDesign = function(Window)
     local Root = Window.Root
     local acrylicFrame = Window.AcrylicPaint.Frame
@@ -116,7 +181,6 @@ Theme.BuildDesign = function(Window)
     local WHITE = Color3.new(1, 1, 1)
     local BLACK = Color3.new(0, 0, 0)
 
-    -- Paleta (más inclinada a violetas oscuros)
     local DEEP = Color3.fromRGB(70, 10, 115)
     local VIOLET = Color3.fromRGB(125, 20, 200)
     local LAV = Color3.fromRGB(190, 150, 255)
@@ -155,9 +219,6 @@ Theme.BuildDesign = function(Window)
         return f
     end
 
-    ---------------------------------------------------------------------
-    -- 1) LUZ AMBIENTAL EXTERIOR
-    ---------------------------------------------------------------------
     local ambientLight = Instance.new("ImageLabel")
     ambientLight.Name = "AFO_AmbientLight"
     ambientLight.BackgroundTransparency = 1
@@ -179,9 +240,6 @@ Theme.BuildDesign = function(Window)
     })
     ambientGradient.Parent = ambientLight
 
-    ---------------------------------------------------------------------
-    -- 2) CAPAS INTERNAS
-    ---------------------------------------------------------------------
     local art = Instance.new("Frame")
     art.Name = "AllForOneArt"
     art.BackgroundTransparency = 1
@@ -260,9 +318,6 @@ Theme.BuildDesign = function(Window)
     boltLayer.Name = "AFO_LightningStrikes"
     local partLayer = newFrame(art, 10)
 
-    ---------------------------------------------------------------------
-    -- 3) NUBES VOLUMÉTRICAS (3 capas de profundidad + núcleo iluminado + parallax)
-    ---------------------------------------------------------------------
     local fogSpec = {
         { parent = fogBack, count = 3, sz = 1.9, tr = 0.60, par = 4, sp = 0.05, rot = 1.5,
           colors = { Color3.fromRGB(26, 6, 46), Color3.fromRGB(36, 8, 62), Color3.fromRGB(46, 10, 72) } },
@@ -294,9 +349,6 @@ Theme.BuildDesign = function(Window)
         end
     end
 
-    ---------------------------------------------------------------------
-    -- 4) LUZ DE RAYOS (glow en escena + derrame sobre toda la GUI)
-    ---------------------------------------------------------------------
     local spill = Instance.new("Frame")
     spill.Name = "AFO_LightSpill"
     spill.BackgroundTransparency = 1
@@ -320,9 +372,6 @@ Theme.BuildDesign = function(Window)
         glows[#glows + 1] = { obj = g, age = 0, life = life, base = base }
     end
 
-    ---------------------------------------------------------------------
-    -- 5) PARTÍCULAS
-    ---------------------------------------------------------------------
     local particles = {}
     local function newParticle(parent)
         local f = Instance.new("Frame")
@@ -385,10 +434,7 @@ Theme.BuildDesign = function(Window)
         end
     end
 
-    ---------------------------------------------------------------------
-    -- 6) RAYOS DE PLASMA (bordes suaves, trazo que se arrastra, ramas y arcos de impacto)
-    ---------------------------------------------------------------------
-    local energyGradient -- se define en la sección del borde
+    local energyGradient
 
     local function boltPath(a, b, detail, spread)
         local pts = { a, b }
@@ -522,7 +568,6 @@ Theme.BuildDesign = function(Window)
             local bl = len * (0.12 + rand() * 0.2)
             addPath(boltPath(origin, origin + d * bl, 3, bl * 0.35), 0.5, false)
         end
-        -- Arcos de impacto radiales
         for _ = 1, rand(5, 8) do
             local ang = rand() * math.pi * 2
             local l = 25 + rand() * 55
@@ -535,7 +580,6 @@ Theme.BuildDesign = function(Window)
         burst(b, 16, partLayer, 160)
         S.tglitch = 0.25
 
-        -- Onda de energía que recorre el borde desde el lado del impacto
         local c = Vector2.new(W / 2, H / 2)
         if energyGradient then
             energyGradient.Rotation = math.deg(math.atan2(c.Y - b.Y, c.X - b.X))
@@ -574,9 +618,6 @@ Theme.BuildDesign = function(Window)
         end
     end)
 
-    ---------------------------------------------------------------------
-    -- 7) BORDE DE ENERGÍA (crepitante, con onda de impacto)
-    ---------------------------------------------------------------------
     local stroke = Root:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     stroke.Color = WHITE
@@ -667,9 +708,6 @@ Theme.BuildDesign = function(Window)
         orbs[i] = { o = o, ph = i * 1.3 }
     end
 
-    ---------------------------------------------------------------------
-    -- 8) TÍTULO (letras justificadas), BADGE DE VERSIÓN Y TARJETA DE USUARIO
-    ---------------------------------------------------------------------
     local TITLE = "All For One"
     local TITLE_BASE = Color3.fromRGB(232, 220, 250)
     local titleLabel, titleTarget
@@ -769,9 +807,7 @@ Theme.BuildDesign = function(Window)
         titleLabel = label
     end
 
-    -- Badge de versión dinámico: fondo negro, texto blanco, número siempre centrado.
-    -- El ancho se ajusta solo al texto y se re-aplica si la UI intenta cambiarlo.
-    local badge = { lbl = nil, box = nil, applying = false }
+    local badge = { lbl = nil, box = nil, applying = false, basePos = nil }
 
     local function applyBadge()
         local lbl, box = badge.lbl, badge.box
@@ -780,7 +816,6 @@ Theme.BuildDesign = function(Window)
 
         local txt = formatVersion(Theme.Version)
 
-        -- Texto: blanco y centrado
         lbl.AutomaticSize = Enum.AutomaticSize.None
         lbl.TextScaled = false
         lbl.TextWrapped = false
@@ -793,7 +828,6 @@ Theme.BuildDesign = function(Window)
         lbl.TextXAlignment = Enum.TextXAlignment.Center
         lbl.TextYAlignment = Enum.TextYAlignment.Center
 
-        -- Fondo: negro sólido (se anula cualquier degradado/relleno verde)
         box.AutomaticSize = Enum.AutomaticSize.None
         box.BackgroundColor3 = BLACK
         box.BackgroundTransparency = 0
@@ -812,13 +846,15 @@ Theme.BuildDesign = function(Window)
             round(box, UDim.new(0, 6))
         end
 
-        -- Ancho dinámico según el texto (más padding simétrico)
         local w = TextService:GetTextSize(txt, lbl.TextSize, lbl.Font, Vector2.new(1000, 100)).X + 16
         local h = math.max(box.AbsoluteSize.Y, lbl.TextSize + 8)
         box.Size = UDim2.fromOffset(math.ceil(w), math.ceil(h))
         box.Visible = true
 
-        -- Si el texto vive dentro de un marco, lo anclamos al centro exacto
+        if badge.basePos then
+            box.Position = badge.basePos + UDim2.fromOffset(Theme.BadgeOffsetX or 0, 0)
+        end
+
         if box ~= lbl then
             lbl.BackgroundTransparency = 1
             lbl.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -831,7 +867,6 @@ Theme.BuildDesign = function(Window)
 
     local function setupBadge(lbl)
         if badge.lbl then
-            -- Ya hay un badge gestionado: cualquier duplicado se oculta
             lbl:SetAttribute("AFO", true)
             lbl.Visible = false
             return
@@ -845,6 +880,7 @@ Theme.BuildDesign = function(Window)
             box = par
         end
         badge.lbl, badge.box = lbl, box
+        badge.basePos = box.Position
 
         local function reapply() applyBadge() end
         lbl:GetPropertyChangedSignal("Text"):Connect(reapply)
@@ -856,13 +892,21 @@ Theme.BuildDesign = function(Window)
         applyBadge()
     end
 
-    -- Cambia la versión en vivo: Theme.SetVersion("9.00") -> muestra "9.0"; ("9.10") -> "9.10"
     Theme.SetVersion = function(v)
         Theme.Version = v
         applyBadge()
     end
 
-    -- Tarjeta de usuario: arriba nombre visible, abajo @usuario. Oculto: Villain / @******
+    task.spawn(function()
+        while alive do
+            local ok, count = pcall(fetchCommitCount)
+            if ok and type(count) == "number" and count > 0 then
+                Theme.SetVersion(commitsToVersion(count))
+            end
+            task.wait(math.max(Theme.VersionRefresh or 300, 60))
+        end
+    end)
+
     local userTop, userBottom
     local userHidden = false
     local function renderUser()
@@ -923,7 +967,6 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Título
         if #titleCands > 0 then
             local main = titleLabel
             if not main then
@@ -941,10 +984,8 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Badge de versión: estilo negro/blanco, centrado y con versión dinámica
         for _, c in ipairs(badgeCands) do setupBadge(c) end
 
-        -- Tarjeta de usuario
         if bottomCand and not userTop then
             local top
             local bestDy = math.huge
@@ -979,9 +1020,6 @@ Theme.BuildDesign = function(Window)
         end)
     end)
 
-    ---------------------------------------------------------------------
-    -- 9) BUCLE PRINCIPAL
-    ---------------------------------------------------------------------
     local hb
     local titleAcc = 0
     hb = RunService.Heartbeat:Connect(function(dt)
@@ -997,7 +1035,6 @@ Theme.BuildDesign = function(Window)
         S.tglitch = math.max(0, S.tglitch - dt)
         local sg = S.surge
 
-        -- Parallax con el mouse (profundidad de las nubes)
         local rs = Root.AbsoluteSize
         local rc = Root.AbsolutePosition + rs / 2
         local mouse = UserInputService:GetMouseLocation()
@@ -1007,7 +1044,6 @@ Theme.BuildDesign = function(Window)
         S.px = S.px + (tx - S.px) * k
         S.py = S.py + (ty - S.py) * k
 
-        -- Luz ambiental exterior
         ambientGradient.Rotation = (t * 30) % 360
         ambientLight.ImageTransparency = math.clamp(0.42 + math.sin(t * 2) * 0.12 - sg * 0.3, 0, 1)
         ambientLight.ImageColor3 = WHITE:Lerp(S.flashColor, sg * 0.7)
@@ -1020,7 +1056,6 @@ Theme.BuildDesign = function(Window)
         mist.BackgroundColor3 = Color3.fromRGB(80, 16, 130):Lerp(S.flashColor, sg * 0.5)
         mist.BackgroundTransparency = 0.08 + math.sin(t * 0.6) * 0.06 - sg * 0.08
 
-        -- Nubes volumétricas
         for _, f in ipairs(fog) do
             f.lit = f.lit * math.exp(-dt * 3.2)
             local x = f.ax + math.sin(t * f.sp + f.ph) * f.amp
@@ -1044,7 +1079,6 @@ Theme.BuildDesign = function(Window)
             f.rim.ImageColor3 = f.rimC:Lerp(S.flashColor, L * 0.9)
         end
 
-        -- Glows de rayos
         for i = #glows, 1, -1 do
             local g = glows[i]
             g.age = g.age + dt
@@ -1056,7 +1090,6 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Borde: crepita (no lineal), con onda de energía en el impacto
         local noise = math.noise(t * 1.3, 0, 0)
         local crack = sg * sg
         stroke.Thickness = 2.2 + math.abs(noise) * 2 + math.sin(t * 2.5) * 0.6 + crack * (1.5 + rand() * 3.5)
@@ -1079,7 +1112,6 @@ Theme.BuildDesign = function(Window)
             o.o.Size = UDim2.fromOffset(s, s)
         end
 
-        -- Título: barrido de luz, glitch por letra, emisor de chispas
         if titleLabel and titleLabel.Parent and #letters > 0 then
             local sweep = (t * 0.5) % 1.6 - 0.3
             local gl = S.tglitch > 0
@@ -1118,7 +1150,6 @@ Theme.BuildDesign = function(Window)
             end
         end
 
-        -- Partículas
         for i = #particles, 1, -1 do
             local p = particles[i]
             p.age = p.age + dt
