@@ -12,118 +12,6 @@ if getgenv()._AFO_HUB_LOADED then
 end
 getgenv()._AFO_HUB_LOADED = true
 
--- Único cloneref/HttpService/Players/lplr de todo el script: la whitelist de abajo
--- y el resto del hub usan siempre estas mismas variables, nunca una copia aparte.
-local cloneref = cloneref or function(x) return x end
-local HttpService = cloneref(game:GetService("HttpService"))
-local Players = cloneref(game:GetService("Players"))
-local lplr = Players.LocalPlayer
-
--- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 2: WHITELIST (HWID) Y REPORTE WEB
--- ═══════════════════════════════════════════════════════════════════════════
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
-
--- Lista de HWIDs bloqueados.
-local BlockedHWIDs = {
-    "HWID-DE-EJEMPLO-1",
-    "HWID-DE-EJEMPLO-2",
-}
-
-local function getHWID()
-    local ok, result = pcall(function() return gethwid() end)
-    if ok and type(result) == "string" and result ~= "" then
-        return result
-    end
-
-    local ok2, result2 = pcall(function()
-        return game:GetService("RbxAnalyticsService"):GetClientId()
-    end)
-    if ok2 and type(result2) == "string" and result2 ~= "" then
-        return result2
-    end
-
-    return ""
-end
-
-local function sendWebhook(granted, hwid)
-    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
-    if not httpRequest then return end
-
-    local fields = {
-        {
-            ["name"] = "🧸 𝗛𝗪𝗜𝗗",
-            ["value"] = "```\n" .. (hwid ~= "" and hwid or "Desconocido") .. "\n```",
-            ["inline"] = false
-        },
-        {
-            ["name"] = "🎀 𝗨𝘀𝘂𝗮𝗿𝗶𝗼 𝗱𝗲 𝗥𝗼𝗯𝗹𝗼𝘅",
-            ["value"] = "```\n" .. lplr.Name .. " (@" .. lplr.DisplayName .. ")\n```",
-            ["inline"] = false
-        },
-        {
-            ["name"] = "🕰️ 𝗛𝗼𝗿𝗮 𝘆 𝗙𝗲𝗰𝗵𝗮",
-            ["value"] = "```\n" .. os.date("%I:%M %p - %d/%m/%Y") .. "\n```",
-            ["inline"] = false
-        },
-    }
-
-    if granted then
-        local serverLink = string.format(
-            "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
-            game.PlaceId, game.JobId
-        )
-        table.insert(fields, {
-            ["name"] = "🌐 𝗦𝗲𝗿𝘃𝗲𝗿",
-            ["value"] = "[Unirse al servidor](" .. serverLink .. ")\n```\n" .. game.JobId .. "\n```",
-            ["inline"] = false
-        })
-    end
-
-    local embedData = {
-        ["embeds"] = {{
-            ["title"] = granted and "✅ Acceso concedido" or "⛔ Acceso denegado",
-            ["description"] = granted
-                and "Un usuario cargó el hub por completo."
-                or "Un usuario bloqueado intentó acceder.",
-            ["color"] = granted and 65280 or 16711680,
-            ["fields"] = fields,
-            ["footer"] = { ["text"] = "AFO Security" }
-        }}
-    }
-
-    pcall(function()
-        httpRequest({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(embedData)
-        })
-    end)
-end
-
--- Se calcula una sola vez y lo reutiliza tanto el bloqueo inmediato como el
--- reporte de "acceso concedido" que se manda al final, cuando el hub ya cargó.
-local AFO_USER_HWID = getHWID()
-local AFO_HWID_BLOCKED = false
-
-for _, hwid in ipairs(BlockedHWIDs) do
-    if AFO_USER_HWID ~= "" and tostring(hwid):gsub("%s+", "") == AFO_USER_HWID then
-        AFO_HWID_BLOCKED = true
-        break
-    end
-end
-
-if AFO_HWID_BLOCKED then
-    if not getgenv()._AFO_ACCESS_LOGGED then
-        getgenv()._AFO_ACCESS_LOGGED = true
-        sendWebhook(false, AFO_USER_HWID)
-    end
-
-    lplr:Kick("Él ya te vio (He already saw you)")
-    return
-end
-
 local BOOT_START_TIME = tick()
 
 if not getgenv()._AFO_IS_REJOIN then
@@ -135,14 +23,17 @@ if not getgenv()._AFO_IS_REJOIN then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 3: SERVICIOS Y UTILIDADES GENÉRICAS
+--  SECCIÓN 2: SERVICIOS Y UTILIDADES GENÉRICAS
 -- ═══════════════════════════════════════════════════════════════════════════
+
+local cloneref = cloneref or function(x) return x end
 
 local httprequest = http_request or request or (syn and syn.request) or nil
 if not httprequest then
     warn("[AllForOne] No se encontró ninguna función HTTP request. Algunas funciones pueden fallar.")
 end
 
+local HttpService = cloneref(game:GetService("HttpService"))
 local UserInputService = cloneref(game:GetService("UserInputService"))
 -- Resuelve la mejor funcion de portapapeles disponible en este ejecutor y la expone
 -- para que Lock.lua, el emote script, etc. no dependan de que exista "setclipboard" a secas.
@@ -151,18 +42,20 @@ if bestClipboard and not setclipboard then
     getgenv().setclipboard = bestClipboard
 end
 
+local Players = cloneref(game:GetService("Players"))
 local TeleportService = cloneref(game:GetService("TeleportService"))
 local CoreGui = cloneref(game:GetService("CoreGui"))
 local RunService = cloneref(game:GetService("RunService"))
 local TweenService = cloneref(game:GetService("TweenService"))
 local Debris = game:GetService("Debris")
 
+local lplr = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 local placeId = game.PlaceId
 local jobId = game.JobId
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 4: SELF‑RELOAD
+--  SECCIÓN 3: SELF‑RELOAD
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local SELF_URL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/main/Core.lua"
@@ -202,7 +95,7 @@ pcall(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 5: SISTEMA DE IDIOMA
+--  SECCIÓN 4: SISTEMA DE IDIOMA
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local savedLang = "ES"
@@ -221,7 +114,7 @@ pcall(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 6: ESTADOS RUNTIME
+--  SECCIÓN 5: ESTADOS RUNTIME
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local adminShieldEnabled  = true
@@ -240,7 +133,7 @@ local softAimEnabled      = true
 local antiFlingEnabled    = true
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 7: KEYBINDS
+--  SECCIÓN 6: KEYBINDS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Keys = {
@@ -288,7 +181,7 @@ local function applyKey(targetName, key, fallback)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 8: URLS DE MÓDULOS EXTERNOS
+--  SECCIÓN 7: URLS DE MÓDULOS EXTERNOS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local MODULE_URLS = {
@@ -336,7 +229,7 @@ end
 getgenv().loadModule = loadModule
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 9: GESTOR DE CONEXIONES
+--  SECCIÓN 8: GESTOR DE CONEXIONES
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local allConnections = {}
@@ -352,7 +245,7 @@ local function disconnectAllConnections()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 10: NOTIFICACIONES
+--  SECCIÓN 9: NOTIFICACIONES
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Fluent
@@ -366,7 +259,7 @@ local function notify(title, content, duration)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 11: INTERFAZ DE USUARIO Y BACKGROUND LOADING
+--  SECCIÓN 10: INTERFAZ DE USUARIO Y BACKGROUND LOADING
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- Antes se descargaban Lang, UI, SaveManager, InterfaceManager y el Theme uno
@@ -620,7 +513,7 @@ if type(AllForOneTheme.BuildDesign) == "function" then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 12: TAB "PODER"
+--  SECCIÓN 11: TAB "PODER"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Power = Window:AddTab({ Title = T.tab_power or "Power", Icon = "flame" })
@@ -953,7 +846,7 @@ Power:AddKeybind("GravattackMenuKeybind", {
 task.spawn(gravattackInitialize)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 13: TAB "MISC"
+--  SECCIÓN 12: TAB "MISC"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Misc = Window:AddTab({ Title = T.tab_misc or "Misc", Icon = "music" })
@@ -1055,7 +948,7 @@ Misc:AddKeybind("CopyAvatarKeybind", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 14: TAB "DEFENSA"
+--  SECCIÓN 13: TAB "DEFENSA"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Defend = Window:AddTab({ Title = T.tab_defend or "Defend", Icon = "shield" })
@@ -1111,7 +1004,7 @@ Defend:AddToggle("AdminShieldToggle", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 15: TAB "SERVIDOR"
+--  SECCIÓN 14: TAB "SERVIDOR"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Server = Window:AddTab({ Title = T.tab_server or "Server", Icon = "server" })
@@ -1247,7 +1140,7 @@ Server:AddKeybind("PhoenixMenuKeybind", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 16: TAB "AJUSTES"
+--  SECCIÓN 15: TAB "AJUSTES"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Settings = Window:AddTab({ Title = T.tab_settings or "Settings", Icon = "settings" })
@@ -1306,7 +1199,7 @@ Settings:AddButton({
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 17: TAB "CONFIG"
+--  SECCIÓN 16: TAB "CONFIG"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Config = Window:AddTab({ Title = T.tab_config or "Config", Icon = "clipboard" })
@@ -1393,7 +1286,7 @@ if SaveManager then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 18: INICIALIZACIÓN FINAL Y CARGAS ASINCRONAS
+--  SECCIÓN 17: INICIALIZACIÓN FINAL Y CARGAS ASINCRONAS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 Window:SelectTab(startOnSettings and 5 or 1)
@@ -1457,12 +1350,7 @@ task.spawn(function()
     end
 
     initializing = false
-
-    if not getgenv()._AFO_ACCESS_LOGGED and not getgenv()._AFO_IS_REJOIN then
-        getgenv()._AFO_ACCESS_LOGGED = true
-        task.spawn(sendWebhook, true, AFO_USER_HWID)
-    end
-
+    
     pcall(function()
         Fluent:Notify({ Title = T.notif_activated_title or "All for One", Content = T.notif_activated_content or "Quirk 🟢", Duration = 5 })
     end)
