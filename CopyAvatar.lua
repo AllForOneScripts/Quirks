@@ -1,5 +1,3 @@
-print ("testing")
-
 local M = {}
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -9,6 +7,7 @@ local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
 local Debris = game:GetService("Debris")
 local SoundService = game:GetService("SoundService")
+local CollectionService = game:GetService("CollectionService")
 local localPlayer
 local keys
 local active = false
@@ -2219,6 +2218,7 @@ local function createBeamStack(center, height)
 		sheets = {},
 		strands = {},
 		emitters = {},
+		ground = 1,
 	}
 	local function keep(part)
 		table.insert(stack.parts, part)
@@ -2400,15 +2400,17 @@ local function createBeamStack(center, height)
 			Size = Vector3.new(32, 32, 32),
 			Transparency = 1,
 		}):Play()
-		for k = 0, 1 do
-			local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2)
-			local size = 48 + k * 18
-			TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Size = Vector3.new(0.15, size, size),
-				Transparency = 1,
-			}):Play()
+		if stack.ground > 0.5 then
+			for k = 0, 1 do
+				local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2)
+				local size = 48 + k * 18
+				TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(0.15, size, size),
+					Transparency = 1,
+				}):Play()
+			end
+			dust:Emit(28)
 		end
-		dust:Emit(28)
 		streaks:Emit(24)
 		bloom:Emit(3)
 	end
@@ -2418,6 +2420,7 @@ local function createBeamStack(center, height)
 			return
 		end
 		alpha = math.clamp(alpha, 0, 1)
+		local g = math.clamp(stack.ground or 1, 0, 1)
 		if not stack.ignited and grow > 0.04 and alpha > 0.3 then
 			stack.ignited = true
 			pcall(stack.ignite, position)
@@ -2482,6 +2485,8 @@ local function createBeamStack(center, height)
 		local haloSize = math.max(28 * widthScale, 0.1)
 		discHalo.Size = Vector3.new(0.2, haloSize, haloSize)
 		discHalo.CFrame = CFrame.new(position + Vector3.new(0, 0.1, 0)) * CFrame.Angles(0, 0, math.rad(90))
+		disc.Transparency = 0.25 + 0.75 * (1 - g)
+		discHalo.Transparency = 0.82 + 0.18 * (1 - g)
 		lightPart.Position = position + Vector3.new(0, 6, 0)
 		light.Brightness = 12 * alpha * math.min(widthScale, 1.5) * (0.85 + 0.15 * math.sin(t * 31))
 		local reach = 2 + 5 * math.min(widthScale, 2)
@@ -2489,11 +2494,14 @@ local function createBeamStack(center, height)
 		emitPart.Position = position + Vector3.new(0, 0.5, 0)
 		streaks.Rate = (grow > 0.15) and (130 * alpha) or 0
 		embers.Rate = 50 * alpha
-		dust.Rate = 26 * alpha * math.min(widthScale, 1.5)
+		dust.Rate = 26 * alpha * math.min(widthScale, 1.5) * g
 		bloom.Rate = 12 * alpha
 	end
 
 	function stack.pulse(position, widthScale)
+		if (stack.ground or 1) < 0.5 then
+			return
+		end
 		local rise = height * (0.55 + 0.4 * math.random())
 		for k = 0, 1 do
 			local ring = flatRing(
@@ -2555,6 +2563,22 @@ local function createBeamStack(center, height)
 	return stack
 end
 
+local function sampleGround(root, humanoid, params)
+	local feet = math.max(humanoid.HipHeight + root.Size.Y / 2, 1.5)
+	local origin = root.Position
+	local hit = workspace:Raycast(origin, Vector3.new(0, -(feet + 2.5), 0), params)
+	local onFloor = humanoid.FloorMaterial ~= Enum.Material.Air
+	if hit then
+		local gap = origin.Y - hit.Position.Y
+		if onFloor or gap <= feet + 0.7 then
+			return true, hit.Position.Y + 0.1
+		end
+	elseif onFloor then
+		return true, origin.Y - feet + 0.1
+	end
+	return false, origin.Y
+end
+
 local function newStreakHead(color)
 	local p = newFxPart({
 		Transparency = 1,
@@ -2601,26 +2625,30 @@ local function streakPoint(center, baseAngle, direction, u, scale)
 	return center + Vector3.new(math.cos(angle) * radius, height, math.sin(angle) * radius)
 end
 
-local function beginVortex(character, root)
+local function beginVortex(character, root, humanoid)
 	if activeVortex then
 		pcall(activeVortex.stop)
 	end
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
-	local origin = root.Position
-	local hit = workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
-	local groundY = hit and (hit.Position.Y + 0.1) or (origin.Y - 3)
 	local state = { alive = true, parts = {} }
 	local function keep(p)
 		table.insert(state.parts, p)
 		return p
 	end
-	local function groundCenter()
-		local p = root.Position
-		return Vector3.new(p.X, groundY, p.Z)
+	local fade = 1
+	do
+		local grounded = sampleGround(root, humanoid, params)
+		fade = grounded and 1 or 0
 	end
-	local center = groundCenter()
+	local function followCenter(dt)
+		local grounded, gy = sampleGround(root, humanoid, params)
+		fade += ((grounded and 1 or 0) - fade) * (1 - math.exp(-dt * 14))
+		local p = root.Position
+		return Vector3.new(p.X, p.Y + (gy - p.Y) * fade, p.Z)
+	end
+	local center = followCenter(0)
 
 	local gather = keep(newFxPart({
 		Transparency = 1,
@@ -2656,6 +2684,7 @@ local function beginVortex(character, root)
 	light.Parent = gather
 
 	local beamStack = createBeamStack(center, BEAM_HEIGHT)
+	beamStack.ground = fade
 
 	local heads = {}
 	for i = 0, STREAK_COUNT - 1 do
@@ -2677,12 +2706,13 @@ local function beginVortex(character, root)
 
 	local t0 = os.clock()
 	local nextRing, nextBolt, nextRock, nextPulse = 0, 0, 0, 0
-	state.conn = RunService.Heartbeat:Connect(function()
+	state.conn = RunService.Heartbeat:Connect(function(dt)
 		if not state.alive or not root.Parent then
 			return
 		end
 		local t = os.clock() - t0
-		center = groundCenter()
+		center = followCenter(dt)
+		beamStack.ground = fade
 		local ramp = smoothstep(t / 0.7)
 		gather.Position = center + Vector3.new(0, 3, 0)
 		light.Brightness = 2 + 6 * ramp * (0.7 + 0.3 * math.sin(t * 30))
@@ -2712,7 +2742,7 @@ local function beginVortex(character, root)
 			end
 		end
 
-		if t >= nextRing then
+		if t >= nextRing and fade > 0.5 then
 			nextRing = t + 0.3
 			local ring
 			if t < 0.6 then
@@ -2740,7 +2770,7 @@ local function beginVortex(character, root)
 			end
 		end
 
-		if ramp > 0.15 and t >= nextRock then
+		if ramp > 0.15 and t >= nextRock and fade > 0.5 then
 			nextRock = t + 0.1
 			throwRock(center, 3 + math.random() * 7, 6 + math.random() * 12, 1.4)
 		end
@@ -2794,8 +2824,8 @@ local function splash(character, humanoid)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
-	local hit = workspace:Raycast(center, Vector3.new(0, -15, 0), params)
-	local groundPos = hit and (hit.Position + Vector3.new(0, 0.1, 0)) or (center - Vector3.new(0, 3, 0))
+	local grounded, groundY = sampleGround(root, humanoid, params)
+	local groundPos = grounded and Vector3.new(center.X, groundY, center.Z) or center
 	if gray then
 		gray.boost = 1
 	end
@@ -2816,6 +2846,7 @@ local function splash(character, humanoid)
 	}):Play()
 
 	local burst = createBeamStack(groundPos, BEAM_HEIGHT)
+	burst.ground = grounded and 1 or 0
 	burst.play(groundPos, 1.1, function(t)
 		local k = t / 1.1
 		local attack = math.min(t / 0.07, 1)
@@ -2827,7 +2858,7 @@ local function splash(character, humanoid)
 		end)
 	end
 
-	for k = 0, 2 do
+	for k = 0, grounded and 2 or -1 do
 		task.delay(k * 0.09, function()
 			local diameter = 70 + k * 12
 			local ring = flatRing(groundPos, 4, 0.35, (k % 2 == 0) and FX_WHITE or FX_LIGHT, 0.1, 1.5)
@@ -2843,7 +2874,7 @@ local function splash(character, humanoid)
 		local b = center + Vector3.new(0, (math.random() - 0.3) * 10, 0) + ringOffset(8 + math.random() * 8)
 		lightningBolt(a, b, (math.random() < 0.5) and FX_WHITE or FX_LIGHT, 0.2)
 	end
-	for _ = 1, 18 do
+	for _ = 1, grounded and 18 or 0 do
 		throwRock(groundPos, 2 + math.random() * 9, 8 + math.random() * 14, 1.6)
 	end
 
@@ -3206,6 +3237,88 @@ local function watchDeath(humanoid)
 	end)
 end
 local R15 = {}
+
+local SMARTBONE_DEBUG = false
+
+local function looksSmartBone(text)
+	text = string.lower(tostring(text))
+	return text:find("smartbone", 1, true) ~= nil or text:find("smart_bone", 1, true) ~= nil
+end
+
+local function smartBoneReport(character, label)
+	local lines = { "[CopyAvatar] Reporte SmartBone (" .. tostring(label) .. ")" }
+	local function add(text)
+		table.insert(lines, text)
+	end
+	local bones, targets, layers = 0, 0, 0
+	local flagged = 0
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("Bone") then
+			bones += 1
+		elseif d:IsA("WrapTarget") then
+			targets += 1
+		elseif d:IsA("WrapLayer") then
+			layers += 1
+		end
+		local hit = looksSmartBone(d.Name) or looksSmartBone(d.ClassName)
+		if not hit then
+			for key in pairs(d:GetAttributes()) do
+				if looksSmartBone(key) then
+					hit = true
+					break
+				end
+			end
+		end
+		if not hit then
+			for _, tag in ipairs(CollectionService:GetTags(d)) do
+				if looksSmartBone(tag) then
+					hit = true
+					break
+				end
+			end
+		end
+		if hit and flagged < 40 then
+			flagged += 1
+			add("  * " .. d:GetFullName() .. " [" .. d.ClassName .. "]")
+		end
+	end
+	add(("  Bones=%d  WrapTarget=%d  WrapLayer=%d  marcados=%d"):format(bones, targets, layers, flagged))
+	for _, d in ipairs(character:GetChildren()) do
+		if d:IsA("BasePart") then
+			local extra = {}
+			for _, c in ipairs(d:GetChildren()) do
+				extra[#extra + 1] = c.ClassName .. ":" .. c.Name
+			end
+			add(("  parte %s T=%.2f LTM=%.2f size=%s color=%s hijos={%s}"):format(
+				d.Name,
+				d.Transparency,
+				d.LocalTransparencyModifier,
+				tostring(d.Size),
+				tostring(d.Color),
+				table.concat(extra, ", ")
+			))
+		elseif d:IsA("Accessory") then
+			local h = d:FindFirstChild("Handle")
+			local b = h and #h:GetDescendants() or 0
+			add(("  accesorio %s (layered=%s, hijos del Handle=%d)"):format(d.Name, tostring(isLayeredAccessory(d)), b))
+		end
+	end
+	pcall(function()
+		local roots = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer"), localPlayer, workspace }
+		local found = 0
+		for _, root in ipairs(roots) do
+			for _, d in ipairs(root:GetDescendants()) do
+				if (d:IsA("LuaSourceContainer")) and looksSmartBone(d.Name) and found < 15 then
+					found += 1
+					add("  script: " .. d:GetFullName())
+				end
+			end
+		end
+	end)
+	local text = table.concat(lines, "\n")
+	warn(text)
+	return text
+end
 
 local ANIM_SLOTS = {
 	{ slot = "idle", label = "quieto", prop = "IdleAnimation", typeId = 51 },
@@ -3903,12 +4016,34 @@ function R15.copyVisual(part, donorPart)
 	part.Transparency = donorPart.Transparency
 end
 
+local FIT_VALUES = { OriginalSize = true, AvatarPartScaleType = true, OriginalPosition = true }
+
+function R15.syncFitValues(target, source)
+	for _, d in ipairs(source:GetChildren()) do
+		if FIT_VALUES[d.Name] and d:IsA("ValueBase") then
+			local mine = target:FindFirstChild(d.Name)
+			if mine and mine.ClassName == d.ClassName then
+				pcall(function()
+					mine.Value = d.Value
+				end)
+			else
+				if mine then
+					mine:Destroy()
+				end
+				d:Clone().Parent = target
+			end
+		end
+	end
+end
+
 function R15.copyPartChildren(part, donorPart)
+	R15.syncFitValues(part, donorPart)
 	for _, d in ipairs(donorPart:GetChildren()) do
 		if d:IsA("Attachment") then
 			local mine = part:FindFirstChild(d.Name)
 			if mine and mine:IsA("Attachment") then
 				mine.CFrame = d.CFrame
+				R15.syncFitValues(mine, d)
 			else
 				d:Clone().Parent = part
 			end
@@ -4210,6 +4345,9 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 		captureOriginals(character, humanoid)
+		if SMARTBONE_DEBUG then
+			smartBoneReport(character, "antes del cambio")
+		end
 		local userId = getUserId(username)
 		if not userId then
 			if onFail then
@@ -4418,6 +4556,13 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return result
 		end
 		local function finishChange()
+			if SMARTBONE_DEBUG then
+				task.delay(1.5, function()
+					if character.Parent then
+						smartBoneReport(character, "despues del cambio")
+					end
+				end)
+			end
 			if donor then
 				pcall(repairAccessoryFx, character, donor)
 			end
@@ -4460,7 +4605,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				hideCharacter(character)
 				retargetGray(getGhostGroup())
 			end
-			local okFx, fxResult = pcall(beginVortex, character, root)
+			local okFx, fxResult = pcall(beginVortex, character, root, humanoid)
 			if okFx then
 				vortex = fxResult
 			else
@@ -4544,6 +4689,18 @@ local function resetToOriginal()
 		return
 	end
 	applyAvatar(localPlayer.Name, true, true, nil)
+end
+
+function M.SetSmartBoneDebug(value)
+	SMARTBONE_DEBUG = value == true
+end
+
+function M.DiagnoseSmartBone()
+	local character = localPlayer and localPlayer.Character
+	if not character then
+		return nil
+	end
+	return smartBoneReport(character, "manual")
 end
 
 function M.SetKey(keyCode)
