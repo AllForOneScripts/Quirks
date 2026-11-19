@@ -7,7 +7,6 @@ local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
 local Debris = game:GetService("Debris")
 local SoundService = game:GetService("SoundService")
-local CollectionService = game:GetService("CollectionService")
 local localPlayer
 local keys
 local active = false
@@ -33,7 +32,7 @@ local C_BLACK = Color3.fromRGB(6, 4, 12)
 local C_TEXT = Color3.fromRGB(220, 190, 255)
 local C_SUB = Color3.fromRGB(200, 170, 255)
 local C_BOX = Color3.fromRGB(20, 10, 40)
-local PANEL_W, PANEL_H = 360, 190
+local PANEL_W, PANEL_H = 290, 128
 local BOX_W = 190
 local MAX_TEXT, MIN_TEXT = 14, 11
 local MAX_RESULTS = 12
@@ -222,40 +221,22 @@ end
 
 local function loadAvatarImage(userId, currentRequest)
 	task.spawn(function()
-		local image
-		for _ = 1, 5 do
-			local ok, content, ready = pcall(function()
-				return Players:GetUserThumbnailAsync(
-					userId,
-					Enum.ThumbnailType.AvatarThumbnail,
-					Enum.ThumbnailSize.Size420x420
-				)
-			end)
-			if currentRequest ~= requestId then
-				return
-			end
-			if ok and content then
-				image = content
-				if ready ~= false then
-					break
-				end
-			end
-			task.wait(1)
-		end
-		if currentRequest ~= requestId or not image or not playerImage or not playerImage.Parent then
-			return
-		end
-		playerImage.Image = image
-		pcall(function()
-			ContentProvider:PreloadAsync({ playerImage })
+		local success, image = pcall(function()
+			return Players:GetUserThumbnailAsync(
+				userId,
+				Enum.ThumbnailType.AvatarBust,
+				Enum.ThumbnailSize.Size420x420
+			)
 		end)
-		if currentRequest ~= requestId or not playerImage.Parent then
+		if currentRequest ~= requestId then
 			return
 		end
-		playerImage.ImageTransparency = 1
-		TweenService:Create(playerImage, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			ImageTransparency = 0,
-		}):Play()
+		if success and image and playerImage and playerImage.Parent then
+			playerImage.Image = image
+			pcall(function()
+				ContentProvider:PreloadAsync({ playerImage })
+			end)
+		end
 	end)
 end
 
@@ -2218,7 +2199,6 @@ local function createBeamStack(center, height)
 		sheets = {},
 		strands = {},
 		emitters = {},
-		ground = 1,
 	}
 	local function keep(part)
 		table.insert(stack.parts, part)
@@ -2400,17 +2380,15 @@ local function createBeamStack(center, height)
 			Size = Vector3.new(32, 32, 32),
 			Transparency = 1,
 		}):Play()
-		if stack.ground > 0.5 then
-			for k = 0, 1 do
-				local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2)
-				local size = 48 + k * 18
-				TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Size = Vector3.new(0.15, size, size),
-					Transparency = 1,
-				}):Play()
-			end
-			dust:Emit(28)
+		for k = 0, 1 do
+			local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2)
+			local size = 48 + k * 18
+			TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = Vector3.new(0.15, size, size),
+				Transparency = 1,
+			}):Play()
 		end
+		dust:Emit(28)
 		streaks:Emit(24)
 		bloom:Emit(3)
 	end
@@ -2420,7 +2398,6 @@ local function createBeamStack(center, height)
 			return
 		end
 		alpha = math.clamp(alpha, 0, 1)
-		local g = math.clamp(stack.ground or 1, 0, 1)
 		if not stack.ignited and grow > 0.04 and alpha > 0.3 then
 			stack.ignited = true
 			pcall(stack.ignite, position)
@@ -2485,8 +2462,6 @@ local function createBeamStack(center, height)
 		local haloSize = math.max(28 * widthScale, 0.1)
 		discHalo.Size = Vector3.new(0.2, haloSize, haloSize)
 		discHalo.CFrame = CFrame.new(position + Vector3.new(0, 0.1, 0)) * CFrame.Angles(0, 0, math.rad(90))
-		disc.Transparency = 0.25 + 0.75 * (1 - g)
-		discHalo.Transparency = 0.82 + 0.18 * (1 - g)
 		lightPart.Position = position + Vector3.new(0, 6, 0)
 		light.Brightness = 12 * alpha * math.min(widthScale, 1.5) * (0.85 + 0.15 * math.sin(t * 31))
 		local reach = 2 + 5 * math.min(widthScale, 2)
@@ -2494,14 +2469,11 @@ local function createBeamStack(center, height)
 		emitPart.Position = position + Vector3.new(0, 0.5, 0)
 		streaks.Rate = (grow > 0.15) and (130 * alpha) or 0
 		embers.Rate = 50 * alpha
-		dust.Rate = 26 * alpha * math.min(widthScale, 1.5) * g
+		dust.Rate = 26 * alpha * math.min(widthScale, 1.5)
 		bloom.Rate = 12 * alpha
 	end
 
 	function stack.pulse(position, widthScale)
-		if (stack.ground or 1) < 0.5 then
-			return
-		end
 		local rise = height * (0.55 + 0.4 * math.random())
 		for k = 0, 1 do
 			local ring = flatRing(
@@ -2563,22 +2535,6 @@ local function createBeamStack(center, height)
 	return stack
 end
 
-local function sampleGround(root, humanoid, params)
-	local feet = math.max(humanoid.HipHeight + root.Size.Y / 2, 1.5)
-	local origin = root.Position
-	local hit = workspace:Raycast(origin, Vector3.new(0, -(feet + 2.5), 0), params)
-	local onFloor = humanoid.FloorMaterial ~= Enum.Material.Air
-	if hit then
-		local gap = origin.Y - hit.Position.Y
-		if onFloor or gap <= feet + 0.7 then
-			return true, hit.Position.Y + 0.1
-		end
-	elseif onFloor then
-		return true, origin.Y - feet + 0.1
-	end
-	return false, origin.Y
-end
-
 local function newStreakHead(color)
 	local p = newFxPart({
 		Transparency = 1,
@@ -2625,30 +2581,26 @@ local function streakPoint(center, baseAngle, direction, u, scale)
 	return center + Vector3.new(math.cos(angle) * radius, height, math.sin(angle) * radius)
 end
 
-local function beginVortex(character, root, humanoid)
+local function beginVortex(character, root)
 	if activeVortex then
 		pcall(activeVortex.stop)
 	end
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
+	local origin = root.Position
+	local hit = workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
+	local groundY = hit and (hit.Position.Y + 0.1) or (origin.Y - 3)
 	local state = { alive = true, parts = {} }
 	local function keep(p)
 		table.insert(state.parts, p)
 		return p
 	end
-	local fade = 1
-	do
-		local grounded = sampleGround(root, humanoid, params)
-		fade = grounded and 1 or 0
-	end
-	local function followCenter(dt)
-		local grounded, gy = sampleGround(root, humanoid, params)
-		fade += ((grounded and 1 or 0) - fade) * (1 - math.exp(-dt * 14))
+	local function groundCenter()
 		local p = root.Position
-		return Vector3.new(p.X, p.Y + (gy - p.Y) * fade, p.Z)
+		return Vector3.new(p.X, groundY, p.Z)
 	end
-	local center = followCenter(0)
+	local center = groundCenter()
 
 	local gather = keep(newFxPart({
 		Transparency = 1,
@@ -2684,7 +2636,6 @@ local function beginVortex(character, root, humanoid)
 	light.Parent = gather
 
 	local beamStack = createBeamStack(center, BEAM_HEIGHT)
-	beamStack.ground = fade
 
 	local heads = {}
 	for i = 0, STREAK_COUNT - 1 do
@@ -2706,13 +2657,12 @@ local function beginVortex(character, root, humanoid)
 
 	local t0 = os.clock()
 	local nextRing, nextBolt, nextRock, nextPulse = 0, 0, 0, 0
-	state.conn = RunService.Heartbeat:Connect(function(dt)
+	state.conn = RunService.Heartbeat:Connect(function()
 		if not state.alive or not root.Parent then
 			return
 		end
 		local t = os.clock() - t0
-		center = followCenter(dt)
-		beamStack.ground = fade
+		center = groundCenter()
 		local ramp = smoothstep(t / 0.7)
 		gather.Position = center + Vector3.new(0, 3, 0)
 		light.Brightness = 2 + 6 * ramp * (0.7 + 0.3 * math.sin(t * 30))
@@ -2742,7 +2692,7 @@ local function beginVortex(character, root, humanoid)
 			end
 		end
 
-		if t >= nextRing and fade > 0.5 then
+		if t >= nextRing then
 			nextRing = t + 0.3
 			local ring
 			if t < 0.6 then
@@ -2770,7 +2720,7 @@ local function beginVortex(character, root, humanoid)
 			end
 		end
 
-		if ramp > 0.15 and t >= nextRock and fade > 0.5 then
+		if ramp > 0.15 and t >= nextRock then
 			nextRock = t + 0.1
 			throwRock(center, 3 + math.random() * 7, 6 + math.random() * 12, 1.4)
 		end
@@ -2824,8 +2774,8 @@ local function splash(character, humanoid)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
-	local grounded, groundY = sampleGround(root, humanoid, params)
-	local groundPos = grounded and Vector3.new(center.X, groundY, center.Z) or center
+	local hit = workspace:Raycast(center, Vector3.new(0, -15, 0), params)
+	local groundPos = hit and (hit.Position + Vector3.new(0, 0.1, 0)) or (center - Vector3.new(0, 3, 0))
 	if gray then
 		gray.boost = 1
 	end
@@ -2846,7 +2796,6 @@ local function splash(character, humanoid)
 	}):Play()
 
 	local burst = createBeamStack(groundPos, BEAM_HEIGHT)
-	burst.ground = grounded and 1 or 0
 	burst.play(groundPos, 1.1, function(t)
 		local k = t / 1.1
 		local attack = math.min(t / 0.07, 1)
@@ -2858,7 +2807,7 @@ local function splash(character, humanoid)
 		end)
 	end
 
-	for k = 0, grounded and 2 or -1 do
+	for k = 0, 2 do
 		task.delay(k * 0.09, function()
 			local diameter = 70 + k * 12
 			local ring = flatRing(groundPos, 4, 0.35, (k % 2 == 0) and FX_WHITE or FX_LIGHT, 0.1, 1.5)
@@ -2874,7 +2823,7 @@ local function splash(character, humanoid)
 		local b = center + Vector3.new(0, (math.random() - 0.3) * 10, 0) + ringOffset(8 + math.random() * 8)
 		lightningBolt(a, b, (math.random() < 0.5) and FX_WHITE or FX_LIGHT, 0.2)
 	end
-	for _ = 1, grounded and 18 or 0 do
+	for _ = 1, 18 do
 		throwRock(groundPos, 2 + math.random() * 9, 8 + math.random() * 14, 1.6)
 	end
 
@@ -3237,88 +3186,6 @@ local function watchDeath(humanoid)
 	end)
 end
 local R15 = {}
-
-local SMARTBONE_DEBUG = false
-
-local function looksSmartBone(text)
-	text = string.lower(tostring(text))
-	return text:find("smartbone", 1, true) ~= nil or text:find("smart_bone", 1, true) ~= nil
-end
-
-local function smartBoneReport(character, label)
-	local lines = { "[CopyAvatar] Reporte SmartBone (" .. tostring(label) .. ")" }
-	local function add(text)
-		table.insert(lines, text)
-	end
-	local bones, targets, layers = 0, 0, 0
-	local flagged = 0
-	for _, d in ipairs(character:GetDescendants()) do
-		if d:IsA("Bone") then
-			bones += 1
-		elseif d:IsA("WrapTarget") then
-			targets += 1
-		elseif d:IsA("WrapLayer") then
-			layers += 1
-		end
-		local hit = looksSmartBone(d.Name) or looksSmartBone(d.ClassName)
-		if not hit then
-			for key in pairs(d:GetAttributes()) do
-				if looksSmartBone(key) then
-					hit = true
-					break
-				end
-			end
-		end
-		if not hit then
-			for _, tag in ipairs(CollectionService:GetTags(d)) do
-				if looksSmartBone(tag) then
-					hit = true
-					break
-				end
-			end
-		end
-		if hit and flagged < 40 then
-			flagged += 1
-			add("  * " .. d:GetFullName() .. " [" .. d.ClassName .. "]")
-		end
-	end
-	add(("  Bones=%d  WrapTarget=%d  WrapLayer=%d  marcados=%d"):format(bones, targets, layers, flagged))
-	for _, d in ipairs(character:GetChildren()) do
-		if d:IsA("BasePart") then
-			local extra = {}
-			for _, c in ipairs(d:GetChildren()) do
-				extra[#extra + 1] = c.ClassName .. ":" .. c.Name
-			end
-			add(("  parte %s T=%.2f LTM=%.2f size=%s color=%s hijos={%s}"):format(
-				d.Name,
-				d.Transparency,
-				d.LocalTransparencyModifier,
-				tostring(d.Size),
-				tostring(d.Color),
-				table.concat(extra, ", ")
-			))
-		elseif d:IsA("Accessory") then
-			local h = d:FindFirstChild("Handle")
-			local b = h and #h:GetDescendants() or 0
-			add(("  accesorio %s (layered=%s, hijos del Handle=%d)"):format(d.Name, tostring(isLayeredAccessory(d)), b))
-		end
-	end
-	pcall(function()
-		local roots = { game:GetService("ReplicatedStorage"), game:GetService("StarterPlayer"), localPlayer, workspace }
-		local found = 0
-		for _, root in ipairs(roots) do
-			for _, d in ipairs(root:GetDescendants()) do
-				if (d:IsA("LuaSourceContainer")) and looksSmartBone(d.Name) and found < 15 then
-					found += 1
-					add("  script: " .. d:GetFullName())
-				end
-			end
-		end
-	end)
-	local text = table.concat(lines, "\n")
-	warn(text)
-	return text
-end
 
 local ANIM_SLOTS = {
 	{ slot = "idle", label = "quieto", prop = "IdleAnimation", typeId = 51 },
@@ -4016,34 +3883,12 @@ function R15.copyVisual(part, donorPart)
 	part.Transparency = donorPart.Transparency
 end
 
-local FIT_VALUES = { OriginalSize = true, AvatarPartScaleType = true, OriginalPosition = true }
-
-function R15.syncFitValues(target, source)
-	for _, d in ipairs(source:GetChildren()) do
-		if FIT_VALUES[d.Name] and d:IsA("ValueBase") then
-			local mine = target:FindFirstChild(d.Name)
-			if mine and mine.ClassName == d.ClassName then
-				pcall(function()
-					mine.Value = d.Value
-				end)
-			else
-				if mine then
-					mine:Destroy()
-				end
-				d:Clone().Parent = target
-			end
-		end
-	end
-end
-
 function R15.copyPartChildren(part, donorPart)
-	R15.syncFitValues(part, donorPart)
 	for _, d in ipairs(donorPart:GetChildren()) do
 		if d:IsA("Attachment") then
 			local mine = part:FindFirstChild(d.Name)
 			if mine and mine:IsA("Attachment") then
 				mine.CFrame = d.CFrame
-				R15.syncFitValues(mine, d)
 			else
 				d:Clone().Parent = part
 			end
@@ -4345,9 +4190,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return
 		end
 		captureOriginals(character, humanoid)
-		if SMARTBONE_DEBUG then
-			smartBoneReport(character, "antes del cambio")
-		end
 		local userId = getUserId(username)
 		if not userId then
 			if onFail then
@@ -4556,13 +4398,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			return result
 		end
 		local function finishChange()
-			if SMARTBONE_DEBUG then
-				task.delay(1.5, function()
-					if character.Parent then
-						smartBoneReport(character, "despues del cambio")
-					end
-				end)
-			end
 			if donor then
 				pcall(repairAccessoryFx, character, donor)
 			end
@@ -4605,7 +4440,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 				hideCharacter(character)
 				retargetGray(getGhostGroup())
 			end
-			local okFx, fxResult = pcall(beginVortex, character, root, humanoid)
+			local okFx, fxResult = pcall(beginVortex, character, root)
 			if okFx then
 				vortex = fxResult
 			else
@@ -4689,18 +4524,6 @@ local function resetToOriginal()
 		return
 	end
 	applyAvatar(localPlayer.Name, true, true, nil)
-end
-
-function M.SetSmartBoneDebug(value)
-	SMARTBONE_DEBUG = value == true
-end
-
-function M.DiagnoseSmartBone()
-	local character = localPlayer and localPlayer.Character
-	if not character then
-		return nil
-	end
-	return smartBoneReport(character, "manual")
 end
 
 function M.SetKey(keyCode)
@@ -4813,58 +4636,31 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	stroke.Thickness = 1
 	stroke.Transparency = 0.5
 	stroke.Parent = mainFrame
-	local FIELD_X = 15
-	local IMAGE_X = FIELD_X + BOX_W + 12
-	local IMAGE_W = PANEL_W - IMAGE_X - 15
-	local IMAGE_H = PANEL_H - 24
-
-	local function addStroke(parent, transparency)
-		local s = Instance.new("UIStroke")
-		s.Color = C_PURPLE
-		s.Thickness = 1
-		s.Transparency = transparency
-		s.Parent = parent
-		return s
-	end
-
-	local function makeBox(name, size, position)
-		local box = Instance.new("Frame")
-		box.Name = name
-		box.Size = size
-		box.Position = position
-		box.BackgroundColor3 = C_BOX
-		box.BackgroundTransparency = 0.3
-		box.BorderSizePixel = 0
-		box.ZIndex = 11
-		box.Parent = mainFrame
-		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-		addStroke(box, 0.7)
-		return box
-	end
-
-	local titleBox = makeBox("TitleBox", UDim2.new(0, BOX_W, 0, 32), UDim2.new(0, FIELD_X, 0, 12))
+	local closeButton = Instance.new("TextButton")
+	closeButton.Size = UDim2.new(0, 20, 0, 20)
+	closeButton.Position = UDim2.new(1, -30, 0, 10)
+	closeButton.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+	closeButton.BackgroundTransparency = 0.2
+	closeButton.TextColor3 = Color3.new(1, 1, 1)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 12
+	closeButton.Text = "X"
+	closeButton.BorderSizePixel = 0
+	closeButton.Parent = mainFrame
+	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.fromScale(1, 1)
+	title.Size = UDim2.new(0, 150, 0, 20)
+	title.Position = UDim2.new(0, 15, 0, 10)
 	title.BackgroundTransparency = 1
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 14
-	title.TextColor3 = Color3.new(1, 1, 1)
-	title.Text = "AVATAR CHANGER"
-	title.TextXAlignment = Enum.TextXAlignment.Center
-	title.TextYAlignment = Enum.TextYAlignment.Center
-	title.ZIndex = 12
-	title.Parent = titleBox
-	local titleGradient = Instance.new("UIGradient")
-	titleGradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(230, 205, 255)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 215, 255)),
-	})
-	titleGradient.Parent = title
-
+	title.TextColor3 = C_TEXT
+	title.Text = "Avatar Changer"
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = mainFrame
 	local textBox = Instance.new("TextBox")
-	textBox.Size = UDim2.new(0, BOX_W, 0, 32)
-	textBox.Position = UDim2.new(0, FIELD_X, 0, 52)
+	textBox.Size = UDim2.new(0, BOX_W, 0, 28)
+	textBox.Position = UDim2.new(0, 15, 0, 42)
 	textBox.BackgroundColor3 = C_BOX
 	textBox.BackgroundTransparency = 0.3
 	textBox.TextColor3 = C_TEXT
@@ -4877,18 +4673,20 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	textBox.ClipsDescendants = true
 	textBox.BorderSizePixel = 0
 	textBox.ClearTextOnFocus = false
-	textBox.ZIndex = 11
 	textBox.Parent = mainFrame
 	Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 4)
 	local boxPadding = Instance.new("UIPadding")
 	boxPadding.PaddingLeft = UDim.new(0, 8)
 	boxPadding.PaddingRight = UDim.new(0, 8)
 	boxPadding.Parent = textBox
-	local boxStroke = addStroke(textBox, 0.7)
-
+	local boxStroke = Instance.new("UIStroke")
+	boxStroke.Color = C_PURPLE
+	boxStroke.Thickness = 1
+	boxStroke.Transparency = 0.7
+	boxStroke.Parent = textBox
 	local applyButton = Instance.new("TextButton")
-	applyButton.Size = UDim2.new(0, BOX_W - 42, 0, 32)
-	applyButton.Position = UDim2.new(0, FIELD_X, 0, 92)
+	applyButton.Size = UDim2.new(0, 150, 0, 26)
+	applyButton.Position = UDim2.new(0, 15, 0, 82)
 	applyButton.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
 	applyButton.BackgroundTransparency = 0.2
 	applyButton.TextColor3 = Color3.new(1, 1, 1)
@@ -4896,20 +4694,11 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	applyButton.TextSize = 12
 	applyButton.Text = "Apply"
 	applyButton.BorderSizePixel = 0
-	applyButton.ZIndex = 11
 	applyButton.Parent = mainFrame
 	Instance.new("UICorner", applyButton).CornerRadius = UDim.new(0, 4)
-	local applyGradient = Instance.new("UIGradient")
-	applyGradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(190, 175, 215)),
-	})
-	applyGradient.Rotation = 90
-	applyGradient.Parent = applyButton
-
 	local resetButton = Instance.new("TextButton")
-	resetButton.Size = UDim2.new(0, 36, 0, 32)
-	resetButton.Position = UDim2.new(0, FIELD_X + BOX_W - 36, 0, 92)
+	resetButton.Size = UDim2.new(0, 35, 0, 26)
+	resetButton.Position = UDim2.new(0, 170, 0, 82)
 	resetButton.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
 	resetButton.BackgroundTransparency = 0.2
 	resetButton.TextColor3 = Color3.new(1, 1, 1)
@@ -4917,84 +4706,36 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	resetButton.TextSize = 14
 	resetButton.Text = "🔄"
 	resetButton.BorderSizePixel = 0
-	resetButton.ZIndex = 11
 	resetButton.Parent = mainFrame
 	Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 4)
-	local resetGradient = applyGradient:Clone()
-	resetGradient.Parent = resetButton
-
-	local tipBox = makeBox("TipBox", UDim2.new(0, BOX_W, 0, PANEL_H - 12 - 132), UDim2.new(0, FIELD_X, 0, 132))
 	local hint = Instance.new("TextLabel")
-	hint.Size = UDim2.fromScale(1, 1)
+	hint.Size = UDim2.new(1, -30, 0, 12)
+	hint.Position = UDim2.new(0, 15, 0, 112)
 	hint.BackgroundTransparency = 1
 	hint.Font = Enum.Font.Gotham
-	hint.TextSize = 10
+	hint.TextSize = 9
 	hint.TextColor3 = C_SUB
-	hint.TextTransparency = 0.2
+	hint.TextTransparency = 0.35
 	hint.TextXAlignment = Enum.TextXAlignment.Left
-	hint.TextYAlignment = Enum.TextYAlignment.Center
-	hint.TextWrapped = true
-	hint.Text = 'Tip: "Nickname"\nSearch players in this server'
-	hint.ZIndex = 12
-	hint.Parent = tipBox
-	local hintPadding = Instance.new("UIPadding")
-	hintPadding.PaddingLeft = UDim.new(0, 8)
-	hintPadding.PaddingRight = UDim.new(0, 8)
-	hintPadding.Parent = hint
-
+	hint.Text = 'Tip: "Nickname"'
+	hint.Parent = mainFrame
 	local imageContainer = Instance.new("Frame")
-	imageContainer.Name = "BodyPreview"
-	imageContainer.Size = UDim2.new(0, IMAGE_W, 0, IMAGE_H)
-	imageContainer.Position = UDim2.new(0, IMAGE_X, 0, 12)
-	imageContainer.BackgroundColor3 = Color3.new(1, 1, 1)
-	imageContainer.BackgroundTransparency = 0.1
+	imageContainer.Size = UDim2.new(0, 55, 0, 55)
+	imageContainer.Position = UDim2.new(1, -70, 0, 34)
+	imageContainer.BackgroundColor3 = C_BOX
+	imageContainer.BackgroundTransparency = 0.3
 	imageContainer.BorderSizePixel = 0
-	imageContainer.ClipsDescendants = true
 	imageContainer.ZIndex = 11
 	imageContainer.Parent = mainFrame
-	Instance.new("UICorner", imageContainer).CornerRadius = UDim.new(0, 6)
-	addStroke(imageContainer, 0.4)
-	local imageGradient = Instance.new("UIGradient")
-	imageGradient.Color = ColorSequence.new(Color3.fromRGB(52, 24, 92), Color3.fromRGB(10, 6, 18))
-	imageGradient.Rotation = 90
-	imageGradient.Parent = imageContainer
-
-	local pedestal = Instance.new("Frame")
-	pedestal.Name = "Pedestal"
-	pedestal.AnchorPoint = Vector2.new(0.5, 1)
-	pedestal.Size = UDim2.new(0.7, 0, 0, 10)
-	pedestal.Position = UDim2.new(0.5, 0, 1, -4)
-	pedestal.BackgroundColor3 = Color3.fromRGB(150, 110, 220)
-	pedestal.BackgroundTransparency = 0.65
-	pedestal.BorderSizePixel = 0
-	pedestal.ZIndex = 12
-	pedestal.Parent = imageContainer
-	Instance.new("UICorner", pedestal).CornerRadius = UDim.new(0.5, 0)
-
+	Instance.new("UICorner", imageContainer).CornerRadius = UDim.new(1, 0)
 	playerImage = Instance.new("ImageLabel")
 	playerImage.Name = "PlayerImage"
 	playerImage.Size = UDim2.fromScale(1, 1)
 	playerImage.BackgroundTransparency = 1
 	playerImage.Image = ""
-	playerImage.ImageTransparency = 1
-	playerImage.ScaleType = Enum.ScaleType.Crop
-	playerImage.ZIndex = 13
+	playerImage.ZIndex = 12
 	playerImage.Parent = imageContainer
-
-	local closeButton = Instance.new("TextButton")
-	closeButton.Size = UDim2.new(0, 20, 0, 20)
-	closeButton.Position = UDim2.new(1, -35, 0, 18)
-	closeButton.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-	closeButton.BackgroundTransparency = 0.2
-	closeButton.TextColor3 = Color3.new(1, 1, 1)
-	closeButton.Font = Enum.Font.GothamBold
-	closeButton.TextSize = 12
-	closeButton.Text = "X"
-	closeButton.BorderSizePixel = 0
-	closeButton.ZIndex = 30
-	closeButton.Parent = mainFrame
-	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
-
+	Instance.new("UICorner", playerImage).CornerRadius = UDim.new(1, 0)
 	local menu = Instance.new("Frame")
 	menu.Name = "NicknameMenu"
 	menu.Size = UDim2.new(1, 0, 0, 0)
@@ -5068,7 +4809,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 				if not textBox.Parent then
 					return
 				end
-				textBox.Position = UDim2.new(0, 15 + dx, 0, 52)
+				textBox.Position = UDim2.new(0, 15 + dx, 0, 42)
 				task.wait(0.04)
 			end
 		end)
