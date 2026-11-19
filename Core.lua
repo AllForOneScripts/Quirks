@@ -20,7 +20,7 @@ local Players = cloneref(game:GetService("Players"))
 local lplr = Players.LocalPlayer
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 0: WHITELIST (HWID) Y REPORTE WEB
+--  SECCIÓN 2: WHITELIST (HWID) Y REPORTE WEB
 -- ═══════════════════════════════════════════════════════════════════════════
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1542697190043029554/_jVWr6oZeFleUNQcmWes-n-pRVnPctZpLxjQwkly7IRT3lvH2TQLDHtyq--Y6pVM62wu"
 
@@ -135,7 +135,7 @@ if not getgenv()._AFO_IS_REJOIN then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 2: SERVICIOS Y UTILIDADES GENÉRICAS
+--  SECCIÓN 3: SERVICIOS Y UTILIDADES GENÉRICAS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local httprequest = http_request or request or (syn and syn.request) or nil
@@ -162,7 +162,7 @@ local placeId = game.PlaceId
 local jobId = game.JobId
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 3: SELF‑RELOAD
+--  SECCIÓN 4: SELF‑RELOAD
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local SELF_URL = "https://raw.githubusercontent.com/AllForOneScripts/Quirks/main/Core.lua"
@@ -202,7 +202,7 @@ pcall(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 4: SISTEMA DE IDIOMA
+--  SECCIÓN 5: SISTEMA DE IDIOMA
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local savedLang = "ES"
@@ -221,7 +221,7 @@ pcall(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 5: ESTADOS RUNTIME
+--  SECCIÓN 6: ESTADOS RUNTIME
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local adminShieldEnabled  = true
@@ -240,7 +240,7 @@ local softAimEnabled      = true
 local antiFlingEnabled    = true
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 6: KEYBINDS
+--  SECCIÓN 7: KEYBINDS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Keys = {
@@ -288,7 +288,7 @@ local function applyKey(targetName, key, fallback)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 7: URLS DE MÓDULOS EXTERNOS
+--  SECCIÓN 8: URLS DE MÓDULOS EXTERNOS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local MODULE_URLS = {
@@ -336,7 +336,7 @@ end
 getgenv().loadModule = loadModule
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 8: GESTOR DE CONEXIONES
+--  SECCIÓN 9: GESTOR DE CONEXIONES
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local allConnections = {}
@@ -352,7 +352,7 @@ local function disconnectAllConnections()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 9: NOTIFICACIONES
+--  SECCIÓN 10: NOTIFICACIONES
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Fluent
@@ -366,7 +366,7 @@ local function notify(title, content, duration)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 10: INTERFAZ DE USUARIO Y BACKGROUND LOADING
+--  SECCIÓN 11: INTERFAZ DE USUARIO Y BACKGROUND LOADING
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- Antes se descargaban Lang, UI, SaveManager, InterfaceManager y el Theme uno
@@ -620,7 +620,7 @@ if type(AllForOneTheme.BuildDesign) == "function" then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 11: TAB "PODER"
+--  SECCIÓN 12: TAB "PODER"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Power = Window:AddTab({ Title = T.tab_power or "Power", Icon = "flame" })
@@ -953,7 +953,7 @@ Power:AddKeybind("GravattackMenuKeybind", {
 task.spawn(gravattackInitialize)
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 12: TAB "MISC"
+--  SECCIÓN 13: TAB "MISC"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Misc = Window:AddTab({ Title = T.tab_misc or "Misc", Icon = "music" })
@@ -1055,7 +1055,7 @@ Misc:AddKeybind("CopyAvatarKeybind", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 13: TAB "DEFENSA"
+--  SECCIÓN 14: TAB "DEFENSA"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Defend = Window:AddTab({ Title = T.tab_defend or "Defend", Icon = "shield" })
@@ -1111,7 +1111,7 @@ Defend:AddToggle("AdminShieldToggle", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 14: TAB "SERVIDOR"
+--  SECCIÓN 15: TAB "SERVIDOR"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Server = Window:AddTab({ Title = T.tab_server or "Server", Icon = "server" })
@@ -1247,7 +1247,7 @@ Server:AddKeybind("PhoenixMenuKeybind", {
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 15: TAB "AJUSTES"
+--  SECCIÓN 16: TAB "AJUSTES"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Settings = Window:AddTab({ Title = T.tab_settings or "Settings", Icon = "settings" })
@@ -1306,7 +1306,7 @@ Settings:AddButton({
 })
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 16: TAB "CONFIG"
+--  SECCIÓN 17: TAB "CONFIG"
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local Config = Window:AddTab({ Title = T.tab_config or "Config", Icon = "clipboard" })
@@ -1393,7 +1393,7 @@ if SaveManager then
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
---  SECCIÓN 17: INICIALIZACIÓN FINAL Y CARGAS ASINCRONAS
+--  SECCIÓN 18: INICIALIZACIÓN FINAL Y CARGAS ASINCRONAS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 Window:SelectTab(startOnSettings and 5 or 1)
