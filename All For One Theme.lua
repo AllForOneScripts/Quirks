@@ -7,7 +7,6 @@ local HttpService = game:GetService("HttpService")
 local Theme = {
     Version = 8.42,
     Repo = "AllForOneScripts/Quirks",
-    VersionRefresh = 300,
     BadgeOffsetX = 14,
 
     Accent = Color3.fromRGB(135, 18, 195),
@@ -898,12 +897,9 @@ Theme.BuildDesign = function(Window)
     end
 
     task.spawn(function()
-        while alive do
-            local ok, count = pcall(fetchCommitCount)
-            if ok and type(count) == "number" and count > 0 then
-                Theme.SetVersion(commitsToVersion(count))
-            end
-            task.wait(math.max(Theme.VersionRefresh or 300, 60))
+        local ok, count = pcall(fetchCommitCount)
+        if ok and type(count) == "number" and count > 0 then
+            Theme.SetVersion(commitsToVersion(count))
         end
     end)
 
