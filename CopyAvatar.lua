@@ -1,3 +1,5 @@
+print("Prueba sin ofuscar")
+
 local M = {}
 local CFG = {}
 local Players = game:GetService("Players")
