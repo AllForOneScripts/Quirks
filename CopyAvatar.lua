@@ -81,9 +81,6 @@ local USE_APPLY_DESCRIPTION_R6 = false
 local DEATH_WINDOW = 8
 local MAX_DEATH_STRIKES = 2
 local DESCRIPTION_TIMEOUT = 20
-local MORPH_TIME = 0.55
-local HEIGHT_TIME = 0.8
-local HEIGHT_EPSILON = 0.02
 local HIP_FOLLOW_RATE = 10
 
 local function clamp01(x)
@@ -929,13 +926,6 @@ local function poseGhost(g, root, humanoid, k, wobble, phase)
 		local w = math.sin(phase + item.seed) * 0.03 * wobble
 		poseGhostItem(g, item, k, Vector3.new(k * (1 + w), k, k * (1 + w)), followCF)
 	end
-end
-
-local function animateGhost(g, root, humanoid, k0, k1, duration, id, isValid)
-	return runPhase(duration, function(alpha)
-		local k = k0 + (k1 - k0) * easeInOut(alpha)
-		poseGhost(g, root, humanoid, k, math.sin(alpha * math.pi), alpha * 9)
-	end, id, isValid)
 end
 
 local MORPH_DURATION = 1.25
@@ -1847,7 +1837,7 @@ end
 function Cloth.waitLoaded(character)
 	local waited = 0
 	local didWait = false
-	while waited < 10 and localPlayer.Character == character do
+	while waited < 3 and localPlayer.Character == character do
 		local loaded = true
 		pcall(function()
 			loaded = localPlayer:HasAppearanceLoaded()
@@ -1952,11 +1942,13 @@ local FX_ROCK = Color3.fromRGB(112, 114, 120)
 local FX_HALO = Color3.fromRGB(196, 208, 255)
 local BEAM_TEX_SPARK = "rbxasset://textures/particles/sparkles_main.dds"
 local BEAM_TEX_SMOKE = "rbxasset://textures/particles/smoke_main.dds"
-local BEAM_HEIGHT = 240
-local PILLAR_ABOVE = 220
-local ENV_RAY = 800
-local VOID_DEPTH = 140
-local TOUCH_GAP = 0.9
+local Env = {
+	PILLAR_ABOVE = 220,
+	ENV_RAY = 800,
+	VOID_DEPTH = 140,
+	TOUCH_GAP = 0.9,
+	plates = setmetatable({}, { __mode = "k" }),
+}
 local BEAM_SAMPLES = { 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1 }
 local BEAM_STRANDS = 3
 local BEAM_LAYERS = {
@@ -1984,11 +1976,9 @@ local VORTEX_TURNS = 1.7
 local SCREEN_FLASH = true
 local activeVortex = nil
 
-local livePlates = setmetatable({}, { __mode = "k" })
-
-local function killPlates()
-	for part in pairs(livePlates) do
-		livePlates[part] = nil
+function Env.killPlates()
+	for part in pairs(Env.plates) do
+		Env.plates[part] = nil
 		pcall(function()
 			part:Destroy()
 		end)
@@ -2005,7 +1995,7 @@ local function flatRing(position, diameter, thickness, color, transparency, life
 		CFrame = CFrame.new(position) * CFrame.Angles(0, 0, math.rad(90)),
 	}, life)
 	if track then
-		livePlates[part] = true
+		Env.plates[part] = true
 	end
 	return part
 end
@@ -2512,7 +2502,7 @@ local function createBeamStack(center, height)
 	return stack
 end
 
-local function makeEnvParams(character)
+function Env.params(character)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local filter = { character }
@@ -2526,7 +2516,7 @@ local function makeEnvParams(character)
 	return params
 end
 
-local function lowestBodyY(character, root)
+function Env.lowestY(character, root)
 	local low = math.huge
 	for _, d in ipairs(character:GetChildren()) do
 		if d:IsA("BasePart") and d ~= root then
@@ -2545,20 +2535,20 @@ end
 -- Detecta dónde está el personaje respecto al mundo:
 --   ground = pies sobre el suelo | air = en el aire con suelo debajo
 --   water  = sobre/dentro del agua | void = sin suelo debajo
-local function senseEnvironment(character, root, humanoid, params)
-	local feetY = lowestBodyY(character, root)
+function Env.sense(character, root, humanoid, params)
+	local feetY = Env.lowestY(character, root)
 	local rp = root.Position
 	local env = { feetY = feetY, mode = "ground", touching = true, groundY = feetY, gap = 0 }
 	local origin = Vector3.new(rp.X, feetY + 1.5, rp.Z)
-	local hit = workspace:Raycast(origin, Vector3.new(0, -ENV_RAY, 0), params)
+	local hit = workspace:Raycast(origin, Vector3.new(0, -Env.ENV_RAY, 0), params)
 	if not hit then
 		if humanoid.FloorMaterial ~= Enum.Material.Air then
 			return env
 		end
 		env.mode = "void"
 		env.touching = false
-		env.groundY = feetY - VOID_DEPTH
-		env.gap = VOID_DEPTH
+		env.groundY = feetY - Env.VOID_DEPTH
+		env.gap = Env.VOID_DEPTH
 		return env
 	end
 	env.groundY = hit.Position.Y + 0.08
@@ -2570,7 +2560,7 @@ local function senseEnvironment(character, root, humanoid, params)
 	if swimming or hit.Material == Enum.Material.Water then
 		env.mode = "water"
 		env.touching = false
-	elseif env.gap <= TOUCH_GAP then
+	elseif env.gap <= Env.TOUCH_GAP then
 		env.mode = "ground"
 		env.touching = true
 	else
@@ -2630,14 +2620,14 @@ local function beginVortex(character, root, humanoid)
 	if activeVortex then
 		pcall(activeVortex.stop)
 	end
-	local params = makeEnvParams(character)
+	local params = Env.params(character)
 	local state = { alive = true, parts = {}, mode = "ground" }
 	local function keep(p)
 		table.insert(state.parts, p)
 		return p
 	end
 
-	local env = senseEnvironment(character, root, humanoid, params)
+	local env = Env.sense(character, root, humanoid, params)
 	local touching = env.touching
 	local touchTime = touching and 1 or 0
 	local plate = touching and 1 or 0
@@ -2647,7 +2637,7 @@ local function beginVortex(character, root, humanoid)
 	-- Se llama cada frame: actualiza el modo y devuelve
 	-- (cuerpo, base del pilar en el suelo, distancia pies-suelo)
 	local function sense(dt)
-		env = senseEnvironment(character, root, humanoid, params)
+		env = Env.sense(character, root, humanoid, params)
 		if env.touching then
 			touchTime += dt
 			if touchTime >= 0.06 then
@@ -2698,7 +2688,7 @@ local function beginVortex(character, root, humanoid)
 	light.Brightness = 0
 	light.Parent = gather
 
-	local beamStack = createBeamStack(center, gap + PILLAR_ABOVE)
+	local beamStack = createBeamStack(center, gap + Env.PILLAR_ABOVE)
 	beamStack.ground = plate
 	beamStack.descentGap = gap
 	beamStack.descent = descentRaw
@@ -2736,7 +2726,7 @@ local function beginVortex(character, root, humanoid)
 		body, center, gap = sense(dt)
 		local allowPlates = plate > 0.55
 		if wasPlates and not allowPlates then
-			killPlates()
+			Env.killPlates()
 		end
 		wasPlates = allowPlates
 
@@ -2746,7 +2736,7 @@ local function beginVortex(character, root, humanoid)
 			descentRaw = math.min(descentRaw + dt / 0.5, 1)
 		end
 		beamStack.ground = plate
-		beamStack.height = gap + PILLAR_ABOVE
+		beamStack.height = gap + Env.PILLAR_ABOVE
 		beamStack.descentGap = gap
 		beamStack.descent = 1 - (1 - descentRaw) ^ 3
 		if beamStack.holdIgnite and (touching or descentRaw >= 0.96) then
@@ -2864,7 +2854,7 @@ local function splash(character, humanoid)
 	stopSfxLoop()
 	playSfx(SFX_FINISH, SFX_FINISH_VOLUME)
 	local center = root.Position
-	local env = senseEnvironment(character, root, humanoid, makeEnvParams(character))
+	local env = Env.sense(character, root, humanoid, Env.params(character))
 	local grounded = env.touching
 	local groundPos = Vector3.new(center.X, env.groundY, center.Z)
 	if gray then
@@ -2886,7 +2876,7 @@ local function splash(character, humanoid)
 		Transparency = 1,
 	}):Play()
 
-	local burst = createBeamStack(groundPos, math.max(env.feetY - env.groundY, 0) + PILLAR_ABOVE)
+	local burst = createBeamStack(groundPos, math.max(env.feetY - env.groundY, 0) + Env.PILLAR_ABOVE)
 	burst.ground = grounded and 1 or 0
 	if env.mode == "void" then
 		burst.ignited = true
@@ -3310,7 +3300,6 @@ R15.FIXED_ANIMS = {
 	run = 90449724957683,
 	walk = 106767496454996,
 }
-local OVERRIDE_FADE_OUT = 0.15
 local PRIORITY_LADDER = {
 	Enum.AnimationPriority.Core,
 	Enum.AnimationPriority.Idle,
@@ -3320,15 +3309,6 @@ local PRIORITY_LADDER = {
 	Enum.AnimationPriority.Action3,
 	Enum.AnimationPriority.Action4,
 }
-
-local function priorityAbove(priority)
-	for i, item in ipairs(PRIORITY_LADDER) do
-		if item == priority then
-			return PRIORITY_LADDER[math.min(i + 1, #PRIORITY_LADDER)]
-		end
-	end
-	return Enum.AnimationPriority.Movement
-end
 
 local function numericAnimId(value)
 	if type(value) == "number" then
@@ -4284,7 +4264,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		if not root then
 			return
 		end
-		Cloth.waitLoaded(character)
+		pcall(Cloth.waitLoaded, character)
 		captureOriginals(character, humanoid)
 		local userId = getUserId(username)
 		if not userId then
@@ -4448,7 +4428,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			fixColorsDeferred(character, currentRequest)
 			guardAccessories(character, humanoid, records, currentRequest)
 			if not isR15 then
-				Cloth.guard(character, donor, currentRequest)
+				pcall(Cloth.guard, character, donor, currentRequest)
 			end
 		end
 		local function performChangeInner()
@@ -4607,7 +4587,8 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 	end)
 end
 
-local STRINGS = {
+local I18N = {}
+I18N.strings = {
 	es = {
 		title = "CAMBIAR AVATAR",
 		placeholder = "Usuario...",
@@ -4621,7 +4602,7 @@ local STRINGS = {
 		tip = 'Tip: "Nickname"\nSearch players in this server',
 	},
 }
-local LANG_MARKERS = {
+I18N.markers = {
 	es = {
 		"personajes", "despert", "sobrecarga", "presiona", "patada", "disparo", "ataque", "relámpago", "relampago",
 		"velocidad", "aplicar", "jugador", "ajustes", "configuración", "configuracion", "tienda", "misiones",
@@ -4633,11 +4614,11 @@ local LANG_MARKERS = {
 		"leave", "close",
 	},
 }
-local forcedLanguage = nil
+I18N.forced = nil
 
-local function scoreText(text, scores)
+function I18N.score(text, scores)
 	text = string.lower(text)
-	for lang, markers in pairs(LANG_MARKERS) do
+	for lang, markers in pairs(I18N.markers) do
 		for _, marker in ipairs(markers) do
 			if text:find(marker, 1, true) then
 				scores[lang] += 1
@@ -4649,9 +4630,9 @@ local function scoreText(text, scores)
 	end
 end
 
-local function detectLanguage()
-	if forcedLanguage and STRINGS[forcedLanguage] then
-		return forcedLanguage
+function I18N.detect()
+	if I18N.forced and I18N.strings[I18N.forced] then
+		return I18N.forced
 	end
 	local code = ""
 	pcall(function()
@@ -4663,7 +4644,7 @@ local function detectLanguage()
 		end)
 	end
 	local prefix = code:sub(1, 2)
-	if STRINGS[prefix] then
+	if I18N.strings[prefix] then
 		return prefix
 	end
 	local scores = { es = 0, en = 0 }
@@ -4676,7 +4657,7 @@ local function detectLanguage()
 		for _, d in ipairs(playerGui:GetDescendants()) do
 			if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
 				if not d:FindFirstAncestor("AFO_AvatarChanger") and not d:FindFirstAncestor("AFO_CustomMovement") then
-					scoreText(d.Text, scores)
+					I18N.score(d.Text, scores)
 				end
 				checked += 1
 				if checked > 3000 then
@@ -4696,7 +4677,7 @@ function M.GetFxMode()
 end
 
 function M.SetLanguage(code)
-	forcedLanguage = (type(code) == "string" and STRINGS[string.lower(code)]) and string.lower(code) or nil
+	I18N.forced = (type(code) == "string" and I18N.strings[string.lower(code)]) and string.lower(code) or nil
 end
 
 local function resetToOriginal()
@@ -5005,7 +4986,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 8)
 
 	local function applyLanguage()
-		local t = STRINGS[detectLanguage()] or STRINGS.en
+		local t = I18N.strings[I18N.detect()] or I18N.strings.en
 		title.Text = t.title
 		textBox.PlaceholderText = t.placeholder
 		applyButton.Text = t.apply
