@@ -1,5 +1,4 @@
 -- ═══════════════════════════════════════════════════════════════════════════
---  Omniblock_maths.lua  (NO ofuscar: se sube tal cual a GitHub)
 --  Mecanismo matematico de repulsion con el plano matriz.
 --
 --  El espacio alrededor del jugador se discretiza en una matriz N x N de celdas
