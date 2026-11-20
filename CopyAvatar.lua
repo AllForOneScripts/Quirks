@@ -87,11 +87,6 @@ local function clamp01(x)
 	return math.clamp(x, 0, 1)
 end
 
-local function easeInOut(t)
-	t = clamp01(t)
-	return 0.5 - 0.5 * math.cos(math.pi * t)
-end
-
 local function disconnectAll()
 	for _, connection in ipairs(connections) do
 		if connection and connection.Connected then
@@ -345,7 +340,7 @@ end
 local function snapshotHighlights(character)
 	local saved = {}
 	local function consider(h)
-		if h:IsA("Highlight") and h.Name ~= GRAY_NAME then
+		if h:IsA("Highlight") and h.Name:sub(1, 4) ~= "AFO_" then
 			saved[h] = {
 				Enabled = h.Enabled,
 				FillColor = h.FillColor,
@@ -692,6 +687,38 @@ local function clearTransformVisuals()
 	showCharacter()
 end
 
+local function sweepLeftovers(character)
+	for _, delayTime in ipairs({ 0.8, 2, 4 }) do
+		task.delay(delayTime, function()
+			if not character or not character.Parent or transforming then
+				return
+			end
+			if gray == nil then
+				for _, d in ipairs(character:GetChildren()) do
+					if d:IsA("Highlight") and d.Name == GRAY_NAME then
+						d:Destroy()
+					end
+				end
+			end
+			if ghostGroup == nil then
+				local camera = workspace.CurrentCamera
+				local stray = camera and camera:FindFirstChild("AFO_GhostGroup")
+				if stray then
+					stray:Destroy()
+				end
+			end
+		end)
+	end
+end
+
+local function copiedUserId(character)
+	local value = character and character:GetAttribute("AFO_Copied")
+	if type(value) == "number" then
+		return value
+	end
+	return nil
+end
+
 local function relPath(inst, root)
 	local names = {}
 	local cur = inst
@@ -918,14 +945,6 @@ local function poseGhostItem(g, item, k, sizeMul, followCF, relCF)
 	end
 	local pivot = g.pivot
 	part.CFrame = followCF * (CFrame.new(pivot + (item.pos - pivot) * k) * item.rot)
-end
-
-local function poseGhost(g, root, humanoid, k, wobble, phase)
-	local followCF = ghostBase(g, root, humanoid)
-	for _, item in ipairs(g.items) do
-		local w = math.sin(phase + item.seed) * 0.03 * wobble
-		poseGhostItem(g, item, k, Vector3.new(k * (1 + w), k, k * (1 + w)), followCF)
-	end
 end
 
 local MORPH_DURATION = 1.25
@@ -1665,34 +1684,6 @@ local function scheduleFaceChecks(character, sources, token)
 	end
 end
 
-local function adaptR15ToR6(character, donor, extra)
-	local r6Part = findPart(character, "Head")
-	local donorHead = donor:FindFirstChild("Head")
-	if r6Part and donorHead and donorHead:IsA("BasePart") then
-		for _, child in ipairs(r6Part:GetChildren()) do
-			if child:IsA("Decal") or child:IsA("DataModelMesh") then
-				child:Destroy()
-			end
-		end
-		for _, child in ipairs(donorHead:GetChildren()) do
-			if child:IsA("Decal") or child:IsA("DataModelMesh") or child:IsA("SpecialMesh") then
-				child:Clone().Parent = r6Part
-			end
-		end
-		for _, att in ipairs(donorHead:GetChildren()) do
-			if att:IsA("Attachment") and not r6Part:FindFirstChild(att.Name) then
-				att:Clone().Parent = r6Part
-			end
-		end
-		if donorHead:IsA("MeshPart") and r6Part:IsA("MeshPart") then
-			pcall(function()
-				r6Part:ApplyMesh(donorHead)
-			end)
-			r6Part.TextureID = donorHead.TextureID
-		end
-	end
-end
-
 local function applyDonorData(character, humanoid, donor, extra)
 	removeSkin(character)
 	local keepTransparency = {}
@@ -1702,10 +1693,9 @@ local function applyDonorData(character, humanoid, donor, extra)
 		end
 	end
 	wipeAppearance(character)
-	adaptR15ToR6(character, donor, extra)
 	local head = findPart(character, "Head")
 	if head and not head:GetAttribute("AFO_Skinned") then
-		if not head:FindFirstChildOfClass("DataModelMesh") then
+		if head:IsA("Part") and not head:FindFirstChildOfClass("DataModelMesh") then
 			local mesh = Instance.new("SpecialMesh")
 			mesh.MeshType = Enum.MeshType.Head
 			mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
@@ -1720,7 +1710,7 @@ local function applyDonorData(character, humanoid, donor, extra)
 		applyManualBodyColors(character, newColors)
 	end
 	for _, child in ipairs(donor:GetChildren()) do
-		if child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") or child:IsA("CharacterMesh") then
+		if child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then
 			local copy = child:Clone()
 			copy:SetAttribute("AFO_Cloth", true)
 			copy.Parent = character
@@ -1762,7 +1752,7 @@ local function applyDonorData(character, humanoid, donor, extra)
 	return records
 end
 
-local Cloth = { SECONDS = 15 }
+local Cloth = { SECONDS = 25, firstSeen = setmetatable({}, { __mode = "k" }) }
 
 function Cloth.isLike(inst)
 	return inst:IsA("Shirt") or inst:IsA("Pants") or inst:IsA("ShirtGraphic") or inst:IsA("CharacterMesh")
@@ -1779,13 +1769,36 @@ function Cloth.key(inst)
 	return inst.ClassName
 end
 
--- Si el juego (o Roblox) termina de cargar tu ropa original DESPUÉS del cambio,
--- esa ropa se pondría encima de la nueva. Durante unos segundos se descarta la
--- ajena y se vuelve a poner la del avatar copiado si falta.
+function Cloth.texture(inst)
+	local value
+	pcall(function()
+		if inst:IsA("Shirt") then
+			value = inst.ShirtTemplate
+		elseif inst:IsA("Pants") then
+			value = inst.PantsTemplate
+		elseif inst:IsA("ShirtGraphic") then
+			value = inst.Graphic
+		end
+	end)
+	return value
+end
+
+function Cloth.setTexture(inst, value)
+	pcall(function()
+		if inst:IsA("Shirt") then
+			inst.ShirtTemplate = value
+		elseif inst:IsA("Pants") then
+			inst.PantsTemplate = value
+		elseif inst:IsA("ShirtGraphic") then
+			inst.Graphic = value
+		end
+	end)
+end
+
 function Cloth.guard(character, donor, id)
 	local templates = {}
 	for _, child in ipairs(donor:GetChildren()) do
-		if Cloth.isLike(child) then
+		if Cloth.isLike(child) and not child:IsA("CharacterMesh") then
 			table.insert(templates, child:Clone())
 		end
 	end
@@ -1796,15 +1809,26 @@ function Cloth.guard(character, donor, id)
 		local present = {}
 		for _, child in ipairs(character:GetChildren()) do
 			if Cloth.isLike(child) then
-				if child:GetAttribute("AFO_Cloth") then
-					present[Cloth.key(child)] = true
+				if child:GetAttribute("AFO_Cloth") and not child:IsA("CharacterMesh") then
+					local key = Cloth.key(child)
+					if present[key] then
+						child:Destroy()
+					else
+						present[key] = child
+					end
 				else
 					child:Destroy()
 				end
 			end
 		end
 		for _, template in ipairs(templates) do
-			if not present[Cloth.key(template)] then
+			local mine = present[Cloth.key(template)]
+			if mine then
+				local want = Cloth.texture(template)
+				if want ~= nil and Cloth.texture(mine) ~= want then
+					Cloth.setTexture(mine, want)
+				end
+			else
 				local copy = template:Clone()
 				copy:SetAttribute("AFO_Cloth", true)
 				copy.Parent = character
@@ -1813,18 +1837,15 @@ function Cloth.guard(character, donor, id)
 	end
 	local conn = character.ChildAdded:Connect(function(child)
 		if id == requestId and Cloth.isLike(child) and not child:GetAttribute("AFO_Cloth") then
-			task.defer(function()
-				if child.Parent == character then
-					child:Destroy()
-				end
-			end)
+			task.defer(enforce)
 		end
 	end)
+	task.defer(enforce)
 	task.spawn(function()
 		local elapsed = 0
 		while elapsed < Cloth.SECONDS do
-			task.wait(0.5)
-			elapsed += 0.5
+			task.wait(0.3)
+			elapsed += 0.3
 			if id ~= requestId or not character.Parent then
 				break
 			end
@@ -1834,10 +1855,23 @@ function Cloth.guard(character, donor, id)
 	end)
 end
 
+function Cloth.count(character)
+	local n = 0
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Accessory") or child:IsA("Clothing") or child:IsA("ShirtGraphic") or child:IsA("BodyColors") then
+			n += 1
+		end
+	end
+	return n
+end
+
 function Cloth.waitLoaded(character)
+	local seen = Cloth.firstSeen[character]
+	local fresh = seen ~= nil and os.clock() - seen < 25
+	local limit = fresh and 10 or 3
 	local waited = 0
 	local didWait = false
-	while waited < 3 and localPlayer.Character == character do
+	while waited < limit and localPlayer.Character == character do
 		local loaded = true
 		pcall(function()
 			loaded = localPlayer:HasAppearanceLoaded()
@@ -1849,7 +1883,22 @@ function Cloth.waitLoaded(character)
 		task.wait(0.2)
 		waited += 0.2
 	end
-	if didWait then
+	if fresh then
+		local last = Cloth.count(character)
+		local stable = 0
+		local settle = 0
+		while stable < 0.9 and settle < 5 and localPlayer.Character == character do
+			task.wait(0.15)
+			settle += 0.15
+			local now = Cloth.count(character)
+			if now ~= last then
+				last = now
+				stable = 0
+			else
+				stable += 0.15
+			end
+		end
+	elseif didWait then
 		task.wait(0.6)
 	end
 end
@@ -1947,8 +1996,18 @@ local Env = {
 	ENV_RAY = 800,
 	VOID_DEPTH = 140,
 	TOUCH_GAP = 0.9,
+	HARD_GAP = 0.12,
+	LAND_DEBOUNCE = 0.1,
+	DESCENT_TIME = 0.3,
+	platesAllowed = false,
 	plates = setmetatable({}, { __mode = "k" }),
+	airStates = {
+		[Enum.HumanoidStateType.Freefall] = true,
+		[Enum.HumanoidStateType.Jumping] = true,
+		[Enum.HumanoidStateType.Flying] = true,
+	},
 }
+
 local BEAM_SAMPLES = { 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1 }
 local BEAM_STRANDS = 3
 local BEAM_LAYERS = {
@@ -1986,6 +2045,9 @@ function Env.killPlates()
 end
 
 local function flatRing(position, diameter, thickness, color, transparency, life, track)
+	if track and not Env.platesAllowed then
+		return nil
+	end
 	local part = newFxPart({
 		Shape = Enum.PartType.Cylinder,
 		Material = Enum.Material.Neon,
@@ -2323,6 +2385,23 @@ local function createBeamStack(center, height)
 	bloom.Parent = emitPart
 	table.insert(stack.emitters, bloom)
 
+	function stack.impact(position)
+		if (stack.ground or 1) < 0.5 or not Env.platesAllowed then
+			return
+		end
+		for k = 0, 1 do
+			local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2, true)
+			if ring then
+				local size = 48 + k * 18
+				TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(0.15, size, size),
+					Transparency = 1,
+				}):Play()
+			end
+		end
+		dust:Emit(28)
+	end
+
 	function stack.ignite(position)
 		local ball = newFxPart({
 			Shape = Enum.PartType.Ball,
@@ -2336,17 +2415,7 @@ local function createBeamStack(center, height)
 			Size = Vector3.new(32, 32, 32),
 			Transparency = 1,
 		}):Play()
-		if stack.ground > 0.5 then
-			for k = 0, 1 do
-				local ring = flatRing(position + Vector3.new(0, 0.2, 0), 4, 0.3, (k == 0) and FX_WHITE or FX_HALO, 0.15, 1.2, true)
-				local size = 48 + k * 18
-				TweenService:Create(ring, TweenInfo.new(0.5 + k * 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Size = Vector3.new(0.15, size, size),
-					Transparency = 1,
-				}):Play()
-			end
-			dust:Emit(28)
-		end
+		stack.impact(position)
 		streaks:Emit(24)
 		bloom:Emit(3)
 	end
@@ -2437,7 +2506,7 @@ local function createBeamStack(center, height)
 	end
 
 	function stack.pulse(position, widthScale)
-		if (stack.ground or 1) < 0.5 then
+		if (stack.ground or 1) < 0.5 or not Env.platesAllowed then
 			return
 		end
 		local rise = stack.height * (0.55 + 0.4 * math.random())
@@ -2452,11 +2521,13 @@ local function createBeamStack(center, height)
 				true
 			)
 			local tail = math.max((4 + k * 2.5) * widthScale, 0.5)
-			TweenService:Create(ring, TweenInfo.new(0.5 + math.random() * 0.3 + k * 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-				CFrame = CFrame.new(position + Vector3.new(0, rise, 0)) * CFrame.Angles(0, 0, math.rad(90)),
-				Size = Vector3.new(0.2, tail, tail),
-				Transparency = 1,
-			}):Play()
+			if ring then
+				TweenService:Create(ring, TweenInfo.new(0.5 + math.random() * 0.3 + k * 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+					CFrame = CFrame.new(position + Vector3.new(0, rise, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+					Size = Vector3.new(0.2, tail, tail),
+					Transparency = 1,
+				}):Play()
+			end
 		end
 	end
 
@@ -2519,10 +2590,20 @@ end
 function Env.lowestY(character, root)
 	local low = math.huge
 	for _, d in ipairs(character:GetChildren()) do
-		if d:IsA("BasePart") and d ~= root then
+		if d:IsA("BasePart") and d ~= root and (d.Name:find("Leg", 1, true) or d.Name:find("Foot", 1, true)) then
 			local y = d.Position.Y - verticalExtent(d.CFrame, d.Size)
 			if y < low then
 				low = y
+			end
+		end
+	end
+	if low == math.huge then
+		for _, d in ipairs(character:GetChildren()) do
+			if d:IsA("BasePart") and d ~= root and BODY_COLOR_MAP[d.Name] then
+				local y = d.Position.Y - verticalExtent(d.CFrame, d.Size)
+				if y < low then
+					low = y
+				end
 			end
 		end
 	end
@@ -2532,17 +2613,22 @@ function Env.lowestY(character, root)
 	return low
 end
 
--- Detecta dónde está el personaje respecto al mundo:
---   ground = pies sobre el suelo | air = en el aire con suelo debajo
---   water  = sobre/dentro del agua | void = sin suelo debajo
 function Env.sense(character, root, humanoid, params)
 	local feetY = Env.lowestY(character, root)
 	local rp = root.Position
 	local env = { feetY = feetY, mode = "ground", touching = true, groundY = feetY, gap = 0 }
+	local floorMaterial = Enum.Material.Air
+	local state
+	pcall(function()
+		floorMaterial = humanoid.FloorMaterial
+		state = humanoid:GetState()
+	end)
+	local supported = floorMaterial ~= Enum.Material.Air
+	local airState = state ~= nil and Env.airStates[state] == true
 	local origin = Vector3.new(rp.X, feetY + 1.5, rp.Z)
 	local hit = workspace:Raycast(origin, Vector3.new(0, -Env.ENV_RAY, 0), params)
 	if not hit then
-		if humanoid.FloorMaterial ~= Enum.Material.Air then
+		if supported and not airState then
 			return env
 		end
 		env.mode = "void"
@@ -2553,14 +2639,10 @@ function Env.sense(character, root, humanoid, params)
 	end
 	env.groundY = hit.Position.Y + 0.08
 	env.gap = math.max(feetY - hit.Position.Y, 0)
-	local swimming = false
-	pcall(function()
-		swimming = humanoid:GetState() == Enum.HumanoidStateType.Swimming
-	end)
-	if swimming or hit.Material == Enum.Material.Water then
+	if state == Enum.HumanoidStateType.Swimming or hit.Material == Enum.Material.Water then
 		env.mode = "water"
 		env.touching = false
-	elseif env.gap <= Env.TOUCH_GAP then
+	elseif env.gap <= Env.HARD_GAP or (env.gap <= Env.TOUCH_GAP and supported and not airState) then
 		env.mode = "ground"
 		env.touching = true
 	else
@@ -2629,25 +2711,28 @@ local function beginVortex(character, root, humanoid)
 
 	local env = Env.sense(character, root, humanoid, params)
 	local touching = env.touching
-	local touchTime = touching and 1 or 0
+	local touchTime = touching and Env.LAND_DEBOUNCE or 0
 	local plate = touching and 1 or 0
 	local baseY = env.groundY
 	local descentRaw = touching and 1 or 0
+	Env.platesAllowed = touching
 
-	-- Se llama cada frame: actualiza el modo y devuelve
-	-- (cuerpo, base del pilar en el suelo, distancia pies-suelo)
 	local function sense(dt)
 		env = Env.sense(character, root, humanoid, params)
 		if env.touching then
 			touchTime += dt
-			if touchTime >= 0.06 then
+			if touchTime >= Env.LAND_DEBOUNCE then
 				touching = true
 			end
 		else
 			touchTime = 0
 			touching = false
 		end
-		plate += ((touching and 1 or 0) - plate) * (1 - math.exp(-dt * (touching and 9 or 40)))
+		if touching then
+			plate += (1 - plate) * (1 - math.exp(-dt * 9))
+		else
+			plate = 0
+		end
 		baseY += (env.groundY - baseY) * (1 - math.exp(-dt * 18))
 		local p = root.Position
 		state.mode = touching and "ground" or (env.mode == "ground" and "air" or env.mode)
@@ -2717,23 +2802,28 @@ local function beginVortex(character, root, humanoid)
 
 	local t0 = os.clock()
 	local nextRing, nextBolt, nextRock, nextPulse = 0, 0, 0, 0
-	local wasPlates = plate > 0.55
+	local wasTouching = touching
+	local contacted = false
 	state.conn = RunService.Heartbeat:Connect(function(dt)
 		if not state.alive or not root.Parent then
 			return
 		end
 		local t = os.clock() - t0
 		body, center, gap = sense(dt)
-		local allowPlates = plate > 0.55
-		if wasPlates and not allowPlates then
+		local allowPlates = touching and plate > 0.55
+		Env.platesAllowed = allowPlates
+		if wasTouching and not touching then
 			Env.killPlates()
+		elseif touching and not wasTouching and t > 0.25 then
+			pcall(beamStack.impact, center)
+			shakeCamera(humanoid, 0.3, 0.5)
 		end
-		wasPlates = allowPlates
+		wasTouching = touching
 
 		if touching then
 			descentRaw = 1
 		elseif t > 0.1 then
-			descentRaw = math.min(descentRaw + dt / 0.5, 1)
+			descentRaw = math.min(descentRaw + dt / Env.DESCENT_TIME, 1)
 		end
 		beamStack.ground = plate
 		beamStack.height = gap + Env.PILLAR_ABOVE
@@ -2752,6 +2842,12 @@ local function beginVortex(character, root, humanoid)
 
 		local beamWidth = 0.2 + 0.8 * ramp
 		beamStack.step(t, center, 1 - (1 - math.min(t / 0.5, 1)) ^ 3, beamWidth, 1)
+		if beamStack.ignited and not contacted then
+			contacted = true
+			if state.mode ~= "ground" and state.mode ~= "void" then
+				shakeCamera(humanoid, 0.28, 0.45)
+			end
+		end
 		if allowPlates and t >= nextPulse then
 			nextPulse = t + 0.16 + math.random() * 0.1
 			beamStack.pulse(center, beamWidth)
@@ -2779,18 +2875,21 @@ local function beginVortex(character, root, humanoid)
 			nextRing = t + 0.3
 			local ring
 			if t < 0.6 then
-
 				ring = flatRing(center + Vector3.new(0, 0.1, 0), 28, 0.15, FX_LIGHT, 0.7, 1, true)
-				TweenService:Create(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-					Size = Vector3.new(0.15, 4, 4),
-					Transparency = 0.1,
-				}):Play()
+				if ring then
+					TweenService:Create(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+						Size = Vector3.new(0.15, 4, 4),
+						Transparency = 0.1,
+					}):Play()
+				end
 			else
 				ring = flatRing(center + Vector3.new(0, 0.1, 0), 6, 0.15, (math.random() < 0.5) and FX_WHITE or FX_LIGHT, 0.35, 1, true)
-				TweenService:Create(ring, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Size = Vector3.new(0.15, 26, 26),
-					Transparency = 1,
-				}):Play()
+				if ring then
+					TweenService:Create(ring, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Size = Vector3.new(0.15, 26, 26),
+						Transparency = 1,
+					}):Play()
+				end
 			end
 		end
 
@@ -2819,6 +2918,9 @@ local function beginVortex(character, root, humanoid)
 		end
 		if state.conn then
 			state.conn:Disconnect()
+		end
+		if not touching then
+			Env.killPlates()
 		end
 		emitter.Enabled = false
 		for _, h in ipairs(heads) do
@@ -2856,6 +2958,10 @@ local function splash(character, humanoid)
 	local center = root.Position
 	local env = Env.sense(character, root, humanoid, Env.params(character))
 	local grounded = env.touching
+	Env.platesAllowed = grounded
+	if not grounded then
+		Env.killPlates()
+	end
 	local groundPos = Vector3.new(center.X, env.groundY, center.Z)
 	if gray then
 		gray.boost = 1
@@ -2896,10 +3002,12 @@ local function splash(character, humanoid)
 		task.delay(k * 0.09, function()
 			local diameter = 70 + k * 12
 			local ring = flatRing(groundPos, 4, 0.35, (k % 2 == 0) and FX_WHITE or FX_LIGHT, 0.1, 1.5, true)
-			TweenService:Create(ring, TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Size = Vector3.new(0.12, diameter, diameter),
-				Transparency = 1,
-			}):Play()
+			if ring then
+				TweenService:Create(ring, TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(0.12, diameter, diameter),
+					Transparency = 1,
+				}):Play()
+			end
 		end)
 	end
 
@@ -2945,20 +3053,25 @@ local function splash(character, humanoid)
 		if not character.Parent then
 			return
 		end
+		for _, old in ipairs(workspace:GetChildren()) do
+			if old:IsA("Highlight") and old.Name == "AFO_AuraFlash" then
+				old:Destroy()
+			end
+		end
 		local aura = Instance.new("Highlight")
 		aura.Name = "AFO_AuraFlash"
 		aura.Adornee = character
 		aura.FillColor = AURA_COLOR
-		aura.FillTransparency = 0.55
+		aura.FillTransparency = 0.8
 		aura.OutlineColor = AURA_COLOR
 		aura.OutlineTransparency = 0
 		aura.DepthMode = Enum.HighlightDepthMode.Occluded
 		aura.Parent = workspace
-		TweenService:Create(aura, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		TweenService:Create(aura, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			FillTransparency = 1,
 			OutlineTransparency = 1,
 		}):Play()
-		Debris:AddItem(aura, 1.4)
+		Debris:AddItem(aura, 1)
 	end)
 
 	local camera = workspace.CurrentCamera
@@ -3300,16 +3413,6 @@ R15.FIXED_ANIMS = {
 	run = 90449724957683,
 	walk = 106767496454996,
 }
-local PRIORITY_LADDER = {
-	Enum.AnimationPriority.Core,
-	Enum.AnimationPriority.Idle,
-	Enum.AnimationPriority.Movement,
-	Enum.AnimationPriority.Action,
-	Enum.AnimationPriority.Action2,
-	Enum.AnimationPriority.Action3,
-	Enum.AnimationPriority.Action4,
-}
-
 local function numericAnimId(value)
 	if type(value) == "number" then
 		return value
@@ -4063,11 +4166,10 @@ function R15.applyDonorData(character, humanoid, donor, faceSources)
 		applyManualBodyColors(character, newColors)
 	end
 	for _, child in ipairs(donor:GetChildren()) do
-		if child:IsA("Shirt")
-			or child:IsA("Pants")
-			or child:IsA("ShirtGraphic")
-			or child:IsA("CharacterMesh") then
-			child:Clone().Parent = character
+		if child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then
+			local copy = child:Clone()
+			copy:SetAttribute("AFO_Cloth", true)
+			copy.Parent = character
 		end
 	end
 	local result = {}
@@ -4244,13 +4346,6 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 	end
 	username = trim(username)
 	local quietFlash = false
-	if not force and not isReset then
-		local shown = lastUsername or localPlayer.Name
-		if username:lower() == shown:lower() then
-			quietFlash = true
-			animated = false
-		end
-	end
 	if not force then
 		autoReapply = true
 	end
@@ -4266,12 +4361,16 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 		end
 		pcall(Cloth.waitLoaded, character)
 		captureOriginals(character, humanoid)
-		local userId = getUserId(username)
+		local userId = isReset and localPlayer.UserId or getUserId(username)
 		if not userId then
 			if onFail then
 				onFail()
 			end
 			return
+		end
+		if not force and (copiedUserId(character) or localPlayer.UserId) == userId then
+			quietFlash = true
+			animated = false
 		end
 		requestId += 1
 		local currentRequest = requestId
@@ -4427,9 +4526,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			pcall(repairAccessoryFx, character, donor)
 			fixColorsDeferred(character, currentRequest)
 			guardAccessories(character, humanoid, records, currentRequest)
-			if not isR15 then
-				pcall(Cloth.guard, character, donor, currentRequest)
-			end
+			pcall(Cloth.guard, character, donor, currentRequest)
 		end
 		local function performChangeInner()
 			if useDescription then
@@ -4462,6 +4559,11 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			end
 			if result == true then
 				watchDeath(humanoid)
+				if isReset or userId == localPlayer.UserId then
+					character:SetAttribute("AFO_Copied", nil)
+				else
+					character:SetAttribute("AFO_Copied", userId)
+				end
 			end
 			return result
 		end
@@ -4488,6 +4590,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			finishChange()
 			cleanupDonors()
 			transforming = false
+			sweepLeftovers(character)
 			return
 		end
 		transforming = true
@@ -4584,6 +4687,7 @@ local function applyAvatar(username, isReset, animated, onFail, force)
 			end
 			releaseGray(false)
 		end
+		sweepLeftovers(character)
 	end)
 end
 
@@ -4681,11 +4785,7 @@ function M.SetLanguage(code)
 end
 
 local function resetToOriginal()
-	if not localPlayer then
-		return false
-	end
-	local shown = lastUsername or localPlayer.Name
-	if shown:lower() == localPlayer.Name:lower() then
+	if not localPlayer or not localPlayer.Character then
 		return false
 	end
 	applyAvatar(localPlayer.Name, true, true, nil)
@@ -5275,6 +5375,7 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 	end
 	table.insert(connections, textBox:GetPropertyChangedSignal("Text"):Connect(fitText))
 	table.insert(connections, localPlayer.CharacterAdded:Connect(function(character)
+		Cloth.firstSeen[character] = os.clock()
 		task.spawn(function()
 			local hum = character:WaitForChild("Humanoid", 10)
 			character:WaitForChild("HumanoidRootPart", 10)
@@ -5327,6 +5428,9 @@ function M.Start(firstArgument, secondArgument, thirdArgument)
 			togglePanel()
 		end
 	end))
+	if localPlayer.Character and not Cloth.firstSeen[localPlayer.Character] then
+		Cloth.firstSeen[localPlayer.Character] = os.clock()
+	end
 	if defaultAvatar:lower() == localPlayer.Name:lower() then
 		loadAvatarImage(localPlayer.UserId, requestId)
 	else
