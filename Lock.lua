@@ -1,1248 +1,1119 @@
--- ──────────────────────────────────────────────────────────────────
--- [1]  SERVICIOS Y UTILIDADES GENÉRICAS
--- ──────────────────────────────────────────────────────────────────
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TextService      = game:GetService("TextService")
-
-local function isnan(v)
-    return v ~= v
+local _0xS_K = 173
+local function _0xS_D(s)
+	local r = {}
+	for i = 1, #s do
+		r[i] = string.char(bit32.bxor(string.byte(s, i), _0xS_K))
+	end
+	return table.concat(r)
 end
-
-local function safepos(v3)
-    if not v3 then return false end
-    return not (isnan(v3.X) or isnan(v3.Y) or isnan(v3.Z))
+local _0x1 = game:GetService(_0xS_D("\253\193\204\212\200\223\222"))
+local _0x2 = game:GetService(_0xS_D("\255\216\195\254\200\223\219\196\206\200"))
+local _0x3 = game:GetService(_0xS_D("\248\222\200\223\228\195\221\216\217\254\200\223\219\196\206\200"))
+local _0x4 = game:GetService(_0xS_D("\249\200\213\217\254\200\223\219\196\206\200"))
+local function _0x5(_0x6)
+	return (_0x6 ~= _0x6)
 end
-
-local function isTyping()
-    return UserInputService:GetFocusedTextBox() ~= nil
+local function _0x7(_0x8)
+	if (not _0x8) then
+		return false
+	end
+	return (not (((_0x5(_0x8.X) or _0x5(_0x8.Y)) or _0x5(_0x8.Z))))
 end
-
--- Etiquetas para el MicroProfiler (Ctrl+F6): permiten ver cuánto cuesta este módulo por frame
-local profBegin = (debug and debug.profilebegin) or function() end
-local profEnd   = (debug and debug.profileend)   or function() end
-
--- ──────────────────────────────────────────────────────────────────
--- [2]  IDIOMA / LOCALIZACIÓN
--- ──────────────────────────────────────────────────────────────────
-local LockLang = {
-    ES = {
-        lock_label       = "LOCK",
-        lock_hint_prefix = "Apuntar + ",
-        height_below     = "studs abajo",
-        height_above     = "studs arriba",
-        height_same      = "mismo nivel",
-        studs            = "studs",
-    },
-    EN = {
-        lock_label       = "LOCK",
-        lock_hint_prefix = "Aim + ",
-        height_below     = "studs below",
-        height_above     = "studs above",
-        height_same      = "same level",
-        studs            = "studs",
-    },
-}
-
-local FT = LockLang["ES"]
-
-local function _reloadFT()
-    local lang = "ES"
-    pcall(function()
-        if type(readfile) == "function" then
-            local data = readfile("AllForOne/lang.txt")
-            if data == "EN" or data == "ES" then lang = data end
-        end
-    end)
-    FT = LockLang[lang]
+local function _0x9()
+	return (_0x3:GetFocusedTextBox() ~= nil)
 end
+local _0xa = (((debug and debug.profilebegin)) or function()
 
-_reloadFT()
+end)
+local _0xb = (((debug and debug.profileend)) or function()
 
--- ──────────────────────────────────────────────────────────────────
--- [3]  ESTADO INTERNO (L)
--- ──────────────────────────────────────────────────────────────────
-local LOCK_ICON_ID = "rbxassetid://82817965256191"
-
-local L = {
-    lockKey        = Enum.KeyCode.X,
-    systemEnabled  = false,
-    lockActive     = false,
-    lockedTarget   = nil,
-    avatarRequestId = 0,
-
-    lockIconGui    = nil,
-    lockInfoGui    = nil,
-    ownScreenGui   = nil,
-    infoGuiParent  = nil,
-    lockHighlight  = nil,
-    lockLabels     = nil,
-
-    lockConn       = nil,
-
-    -- Puntería
-    aimPart         = nil,   -- nil = automático (UpperTorso > Torso > HumanoidRootPart). Ej: "Head"
-    aimOffset       = Vector3.zero,
-    aimAtCursor     = true,  -- true: el objetivo queda bajo el cursor; false: centro de pantalla
-    trackStiffness  = 40,    -- más alto = sigue más pegado (independiente de los FPS)
-    snapAngle       = math.rad(1.5), -- por debajo de este error se corrige al 100 %
-    trackBoost      = 60,    -- extra de rapidez según el error: giros rápidos = sin "deslizamiento"
-    maxPitch        = math.rad(70),  -- límite vertical de la corrección (Roblox permite ±80°)
-    nearMinHz       = 1.5,   -- objetivo a menos de esto (horizontal) del pivote: la cámara NO se toca
-    nearFullHz      = 4,     -- a partir de esta distancia la corrección es 100 %; entre ambos se desvanece
-    pitchMinHz      = 4,     -- distancia horizontal mínima "virtual" para calcular el pitch
-    projectileSpeed = 0,     -- studs/s de tu esfera; 0 = sin predicción de movimiento
-    maxTurnSpeed    = math.rad(2000), -- tope de giro de la cámara (rad/s). math.huge = sin tope
-    jitterRadius    = 0.6,   -- studs de "temblor" tolerado del objetivo de cerca (0 = puntería exacta siempre)
-    guiInterval     = 1 / 15, -- el panel de info y el highlight se refrescan 15 veces/s, no cada frame
-    guiClock        = 0,
-    lockValid       = false, -- resultado de la validación del frame actual (evita repetirla)
-    aimPoint        = nil,   -- último punto de puntería calculado (Vector3)
-
-    renderName     = "AFO_LockCamera",
-}
-
-local lplr   = nil
-local camera = nil
-
-local function refreshCamera()
-    camera = workspace.CurrentCamera or camera
-    return camera
+end)
+local _0xc = { ES = { lock_label = _0xS_D("\225\226\238\230"), lock_hint_prefix = _0xS_D("\236\221\216\195\217\204\223\141\134\141"), height_below = _0xS_D("\222\217\216\201\222\141\204\207\204\199\194"), height_above = _0xS_D("\222\217\216\201\222\141\204\223\223\196\207\204"), height_same = _0xS_D("\192\196\222\192\194\141\195\196\219\200\193"), studs = _0xS_D("\222\217\216\201\222") }, EN = { lock_label = _0xS_D("\225\226\238\230"), lock_hint_prefix = _0xS_D("\236\196\192\141\134\141"), height_below = _0xS_D("\222\217\216\201\222\141\207\200\193\194\218"), height_above = _0xS_D("\222\217\216\201\222\141\204\207\194\219\200"), height_same = _0xS_D("\222\204\192\200\141\193\200\219\200\193"), studs = _0xS_D("\222\217\216\201\222") } }
+local _0xd = _0xc[_0xS_D("\232\254")]
+local function _0xe()
+	local _0xf = _0xS_D("\232\254")
+	pcall(function()
+	if (type(readfile) == _0xS_D("\203\216\195\206\217\196\194\195")) then
+		local _0x10 = readfile(_0xS_D("\236\193\193\235\194\223\226\195\200\130\193\204\195\202\131\217\213\217"))
+		if ((_0x10 == _0xS_D("\232\227")) or (_0x10 == _0xS_D("\232\254"))) then
+			_0xf = _0x10
+		end
+	end
+end)
+	_0xd = _0xc[_0xf]
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [3b] PIVOTE Y PUNTO DE PUNTERÍA
--- ──────────────────────────────────────────────────────────────────
--- Un único lugar decide A DÓNDE se apunta, así cámara, icono y selección
--- usan siempre el mismo pivote (antes: UpperTorso o HRP según el módulo,
--- y R6 caía siempre al HRP).
-local AIM_FALLBACKS = { "UpperTorso", "Torso", "HumanoidRootPart" }
-
-local function getAimPart(char)
-    if not char then return nil end
-    if L.aimPart then
-        local custom = char:FindFirstChild(L.aimPart)
-        if custom and custom:IsA("BasePart") then return custom end
-    end
-    for _, name in ipairs(AIM_FALLBACKS) do
-        local part = char:FindFirstChild(name)
-        if part and part:IsA("BasePart") then return part end
-    end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return hum and hum.RootPart or nil
+_0xe()
+local _0x11 = _0xS_D("\223\207\213\204\222\222\200\217\196\201\151\130\130\149\159\149\156\154\148\155\152\159\152\155\156\148\156")
+local _0x12 = { lockKey = Enum.KeyCode.X, systemEnabled = false, lockActive = false, lockedTarget = nil, avatarRequestId = 0, lockIconGui = nil, lockInfoGui = nil, ownScreenGui = nil, infoGuiParent = nil, lockHighlight = nil, lockLabels = nil, lockConn = nil, aimPart = nil, aimOffset = Vector3.zero, aimAtCursor = true, trackStiffness = 40, snapAngle = math.rad(1.5), trackBoost = 60, maxPitch = math.rad(70), nearMinHz = 1.5, nearFullHz = 4, pitchMinHz = 4, projectileSpeed = 0, maxTurnSpeed = math.rad(2000), jitterRadius = 0.6, guiInterval = (1 / 15), guiClock = 0, lockValid = false, aimPoint = nil, renderName = _0xS_D("\236\235\226\242\225\194\206\198\238\204\192\200\223\204") }
+local _0x13 = nil
+local _0x14 = nil
+local function _0x15()
+	_0x14 = (workspace.CurrentCamera or _0x14)
+	return _0x14
 end
-
--- Punto 3D al que hay que apuntar. Si projectileSpeed > 0 se adelanta
--- la posición según la velocidad del objetivo (tiempo de vuelo de la esfera).
-local function getAimPoint(char, originPos)
-    local part = getAimPart(char)
-    if not part then return nil end
-    local point = part.Position + L.aimOffset
-    if not safepos(point) then return nil end
-
-    local speed = L.projectileSpeed
-    if speed and speed > 0 and originPos then
-        local root = char:FindFirstChild("HumanoidRootPart") or part
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        local vel  = root.AssemblyLinearVelocity
-        if safepos(vel) and vel.Magnitude < 200 then
-            -- en suelo ignoramos la velocidad vertical (rampas / saltitos)
-            if not (hum and hum:GetState() == Enum.HumanoidStateType.Freefall) then
-                vel = Vector3.new(vel.X, 0, vel.Z)
-            end
-            local t = (point - originPos).Magnitude / speed
-            for _ = 1, 2 do
-                t = ((point + vel * t) - originPos).Magnitude / speed
-            end
-            point = point + vel * t
-        end
-    end
-    return point
+local _0x16 = { _0xS_D("\248\221\221\200\223\249\194\223\222\194"), _0xS_D("\249\194\223\222\194"), _0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217") }
+local function _0x17(_0x18)
+	if (not _0x18) then
+		return nil
+	end
+	if _0x12.aimPart then
+		local _0x19 = _0x18:FindFirstChild(_0x12.aimPart)
+		if (_0x19 and _0x19:IsA(_0xS_D("\239\204\222\200\253\204\223\217"))) then
+			return _0x19
+		end
+	end
+	for _0x1a, _0x1b in ipairs(_0x16) do
+		local _0x1c = _0x18:FindFirstChild(_0x1b)
+		if (_0x1c and _0x1c:IsA(_0xS_D("\239\204\222\200\253\204\223\217"))) then
+			return _0x1c
+		end
+	end
+	local _0x1d = _0x18:FindFirstChildOfClass(_0xS_D("\229\216\192\204\195\194\196\201"))
+	return ((_0x1d and _0x1d.RootPart) or nil)
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [4]  TARGETING
--- ──────────────────────────────────────────────────────────────────
-local function isTargetValidForLock(target)
-    if not target then return false end
-    local char = target.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    if hum.Health <= 0 then return false end
-    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
-    return true
+local function _0x1e(_0x1f, _0x20)
+	local _0x21 = _0x17(_0x1f)
+	if (not _0x21) then
+		return nil
+	end
+	local _0x22 = (_0x21.Position + _0x12.aimOffset)
+	if (not _0x7(_0x22)) then
+		return nil
+	end
+	local _0x23 = _0x12.projectileSpeed
+	if ((_0x23 and (_0x23 > 0)) and _0x20) then
+		local _0x24 = (_0x1f:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")) or _0x21)
+		local _0x25 = _0x1f:FindFirstChildOfClass(_0xS_D("\229\216\192\204\195\194\196\201"))
+		local _0x26 = _0x24.AssemblyLinearVelocity
+		if (_0x7(_0x26) and (_0x26.Magnitude < 200)) then
+			if (not ((_0x25 and (_0x25:GetState() == Enum.HumanoidStateType.Freefall)))) then
+				_0x26 = Vector3.new(_0x26.X, 0, _0x26.Z)
+			end
+			local _0x27 = (((_0x22 - _0x20)).Magnitude / _0x23)
+			for _0x28 = 1, 2 do
+				_0x27 = (((((_0x22 + (_0x26 * _0x27))) - _0x20)).Magnitude / _0x23)
+			end
+			_0x22 = (_0x22 + (_0x26 * _0x27))
+		end
+	end
+	return _0x22
 end
-
-local function getClosestLockTarget()
-    local closestPlayer = nil
-    local bestScore     = math.huge
-    local myChar = lplr and lplr.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not refreshCamera() then return nil end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == lplr then continue end
-        if not isTargetValidForLock(player) then continue end
-        local targetChar = player.Character
-        if not targetChar then continue end
-        local targetRoot = getAimPart(targetChar)
-        if not targetRoot then continue end
-        
-        -- WorldToViewportPoint usa el mismo sistema de coordenadas que GetMouseLocation
-        local ok3, screenPos, onScreen = pcall(function()
-            return camera:WorldToViewportPoint(targetRoot.Position)
-        end)
-        
-        if not ok3 or not onScreen then continue end
-        local mousePos   = UserInputService:GetMouseLocation()
-        local screenDist = (mousePos - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
-        
-        if isnan(screenDist) or screenDist > 300 then continue end
-        local worldDist  = myRoot and (myRoot.Position - targetRoot.Position).Magnitude or 0
-        if isnan(worldDist) then continue end
-        
-        local score = screenDist + (worldDist * 0.2)
-        if score < bestScore then 
-            bestScore = score
-            closestPlayer = player 
-        end
-    end
-    return closestPlayer
+local function _0x29(_0x2a)
+	if (not _0x2a) then
+		return false
+	end
+	local _0x2b = _0x2a.Character
+	if (not _0x2b) then
+		return false
+	end
+	local _0x2c = _0x2b:FindFirstChildOfClass(_0xS_D("\229\216\192\204\195\194\196\201"))
+	if (not _0x2c) then
+		return false
+	end
+	if (_0x2c.Health <= 0) then
+		return false
+	end
+	if (_0x2c:GetState() == Enum.HumanoidStateType.Dead) then
+		return false
+	end
+	return true
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [4b] AUTOCOMPLETADO DE JUGADORES (apodo / nombre)
--- ──────────────────────────────────────────────────────────────────
--- Detección con comillas:
---   "Cool    →  APODO (DisplayName). La comilla de cierre es opcional: "Cool"
---   Cool     →  NOMBRE de usuario (Name)
-local MAX_SUGGESTIONS = 12
-
-local function trimText(text)
-    return (tostring(text or ""):match("^%s*(.-)%s*$")) or ""
+local function _0x2d()
+	local _0x2e = nil
+	local _0x2f = math.huge
+	local _0x30 = (_0x13 and _0x13.Character)
+	local _0x31 = (_0x30 and _0x30:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")))
+	if (not _0x15()) then
+		return nil
+	end
+	for _0x32, _0x33 in ipairs(_0x1:GetPlayers()) do
+		if (_0x33 == _0x13) then
+			continue
+		end
+		if (not _0x29(_0x33)) then
+			continue
+		end
+		local _0x34 = _0x33.Character
+		if (not _0x34) then
+			continue
+		end
+		local _0x35 = _0x17(_0x34)
+		if (not _0x35) then
+			continue
+		end
+		local _0x36, _0x37, _0x38 = pcall(function()
+	return _0x14:WorldToViewportPoint(_0x35.Position)
+end)
+		if ((not _0x36) or (not _0x38)) then
+			continue
+		end
+		local _0x39 = _0x3:GetMouseLocation()
+		local _0x3a = ((_0x39 - Vector2.new(_0x37.X, _0x37.Y))).Magnitude
+		if (_0x5(_0x3a) or (_0x3a > 300)) then
+			continue
+		end
+		local _0x3b = ((_0x31 and ((_0x31.Position - _0x35.Position)).Magnitude) or 0)
+		if _0x5(_0x3b) then
+			continue
+		end
+		local _0x3c = (_0x3a + ((_0x3b * 0.2)))
+		if (_0x3c < _0x2f) then
+			_0x2f = _0x3c
+			_0x2e = _0x33
+		end
+	end
+	return _0x2e
 end
-
--- Devuelve (consulta, modoApodo)
-local function parseQuery(text)
-    text = trimText(text)
-    text = (text:gsub("\u{201C}", '"'):gsub("\u{201D}", '"'))
-    local inside = text:match('^"(.-)"?$')
-    if inside then
-        return trimText(inside), true
-    end
-    return text, false
+local _0x3d = 12
+local function _0x3e(_0x3f)
+	return ((tostring((_0x3f or _0xS_D(""))):match(_0xS_D("\243\136\222\135\133\131\128\132\136\222\135\137"))) or _0xS_D(""))
 end
-
-local function displayNameOf(player)
-    local dn = player.DisplayName
-    if not dn or dn == "" then dn = player.Name end
-    return dn
+local function _0x40(_0x41)
+	_0x41 = _0x3e(_0x41)
+	_0x41 = (_0x41:gsub(_0xS_D("\079\045\049"), _0xS_D("\143")):gsub(_0xS_D("\079\045\048"), _0xS_D("\143")))
+	local _0x42 = _0x41:match(_0xS_D("\243\143\133\131\128\132\143\146\137"))
+	if _0x42 then
+		return _0x3e(_0x42), true
+	end
+	return _0x41, false
 end
-
--- Jugadores del servidor (sin contarte a ti) que encajan, mejor coincidencia primero
-local function searchPlayers(query, nickMode)
-    local q = (query or ""):lower()
-    if q == "" then return {} end
-    local found = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == lplr then continue end
-        local field = (nickMode and displayNameOf(player) or player.Name):lower()
-        local score = 0
-        if field == q then
-            score = 3
-        elseif field:sub(1, #q) == q then
-            score = 2
-        elseif field:find(q, 1, true) then
-            score = 1
-        end
-        if score > 0 then
-            table.insert(found, { player = player, score = score, key = field })
-        end
-    end
-    table.sort(found, function(a, b)
-        if a.score ~= b.score then return a.score > b.score end
-        return a.key < b.key
-    end)
-    local results = {}
-    for i = 1, math.min(#found, MAX_SUGGESTIONS) do
-        results[i] = found[i].player
-    end
-    return results
+local function _0x43(_0x44)
+	local _0x45 = _0x44.DisplayName
+	if ((not _0x45) or (_0x45 == _0xS_D(""))) then
+		_0x45 = _0x44.Name
+	end
+	return _0x45
 end
-
--- Devuelve (jugador, textoCompletado, modoApodo). Si no hay coincidencia: (nil, textoOriginal, modoApodo)
-local function autocompletePlayer(text)
-    local query, nickMode = parseQuery(text)
-    local player = searchPlayers(query, nickMode)[1]
-    if not player then
-        return nil, text, nickMode
-    end
-    local completed = nickMode and ('"' .. displayNameOf(player) .. '"') or player.Name
-    return player, completed, nickMode
+local function _0x46(_0x47, _0x48)
+	local _0x49 = ((_0x47 or _0xS_D(""))):lower()
+	if (_0x49 == _0xS_D("")) then
+		return {}
+	end
+	local _0x4a = {}
+	for _0x4b, _0x4c in ipairs(_0x1:GetPlayers()) do
+		if (_0x4c == _0x13) then
+			continue
+		end
+		local _0x4d = (((_0x48 and _0x43(_0x4c)) or _0x4c.Name)):lower()
+		local _0x4e = 0
+		if (_0x4d == _0x49) then
+			_0x4e = 3
+		elseif (_0x4d:sub(1, (#_0x49)) == _0x49) then
+			_0x4e = 2
+		elseif _0x4d:find(_0x49, 1, true) then
+			_0x4e = 1
+		end
+		if (_0x4e > 0) then
+			table.insert(_0x4a, { player = _0x4c, score = _0x4e, key = _0x4d })
+		end
+	end
+	table.sort(_0x4a, function(_0x4f, _0x50)
+	if (_0x4f.score ~= _0x50.score) then
+		return (_0x4f.score > _0x50.score)
+	end
+	return (_0x4f.key < _0x50.key)
+end)
+	local _0x51 = {}
+	for _0x52 = 1, math.min((#_0x4a), _0x3d) do
+		_0x51[_0x52] = _0x4a[_0x52].player
+	end
+	return _0x51
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [5]  ICONO DE LOCK + HIGHLIGHT
--- ──────────────────────────────────────────────────────────────────
-local function removeLockIcon()
-    if L.lockIconGui then
-        pcall(function() L.lockIconGui:Destroy() end)
-        L.lockIconGui = nil
-    end
+local function _0x53(_0x54)
+	local _0x55, _0x56 = _0x40(_0x54)
+	local _0x57 = _0x46(_0x55, _0x56)[1]
+	if (not _0x57) then
+		return nil, _0x54, _0x56
+	end
+	local _0x58 = ((_0x56 and ((_0xS_D("\143") .. (_0x43(_0x57) .. _0xS_D("\143"))))) or _0x57.Name)
+	return _0x57, _0x58, _0x56
 end
-
-local function applyLockIcon(player)
-    if not L.systemEnabled or not L.lockActive or player ~= L.lockedTarget then return end
-    removeLockIcon()
-    local torso = getAimPart(player.Character)
-    if not torso then return end
-    L.lockIconGui = Instance.new("BillboardGui", torso)
-    L.lockIconGui.Name        = "LockIcon"
-    L.lockIconGui.Size        = UDim2.new(0, 50, 0, 50)
-    L.lockIconGui.AlwaysOnTop = true
-    L.lockIconGui.StudsOffset = Vector3.new(0, 0, 0)
-    local img = Instance.new("ImageLabel", L.lockIconGui)
-    img.Size                 = UDim2.new(1, 0, 1, 0)
-    img.BackgroundTransparency = 1
-    img.Image                = LOCK_ICON_ID
-    img.ImageColor3          = Color3.fromRGB(255, 255, 255)
-    img.ScaleType            = Enum.ScaleType.Fit
+local function _0x59()
+	if _0x12.lockIconGui then
+		pcall(function()
+	_0x12.lockIconGui:Destroy()
+end)
+		_0x12.lockIconGui = nil
+	end
 end
-
-local function ensureLockHighlight()
-    if not L.lockHighlight then
-        L.lockHighlight = Instance.new("Highlight")
-        L.lockHighlight.Name                = "AFO_LockHighlight"
-        L.lockHighlight.FillTransparency    = 1
-        L.lockHighlight.OutlineColor        = Color3.fromRGB(255, 255, 255)
-        L.lockHighlight.OutlineTransparency = 0
-    end
+local function _0x5a(_0x5b)
+	if (((not _0x12.systemEnabled) or (not _0x12.lockActive)) or (_0x5b ~= _0x12.lockedTarget)) then
+		return
+	end
+	_0x59()
+	local _0x5c = _0x17(_0x5b.Character)
+	if (not _0x5c) then
+		return
+	end
+	_0x12.lockIconGui = Instance.new(_0xS_D("\239\196\193\193\207\194\204\223\201\234\216\196"), _0x5c)
+	_0x12.lockIconGui.Name = _0xS_D("\225\194\206\198\228\206\194\195")
+	_0x12.lockIconGui.Size = UDim2.new(0, 50, 0, 50)
+	_0x12.lockIconGui.AlwaysOnTop = true
+	_0x12.lockIconGui.StudsOffset = Vector3.new(0, 0, 0)
+	local _0x5d = Instance.new(_0xS_D("\228\192\204\202\200\225\204\207\200\193"), _0x12.lockIconGui)
+	_0x5d.Size = UDim2.new(1, 0, 1, 0)
+	_0x5d.BackgroundTransparency = 1
+	_0x5d.Image = _0x11
+	_0x5d.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	_0x5d.ScaleType = Enum.ScaleType.Fit
 end
-
-local function updateLockHighlight()
-    local want = nil
-    if L.systemEnabled and L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget) then
-        want = L.lockedTarget.Character
-    end
-    if want then
-        ensureLockHighlight()
-        if L.lockHighlight.Parent ~= want then L.lockHighlight.Parent = want end
-    elseif L.lockHighlight and L.lockHighlight.Parent ~= nil then
-        L.lockHighlight.Parent = nil
-    end
+local function _0x5e()
+	if (not _0x12.lockHighlight) then
+		_0x12.lockHighlight = Instance.new(_0xS_D("\229\196\202\197\193\196\202\197\217"))
+		_0x12.lockHighlight.Name = _0xS_D("\236\235\226\242\225\194\206\198\229\196\202\197\193\196\202\197\217")
+		_0x12.lockHighlight.FillTransparency = 1
+		_0x12.lockHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+		_0x12.lockHighlight.OutlineTransparency = 0
+	end
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [6]  GUI INFO PANEL
--- ──────────────────────────────────────────────────────────────────
-local function loadAvatarImage()
-    if not L.systemEnabled or not L.lockActive or not L.lockedTarget or not L.lockInfoGui then return end
-    local playerImg = L.lockInfoGui:FindFirstChild("PlayerImage", true)
-    if not playerImg then return end
-    -- Evita lanzar una peticion web en cada frame: una por panel, con reintento cada 3 s si falla
-    if L.avatarLoadedGui == L.lockInfoGui then return end
-    if os.clock() < (L.avatarRetryAt or 0) then return end
-    L.avatarLoadedGui = L.lockInfoGui
-    local target = L.lockedTarget
-    local infoGui = L.lockInfoGui
-    local requestId = L.avatarRequestId
-    local userId = target.UserId
-
-    task.spawn(function()
-        local success, content = pcall(function()
-            return Players:GetUserThumbnailAsync(
-                userId,
-                Enum.ThumbnailType.AvatarBust,
-                Enum.ThumbnailSize.Size420x420
-            )
-        end)
-
-        if success and content
-            and L.systemEnabled
-            and L.lockActive
-            and L.lockedTarget == target
-            and L.lockInfoGui == infoGui
-            and L.avatarRequestId == requestId
-            and playerImg.Parent then
-            playerImg.Image = content
-        elseif L.avatarLoadedGui == infoGui then
-            L.avatarLoadedGui = nil
-            L.avatarRetryAt = os.clock() + 3
-        end
-    end)
+local function _0x5f()
+	local _0x60 = nil
+	if (((_0x12.systemEnabled and _0x12.lockActive) and _0x12.lockedTarget) and _0x29(_0x12.lockedTarget)) then
+		_0x60 = _0x12.lockedTarget.Character
+	end
+	if _0x60 then
+		_0x5e()
+		if (_0x12.lockHighlight.Parent ~= _0x60) then
+			_0x12.lockHighlight.Parent = _0x60
+		end
+	elseif (_0x12.lockHighlight and (_0x12.lockHighlight.Parent ~= nil)) then
+		_0x12.lockHighlight.Parent = nil
+	end
 end
-
--- Reduce el tamaño de letra hasta que el texto quepa en el ancho de la etiqueta.
--- Roblox permite nombres de hasta 20 caracteres; en el peor caso (ej. "WWWW...")
--- el texto se escala hacia abajo hasta minSize. Solo recalcula si el texto cambió.
-local function fitText(lbl, maxSize, minSize)
-    local text = lbl.Text
-    if lbl:GetAttribute("FitText") == text then return end
-    lbl:SetAttribute("FitText", text)
-
-    local availW = lbl.AbsoluteSize.X
-    if availW <= 0 then availW = 132 end -- ancho por defecto del panel (250 - 118)
-
-    local size = maxSize
-    while size > minSize do
-        local okB, bounds = pcall(function()
-            return TextService:GetTextSize(text, size, lbl.Font, Vector2.new(10000, 100))
-        end)
-        if not okB or bounds.X <= availW then break end
-        size = size - 1
-    end
-    lbl.TextSize = size
+local function _0x61()
+	if ((((not _0x12.systemEnabled) or (not _0x12.lockActive)) or (not _0x12.lockedTarget)) or (not _0x12.lockInfoGui)) then
+		return
+	end
+	local _0x62 = _0x12.lockInfoGui:FindFirstChild(_0xS_D("\253\193\204\212\200\223\228\192\204\202\200"), true)
+	if (not _0x62) then
+		return
+	end
+	if (_0x12.avatarLoadedGui == _0x12.lockInfoGui) then
+		return
+	end
+	if (os.clock() < ((_0x12.avatarRetryAt or 0))) then
+		return
+	end
+	_0x12.avatarLoadedGui = _0x12.lockInfoGui
+	local _0x63 = _0x12.lockedTarget
+	local _0x64 = _0x12.lockInfoGui
+	local _0x65 = _0x12.avatarRequestId
+	local _0x66 = _0x63.UserId
+	task.spawn(function()
+	local _0x67, _0x68 = pcall(function()
+	return _0x1:GetUserThumbnailAsync(_0x66, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size420x420)
+end)
+	if (((((((_0x67 and _0x68) and _0x12.systemEnabled) and _0x12.lockActive) and (_0x12.lockedTarget == _0x63)) and (_0x12.lockInfoGui == _0x64)) and (_0x12.avatarRequestId == _0x65)) and _0x62.Parent) then
+		_0x62.Image = _0x68
+	elseif (_0x12.avatarLoadedGui == _0x64) then
+		_0x12.avatarLoadedGui = nil
+		_0x12.avatarRetryAt = (os.clock() + 3)
+	end
+end)
 end
-
-local function createLockInfoGui(parentFrame)
-    if not L.systemEnabled or not L.lockActive or not L.lockedTarget then return end
-
-    if L.lockInfoGui then
-        pcall(function() L.lockInfoGui:Destroy() end)
-        L.lockInfoGui = nil
-    end
-
-    local parent = parentFrame
-    if not parent then
-        if L.ownScreenGui then
-            pcall(function() L.ownScreenGui:Destroy() end)
-            L.ownScreenGui = nil
-        end
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name           = "AFO_LockGui"
-        screenGui.ResetOnSpawn   = false
-        screenGui.IgnoreGuiInset = true
-        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        local container
-        if type(gethui) == "function" then
-            local okH, h = pcall(gethui)
-            if okH and h then container = h end
-        end
-        if not container then
-            local okP, pg = pcall(function() return lplr.PlayerGui end)
-            container = (okP and pg) or game:GetService("CoreGui")
-        end
-        screenGui.Parent = container
-        L.ownScreenGui   = screenGui
-        parent           = screenGui
-    end
-
-    local C_PURPLE = Color3.fromRGB(110, 30, 180)
-    local C_BLACK  = Color3.fromRGB(6, 4, 12)
-    local C_TEXT   = Color3.fromRGB(220, 190, 255)
-
-    local infoFrame = Instance.new("Frame")
-    infoFrame.Name                  = "LockInfoPanel"
-    infoFrame.Size                  = UDim2.new(0, 250, 0, 122)
-    infoFrame.Position              = UDim2.new(1, -262, 0, 44)
-    infoFrame.AnchorPoint           = Vector2.new(0, 0)
-    infoFrame.BackgroundColor3      = C_BLACK
-    infoFrame.BackgroundTransparency = 0.15
-    infoFrame.BorderSizePixel       = 0
-    infoFrame.ZIndex                = 10
-    infoFrame.Visible               = true
-    infoFrame.Parent                = parent
-    Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0, 8)
-
-    local stroke = Instance.new("UIStroke", infoFrame)
-    stroke.Color       = C_PURPLE
-    stroke.Thickness   = 1
-    stroke.Transparency = 0.5
-
-    local iconLbl = Instance.new("TextLabel", infoFrame)
-    iconLbl.Size                 = UDim2.new(0, 28, 0, 28)
-    iconLbl.Position             = UDim2.new(0, 6, 0.5, -14)
-    iconLbl.BackgroundTransparency = 1
-    iconLbl.Font                 = Enum.Font.Legacy
-    iconLbl.TextSize             = 20
-    iconLbl.TextColor3           = Color3.fromRGB(255, 220, 80)
-    iconLbl.Text                 = "🎯"
-
-    -- Crea una etiqueta de texto alineada a la izquierda del bloque central
-    local function makeLabel(name, y, h, font, size, color, text)
-        local lbl = Instance.new("TextLabel", infoFrame)
-        lbl.Name                   = name
-        lbl.Size                   = UDim2.new(1, -118, 0, h)
-        lbl.Position               = UDim2.new(0, 40, 0, y)
-        lbl.BackgroundTransparency = 1
-        lbl.Font                   = font
-        lbl.TextSize               = size
-        lbl.TextColor3             = color
-        lbl.Text                   = text
-        lbl.TextXAlignment         = Enum.TextXAlignment.Left
-        lbl.TextTruncate           = Enum.TextTruncate.AtEnd
-        return lbl
-    end
-
-    -- 1) Nombre de visualización
-    makeLabel("NameLabel", 8, 18, Enum.Font.GothamBold, 13, C_TEXT, "---")
-    -- 2) @Nombre real
-    makeLabel("UserLabel", 26, 14, Enum.Font.Gotham, 10, Color3.fromRGB(170, 150, 210), "@---")
-    -- 3) Distancia en studs
-    makeLabel("DistLabel", 44, 15, Enum.Font.Gotham, 11, Color3.fromRGB(200, 170, 255), "--- " .. FT.studs)
-    -- 4) Studs arriba / abajo
-    makeLabel("HeightLabel", 60, 15, Enum.Font.Gotham, 10, Color3.fromRGB(150, 220, 255), "---")
-    -- 5) Vida
-    makeLabel("HealthLabel", 77, 18, Enum.Font.Legacy, 12, Color3.fromRGB(255, 150, 150), "❤️ ---")
-
-    -- Barra de vida
-    local barBg = Instance.new("Frame", infoFrame)
-    barBg.Name                   = "HealthBarBg"
-    barBg.Size                   = UDim2.new(1, -24, 0, 6)
-    barBg.Position               = UDim2.new(0, 12, 1, -14)
-    barBg.BackgroundColor3       = Color3.fromRGB(30, 18, 50)
-    barBg.BorderSizePixel        = 0
-    barBg.ZIndex                 = 11
-    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
-
-    local barFill = Instance.new("Frame", barBg)
-    barFill.Name                 = "HealthBarFill"
-    barFill.Size                 = UDim2.new(1, 0, 1, 0)
-    barFill.BackgroundColor3     = Color3.fromRGB(80, 255, 80)
-    barFill.BorderSizePixel      = 0
-    barFill.ZIndex               = 12
-    Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
-
-    local playerImgContainer = Instance.new("Frame", infoFrame)
-    playerImgContainer.Name               = "PlayerImgContainer"
-    playerImgContainer.Size               = UDim2.new(0, 64, 0, 64)
-    playerImgContainer.Position           = UDim2.new(1, -74, 0, 12)
-    playerImgContainer.BackgroundColor3   = Color3.fromRGB(20, 10, 40)
-    playerImgContainer.BackgroundTransparency = 0.3
-    playerImgContainer.BorderSizePixel    = 0
-    playerImgContainer.ZIndex             = 11
-    Instance.new("UICorner", playerImgContainer).CornerRadius = UDim.new(1, 0)
-
-    local playerImg = Instance.new("ImageLabel", playerImgContainer)
-    playerImg.Name                 = "PlayerImage"
-    playerImg.Size                 = UDim2.new(1, 0, 1, 0)
-    playerImg.Position             = UDim2.new(0, 0, 0, 0)
-    playerImg.BackgroundTransparency = 1
-    playerImg.Image                = ""
-    playerImg.ZIndex               = 12
-    Instance.new("UICorner", playerImg).CornerRadius = UDim.new(1, 0)
-
-    L.lockInfoGui = infoFrame
+local function _0x69(_0x6a, _0x6b, _0x6c)
+	local _0x6d = _0x6a.Text
+	if (_0x6a:GetAttribute(_0xS_D("\235\196\217\249\200\213\217")) == _0x6d) then
+		return
+	end
+	_0x6a:SetAttribute(_0xS_D("\235\196\217\249\200\213\217"), _0x6d)
+	local _0x6e = _0x6a.AbsoluteSize.X
+	if (_0x6e <= 0) then
+		_0x6e = 132
+	end
+	local _0x6f = _0x6b
+	while (_0x6f > _0x6c) do
+		local _0x70, _0x71 = pcall(function()
+	return _0x4:GetTextSize(_0x6d, _0x6f, _0x6a.Font, Vector2.new(10000, 100))
+end)
+		if ((not _0x70) or (_0x71.X <= _0x6e)) then
+			break
+		end
+		_0x6f = (_0x6f - 1)
+	end
+	_0x6a.TextSize = _0x6f
 end
-
-local function destroyLockInfoGui()
-    if L.lockInfoGui then
-        pcall(function() L.lockInfoGui:Destroy() end)
-        L.lockInfoGui = nil
-    end
-    if L.ownScreenGui then
-        pcall(function() L.ownScreenGui:Destroy() end)
-        L.ownScreenGui = nil
-    end
+local function _0x72(_0x73)
+	if (((not _0x12.systemEnabled) or (not _0x12.lockActive)) or (not _0x12.lockedTarget)) then
+		return
+	end
+	if _0x12.lockInfoGui then
+		pcall(function()
+	_0x12.lockInfoGui:Destroy()
+end)
+		_0x12.lockInfoGui = nil
+	end
+	local _0x74 = _0x73
+	if (not _0x74) then
+		if _0x12.ownScreenGui then
+			pcall(function()
+	_0x12.ownScreenGui:Destroy()
+end)
+			_0x12.ownScreenGui = nil
+		end
+		local _0x75 = Instance.new(_0xS_D("\254\206\223\200\200\195\234\216\196"))
+		_0x75.Name = _0xS_D("\236\235\226\242\225\194\206\198\234\216\196")
+		_0x75.ResetOnSpawn = false
+		_0x75.IgnoreGuiInset = true
+		_0x75.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		local _0x76
+		if (type(gethui) == _0xS_D("\203\216\195\206\217\196\194\195")) then
+			local _0x77, _0x78 = pcall(gethui)
+			if (_0x77 and _0x78) then
+				_0x76 = _0x78
+			end
+		end
+		if (not _0x76) then
+			local _0x79, _0x7a = pcall(function()
+	return _0x13.PlayerGui
+end)
+			_0x76 = (((_0x79 and _0x7a)) or game:GetService(_0xS_D("\238\194\223\200\234\216\196")))
+		end
+		_0x75.Parent = _0x76
+		_0x12.ownScreenGui = _0x75
+		_0x74 = _0x75
+	end
+	local _0x7b = Color3.fromRGB(110, 30, 180)
+	local _0x7c = Color3.fromRGB(6, 4, 12)
+	local _0x7d = Color3.fromRGB(220, 190, 255)
+	local _0x7e = Instance.new(_0xS_D("\235\223\204\192\200"))
+	_0x7e.Name = _0xS_D("\225\194\206\198\228\195\203\194\253\204\195\200\193")
+	_0x7e.Size = UDim2.new(0, 250, 0, 122)
+	_0x7e.Position = UDim2.new(1, (-262), 0, 44)
+	_0x7e.AnchorPoint = Vector2.new(0, 0)
+	_0x7e.BackgroundColor3 = _0x7c
+	_0x7e.BackgroundTransparency = 0.15
+	_0x7e.BorderSizePixel = 0
+	_0x7e.ZIndex = 10
+	_0x7e.Visible = true
+	_0x7e.Parent = _0x74
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x7e).CornerRadius = UDim.new(0, 8)
+	local _0x7f = Instance.new(_0xS_D("\248\228\254\217\223\194\198\200"), _0x7e)
+	_0x7f.Color = _0x7b
+	_0x7f.Thickness = 1
+	_0x7f.Transparency = 0.5
+	local _0x80 = Instance.new(_0xS_D("\249\200\213\217\225\204\207\200\193"), _0x7e)
+	_0x80.Size = UDim2.new(0, 28, 0, 28)
+	_0x80.Position = UDim2.new(0, 6, 0.5, (-14))
+	_0x80.BackgroundTransparency = 1
+	_0x80.Font = Enum.Font.Legacy
+	_0x80.TextSize = 20
+	_0x80.TextColor3 = Color3.fromRGB(255, 220, 80)
+	_0x80.Text = _0xS_D("\093\050\035\002")
+	local function _0x81(_0x82, _0x83, _0x84, _0x85, _0x86, _0x87, _0x88)
+		local _0x89 = Instance.new(_0xS_D("\249\200\213\217\225\204\207\200\193"), _0x7e)
+		_0x89.Name = _0x82
+		_0x89.Size = UDim2.new(1, (-118), 0, _0x84)
+		_0x89.Position = UDim2.new(0, 40, 0, _0x83)
+		_0x89.BackgroundTransparency = 1
+		_0x89.Font = _0x85
+		_0x89.TextSize = _0x86
+		_0x89.TextColor3 = _0x87
+		_0x89.Text = _0x88
+		_0x89.TextXAlignment = Enum.TextXAlignment.Left
+		_0x89.TextTruncate = Enum.TextTruncate.AtEnd
+		return _0x89
+	end
+	_0x81(_0xS_D("\227\204\192\200\225\204\207\200\193"), 8, 18, Enum.Font.GothamBold, 13, _0x7d, _0xS_D("\128\128\128"))
+	_0x81(_0xS_D("\248\222\200\223\225\204\207\200\193"), 26, 14, Enum.Font.Gotham, 10, Color3.fromRGB(170, 150, 210), _0xS_D("\237\128\128\128"))
+	_0x81(_0xS_D("\233\196\222\217\225\204\207\200\193"), 44, 15, Enum.Font.Gotham, 11, Color3.fromRGB(200, 170, 255), (_0xS_D("\128\128\128\141") .. _0xd.studs))
+	_0x81(_0xS_D("\229\200\196\202\197\217\225\204\207\200\193"), 60, 15, Enum.Font.Gotham, 10, Color3.fromRGB(150, 220, 255), _0xS_D("\128\128\128"))
+	_0x81(_0xS_D("\229\200\204\193\217\197\225\204\207\200\193"), 77, 18, Enum.Font.Legacy, 12, Color3.fromRGB(255, 150, 150), _0xS_D("\079\048\009\066\021\034\141\128\128\128"))
+	local _0x8a = Instance.new(_0xS_D("\235\223\204\192\200"), _0x7e)
+	_0x8a.Name = _0xS_D("\229\200\204\193\217\197\239\204\223\239\202")
+	_0x8a.Size = UDim2.new(1, (-24), 0, 6)
+	_0x8a.Position = UDim2.new(0, 12, 1, (-14))
+	_0x8a.BackgroundColor3 = Color3.fromRGB(30, 18, 50)
+	_0x8a.BorderSizePixel = 0
+	_0x8a.ZIndex = 11
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x8a).CornerRadius = UDim.new(1, 0)
+	local _0x8b = Instance.new(_0xS_D("\235\223\204\192\200"), _0x8a)
+	_0x8b.Name = _0xS_D("\229\200\204\193\217\197\239\204\223\235\196\193\193")
+	_0x8b.Size = UDim2.new(1, 0, 1, 0)
+	_0x8b.BackgroundColor3 = Color3.fromRGB(80, 255, 80)
+	_0x8b.BorderSizePixel = 0
+	_0x8b.ZIndex = 12
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x8b).CornerRadius = UDim.new(1, 0)
+	local _0x8c = Instance.new(_0xS_D("\235\223\204\192\200"), _0x7e)
+	_0x8c.Name = _0xS_D("\253\193\204\212\200\223\228\192\202\238\194\195\217\204\196\195\200\223")
+	_0x8c.Size = UDim2.new(0, 64, 0, 64)
+	_0x8c.Position = UDim2.new(1, (-74), 0, 12)
+	_0x8c.BackgroundColor3 = Color3.fromRGB(20, 10, 40)
+	_0x8c.BackgroundTransparency = 0.3
+	_0x8c.BorderSizePixel = 0
+	_0x8c.ZIndex = 11
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x8c).CornerRadius = UDim.new(1, 0)
+	local _0x8d = Instance.new(_0xS_D("\228\192\204\202\200\225\204\207\200\193"), _0x8c)
+	_0x8d.Name = _0xS_D("\253\193\204\212\200\223\228\192\204\202\200")
+	_0x8d.Size = UDim2.new(1, 0, 1, 0)
+	_0x8d.Position = UDim2.new(0, 0, 0, 0)
+	_0x8d.BackgroundTransparency = 1
+	_0x8d.Image = _0xS_D("")
+	_0x8d.ZIndex = 12
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x8d).CornerRadius = UDim.new(1, 0)
+	_0x12.lockInfoGui = _0x7e
 end
-
-local function clearLock()
-    L.avatarRequestId = L.avatarRequestId + 1
-    L.lockActive   = false
-    L.lockedTarget = nil
-    L.lockValid    = false
-    removeLockIcon()
-    updateLockHighlight()
-    destroyLockInfoGui()
+local function _0x8e()
+	if _0x12.lockInfoGui then
+		pcall(function()
+	_0x12.lockInfoGui:Destroy()
+end)
+		_0x12.lockInfoGui = nil
+	end
+	if _0x12.ownScreenGui then
+		pcall(function()
+	_0x12.ownScreenGui:Destroy()
+end)
+		_0x12.ownScreenGui = nil
+	end
 end
-
-local function updateLockInfoGui()
-    if not L.lockInfoGui then return end
-    if not L.lockActive
-    or not L.lockedTarget
-    or not L.lockedTarget.Character
-    or not isTargetValidForLock(L.lockedTarget) then
-        clearLock()
-        return
-    end
-
-    local target   = L.lockedTarget
-    local root     = target.Character:FindFirstChild("HumanoidRootPart")
-    local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-    local myChar   = lplr and lplr.Character
-    local myRoot   = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    local gui = L.lockInfoGui
-
-    -- 1) Nombre de visualización
-    local nameLabel = gui:FindFirstChild("NameLabel")
-    if nameLabel then
-        local dn = target.DisplayName
-        if not dn or dn == "" then dn = target.Name end
-        nameLabel.Text = dn
-        fitText(nameLabel, 13, 7)
-    end
-
-    -- 2) @Nombre real
-    local userLabel = gui:FindFirstChild("UserLabel")
-    if userLabel then
-        userLabel.Text = "@" .. target.Name
-        fitText(userLabel, 10, 7)
-    end
-
-    -- 3) Distancia en studs (desde tu personaje; si no existe, desde la cámara)
-    local dist = 0
-    if myRoot and safepos(myRoot.Position) and safepos(root.Position) then
-        dist = (myRoot.Position - root.Position).Magnitude
-    elseif refreshCamera() then
-        dist = (camera.CFrame.Position - root.Position).Magnitude
-    end
-    if isnan(dist) then dist = 0 end
-    local distLabel = gui:FindFirstChild("DistLabel")
-    if distLabel then distLabel.Text = math.floor(dist + 0.5) .. " " .. FT.studs end
-
-    -- 4) Studs arriba / abajo (respecto a ti)
-    local heightLabel = gui:FindFirstChild("HeightLabel")
-    if heightLabel and myRoot and safepos(myRoot.Position) and safepos(root.Position) then
-        local diff = math.floor(myRoot.Position.Y - root.Position.Y + 0.5)
-        if isnan(diff) then diff = 0 end
-        if diff > 0 then
-            -- el objetivo está por debajo de ti
-            heightLabel.Text       = "▼ " .. diff .. " " .. FT.height_below
-            heightLabel.TextColor3 = Color3.fromRGB(150, 220, 255)
-        elseif diff < 0 then
-            -- el objetivo está por encima de ti
-            heightLabel.Text       = "▲ " .. math.abs(diff) .. " " .. FT.height_above
-            heightLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-        else
-            heightLabel.Text       = "● " .. FT.height_same
-            heightLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
-        end
-    end
-
-    -- 5) Vida
-    local healthLabel = gui:FindFirstChild("HealthLabel")
-    if healthLabel and humanoid then
-        local rawHealth = math.max(humanoid.Health, 0)
-        local maxHealth = math.max(humanoid.MaxHealth, 1)
-        local healthStr
-        if math.floor(rawHealth) == 0 and rawHealth > 0 then
-            healthStr = string.format("%.2f", math.floor(rawHealth * 100 + 0.5) / 100)
-        else
-            healthStr = tostring(math.floor(rawHealth + 0.5))
-        end
-
-        local pct = math.clamp(rawHealth / maxHealth, 0, 1)
-        local heartEmoji, color
-        if rawHealth <= 0 then
-            heartEmoji, color = "☠️", Color3.fromRGB(120, 120, 120)
-        elseif pct > 0.75 then
-            heartEmoji, color = "💚", Color3.fromRGB(80, 255, 80)
-        elseif pct > 0.50 then
-            heartEmoji, color = "💛", Color3.fromRGB(255, 220, 80)
-        elseif pct > 0.25 then
-            heartEmoji, color = "🧡", Color3.fromRGB(255, 160, 60)
-        else
-            heartEmoji, color = "❤️", Color3.fromRGB(255, 80, 80)
-        end
-        healthLabel.Font       = Enum.Font.Legacy
-        healthLabel.Text       = heartEmoji .. " " .. healthStr .. "/" .. tostring(math.floor(maxHealth + 0.5))
-        healthLabel.TextColor3 = color
-
-        local barBg   = gui:FindFirstChild("HealthBarBg")
-        local barFill = barBg and barBg:FindFirstChild("HealthBarFill")
-        if barFill then
-            barFill.Size             = UDim2.new(pct, 0, 1, 0)
-            barFill.BackgroundColor3 = color
-        end
-    end
-
-    loadAvatarImage()
+local function _0x8f()
+	_0x12.avatarRequestId = (_0x12.avatarRequestId + 1)
+	_0x12.lockActive = false
+	_0x12.lockedTarget = nil
+	_0x12.lockValid = false
+	_0x59()
+	_0x5f()
+	_0x8e()
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [7]  CÁMARA DE LOCK
--- ──────────────────────────────────────────────────────────────────
--- CÓMO FUNCIONA (sin bucles de realimentación):
---   La cámara en 3ª persona orbita alrededor de un pivote (Camera.Focus ≈ tu
---   cabeza). Para que el objetivo quede bajo el cursor basta con que la cámara
---   mire en la dirección pivote→objetivo; el zoom no influye.
---   ANTES se medía el error contra el rayo actual y se giraba alrededor del
---   pivote con un eje cualquiera. Con el objetivo muy cerca cada giro movía tanto
---   la cámara que el error crecía en vez de bajar: la cámara salía disparada hacia
---   arriba y giraba en círculos. Además un eje arbitrario acumula ROLL
---   (inclinación) en giros rápidos, que es lo que se sentía como "deslizarse".
---   AHORA:
---     · yaw/pitch deseados se calculan directamente (no dependen del frame anterior)
---     · la cámara se reconstruye con yaw+pitch y roll = 0 (siempre recta)
---     · si el objetivo está pegado a ti la corrección se desvanece, y el pitch
---       nunca se calcula con un ángulo vertical imposible
---     · el seguimiento acelera con el error: en giros rápidos no se queda atrás
--- Márgenes del solver (ver solveAim):
---   · DISC_MARGIN: el rayo del cursor nunca se acerca a la tangente de la esfera de radio D
---     alrededor del pivote. Justo ahí la solución saltaba de golpe (hasta 140° por 1 px de cursor)
---     y la cámara giraba sin control: era el "punto loco".
---   · PITCH_MARGIN: el pitch pedido nunca se acerca al límite alcanzable (acos(±1)).
---   · Z_MARGIN: con el cursor muy a un lado, el punto podía caer de lado/detrás del pivote
---     y obligaba a inclinar la cámara decenas de grados; además creaba una "isla" de soluciones
---     separada de la normal y la cámara saltaba entre ambas.
---   Si el cursor cae en una zona "imposible", se acerca al centro de la pantalla lo justo para que
---   exista una solución estable (transición continua, sin saltos).
-local DISC_MARGIN  = 0.40
-local PITCH_MARGIN = 0.85
-local Z_MARGIN     = 0.30   -- el punto debe quedar DELANTE del pivote (u.Z <= -0.30)
-local SHRINK_ITERS = 10
-
-local function wrapAngle(a: number): number
-    return (a + math.pi) % (2 * math.pi) - math.pi
+local function _0x90()
+	if (not _0x12.lockInfoGui) then
+		return
+	end
+	if ((((not _0x12.lockActive) or (not _0x12.lockedTarget)) or (not _0x12.lockedTarget.Character)) or (not _0x29(_0x12.lockedTarget))) then
+		_0x8f()
+		return
+	end
+	local _0x91 = _0x12.lockedTarget
+	local _0x92 = _0x91.Character:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217"))
+	local _0x93 = _0x91.Character:FindFirstChildOfClass(_0xS_D("\229\216\192\204\195\194\196\201"))
+	local _0x94 = (_0x13 and _0x13.Character)
+	local _0x95 = (_0x94 and _0x94:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")))
+	if (not _0x92) then
+		return
+	end
+	local _0x96 = _0x12.lockInfoGui
+	local _0x97 = _0x96:FindFirstChild(_0xS_D("\227\204\192\200\225\204\207\200\193"))
+	if _0x97 then
+		local _0x98 = _0x91.DisplayName
+		if ((not _0x98) or (_0x98 == _0xS_D(""))) then
+			_0x98 = _0x91.Name
+		end
+		_0x97.Text = _0x98
+		_0x69(_0x97, 13, 7)
+	end
+	local _0x99 = _0x96:FindFirstChild(_0xS_D("\248\222\200\223\225\204\207\200\193"))
+	if _0x99 then
+		_0x99.Text = (_0xS_D("\237") .. _0x91.Name)
+		_0x69(_0x99, 10, 7)
+	end
+	local _0x9a = 0
+	if ((_0x95 and _0x7(_0x95.Position)) and _0x7(_0x92.Position)) then
+		_0x9a = ((_0x95.Position - _0x92.Position)).Magnitude
+	elseif _0x15() then
+		_0x9a = ((_0x14.CFrame.Position - _0x92.Position)).Magnitude
+	end
+	if _0x5(_0x9a) then
+		_0x9a = 0
+	end
+	local _0x9b = _0x96:FindFirstChild(_0xS_D("\233\196\222\217\225\204\207\200\193"))
+	if _0x9b then
+		_0x9b.Text = (math.floor((_0x9a + 0.5)) .. (_0xS_D("\141") .. _0xd.studs))
+	end
+	local _0x9c = _0x96:FindFirstChild(_0xS_D("\229\200\196\202\197\217\225\204\207\200\193"))
+	if (((_0x9c and _0x95) and _0x7(_0x95.Position)) and _0x7(_0x92.Position)) then
+		local _0x9d = math.floor(((_0x95.Position.Y - _0x92.Position.Y) + 0.5))
+		if _0x5(_0x9d) then
+			_0x9d = 0
+		end
+		if (_0x9d > 0) then
+			_0x9c.Text = (_0xS_D("\079\059\017\141") .. (_0x9d .. (_0xS_D("\141") .. _0xd.height_below)))
+			_0x9c.TextColor3 = Color3.fromRGB(150, 220, 255)
+		elseif (_0x9d < 0) then
+			_0x9c.Text = (_0xS_D("\079\059\031\141") .. (math.abs(_0x9d) .. (_0xS_D("\141") .. _0xd.height_above)))
+			_0x9c.TextColor3 = Color3.fromRGB(255, 200, 100)
+		else
+			_0x9c.Text = (_0xS_D("\079\058\034\141") .. _0xd.height_same)
+			_0x9c.TextColor3 = Color3.fromRGB(150, 255, 150)
+		end
+	end
+	local _0x9e = _0x96:FindFirstChild(_0xS_D("\229\200\204\193\217\197\225\204\207\200\193"))
+	if (_0x9e and _0x93) then
+		local _0x9f = math.max(_0x93.Health, 0)
+		local _0xa0 = math.max(_0x93.MaxHealth, 1)
+		local _0xa1
+		if ((math.floor(_0x9f) == 0) and (_0x9f > 0)) then
+			_0xa1 = string.format(_0xS_D("\136\131\159\203"), (math.floor(((_0x9f * 100) + 0.5)) / 100))
+		else
+			_0xa1 = tostring(math.floor((_0x9f + 0.5)))
+		end
+		local _0xa2 = math.clamp((_0x9f / _0xa0), 0, 1)
+		local _0xa3, _0xa4
+		if (_0x9f <= 0) then
+			_0xa3, _0xa4 = _0xS_D("\079\053\013\066\021\034"), Color3.fromRGB(120, 120, 120)
+		elseif (_0xa2 > 0.75) then
+			_0xa3, _0xa4 = _0xS_D("\093\050\063\055"), Color3.fromRGB(80, 255, 80)
+		elseif (_0xa2 > 0.50) then
+			_0xa3, _0xa4 = _0xS_D("\093\050\063\054"), Color3.fromRGB(255, 220, 80)
+		elseif (_0xa2 > 0.25) then
+			_0xa3, _0xa4 = _0xS_D("\093\050\010\012"), Color3.fromRGB(255, 160, 60)
+		else
+			_0xa3, _0xa4 = _0xS_D("\079\048\009\066\021\034"), Color3.fromRGB(255, 80, 80)
+		end
+		_0x9e.Font = Enum.Font.Legacy
+		_0x9e.Text = (_0xa3 .. (_0xS_D("\141") .. (_0xa1 .. (_0xS_D("\130") .. tostring(math.floor((_0xa0 + 0.5)))))))
+		_0x9e.TextColor3 = _0xa4
+		local _0xa5 = _0x96:FindFirstChild(_0xS_D("\229\200\204\193\217\197\239\204\223\239\202"))
+		local _0xa6 = (_0xa5 and _0xa5:FindFirstChild(_0xS_D("\229\200\204\193\217\197\239\204\223\235\196\193\193")))
+		if _0xa6 then
+			_0xa6.Size = UDim2.new(_0xa2, 0, 1, 0)
+			_0xa6.BackgroundColor3 = _0xa4
+		end
+	end
+	_0x61()
 end
-
--- yaw / pitch de un vector (yaw 0 = mirando a -Z, igual que la cámara de Roblox).
--- minHz > 0 evita que el pitch se dispare a ±90° cuando el objetivo está casi
--- encima/debajo (distancia horizontal ~0).
-local function dirToAngles(v, minHz)
-    local hz = math.sqrt(v.X * v.X + v.Z * v.Z)
-    return math.atan2(-v.X, -v.Z), math.atan2(v.Y, math.max(hz, minHz or 0))
+local _0xa7 = 0.40
+local _0xa8 = 0.85
+local _0xa9 = 0.30
+local _0xaa = 10
+local function _0xab(_0xac)
+	return ((((_0xac + math.pi)) % ((2 * math.pi))) - math.pi)
 end
-
--- 0 = objetivo pegado a tu pivote (no se toca la cámara), 1 = distancia normal.
-local function nearGain(hz: number, minHz: number, fullHz: number): number
-    local t = math.clamp((hz - minHz) / math.max(fullHz - minHz, 1e-3), 0, 1)
-    return t * t * (3 - 2 * t)
+local function _0xad(_0xae, _0xaf)
+	local _0xb0 = math.sqrt(((_0xae.X * _0xae.X) + (_0xae.Z * _0xae.Z)))
+	return math.atan2((-_0xae.X), (-_0xae.Z)), math.atan2(_0xae.Y, math.max(_0xb0, (_0xaf or 0)))
 end
-
--- Zona muerta angular. El torso del objetivo se mueve al animarse (±0.3 studs); de cerca eso son
--- muchos grados y la cámara temblaba siguiéndolo. Dentro de esta zona la cámara no se mueve; fuera
--- solo avanza hasta el borde. Se desvanece con la distancia (≥ 12 studs = 0 = puntería exacta).
-local function jitterDeadZone(dist: number, radius: number?): number
-    if not radius or radius <= 0 then return 0 end
-    local t = math.clamp((dist - 4) / 8, 0, 1)
-    local tol = radius * (1 - t * t * (3 - 2 * t))
-    return math.atan2(tol, math.max(dist, 0.5))
+local function _0xb1(_0xb2, _0xb3, _0xb4)
+	local _0xb5 = math.clamp((((_0xb2 - _0xb3)) / math.max((_0xb4 - _0xb3), 1e-3)), 0, 1)
+	return ((_0xb5 * _0xb5) * ((3 - (2 * _0xb5))))
 end
-
--- Rayo del cursor reducido a la fracción s (0 = centro de pantalla, 1 = cursor real), cortado con la
--- esfera de radio D alrededor del pivote. Devuelve u (dirección pivote→punto, unitaria, en espacio de
--- cámara) y si la solución es "sana" (lejos de la tangente y con pitch alcanzable).
-local function evalRay(s, px, py, localOff, D, sinW)
-    local lv   = Vector3.new(px * s, py * s, -1).Unit
-    local b    = lv:Dot(localOff)
-    local disc = b * b - localOff:Dot(localOff) + D * D
-    local u    = localOff + lv * (-b + math.sqrt(math.max(disc, 0)))
-    local mag  = u.Magnitude
-    if mag < 1e-3 then return nil, false end
-    u = u / mag
-    local m   = math.sqrt(u.Y * u.Y + u.Z * u.Z)
-    local lim = DISC_MARGIN * D
-    return u, (disc >= lim * lim) and (math.abs(sinW) <= PITCH_MARGIN * m) and (u.Z <= -Z_MARGIN)
+local function _0xb6(_0xb7, _0xb8)
+	if ((not _0xb8) or (_0xb8 <= 0)) then
+		return 0
+	end
+	local _0xb9 = math.clamp((((_0xb7 - 4)) / 8), 0, 1)
+	local _0xba = (_0xb8 * ((1 - ((_0xb9 * _0xb9) * ((3 - (2 * _0xb9)))))))
+	return math.atan2(_0xba, math.max(_0xb7, 0.5))
 end
-
--- Calcula el yaw/pitch (SIN roll) que debe tener la cámara para que el objetivo
--- quede bajo `screenPoint`. Solución cerrada, sin iterar sobre el frame anterior:
---   · pivote→objetivo expresado en el espacio de la cámara:  u = offset + k·rayo
---   · se busca la rotación yaw+pitch que lleva `u` a la dirección real pivote→objetivo
--- Devuelve goalYaw, goalPitch, curYaw, curPitch, offsetLocal  (o nil si no es calculable)
-local function solveAim(cam, pivot, aimPoint, screenPoint, pitchMinHz, maxPitch)
-    local cf     = cam.CFrame
-    local toAim  = aimPoint - pivot
-    local D      = toAim.Magnitude
-    if D < 0.5 then return nil end
-
-    local curYaw, curPitch = dirToAngles(cf.LookVector)
-    local localOff = cf:VectorToObjectSpace(cf.Position - pivot)
-
-    -- cursor en el plano z = -1 del espacio de cámara (lineal respecto a los píxeles)
-    local lvc = cf:VectorToObjectSpace(cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction)
-    local px, py = 0, 0
-    if lvc.Z < -1e-3 then px, py = lvc.X / -lvc.Z, lvc.Y / -lvc.Z end
-
-    local wYaw, wPitch = dirToAngles(toAim, pitchMinHz)
-    local sinW = math.sin(wPitch)
-
-    local u, ok = evalRay(1, px, py, localOff, D, sinW)
-    if not ok then
-        -- cursor en zona imposible/inestable: acercarlo al centro hasta la última posición sana
-        local lo, hi = 0, 1
-        for _ = 1, SHRINK_ITERS do
-            local mid = (lo + hi) * 0.5
-            local _, okMid = evalRay(mid, px, py, localOff, D, sinW)
-            if okMid then lo = mid else hi = mid end
-        end
-        u = evalRay(lo, px, py, localOff, D, sinW)
-    end
-    if not u then return nil end
-
-    -- Pitch: (cos p)·u.Y - (sin p)·u.Z = sin(wPitch)
-    local A, B = u.Y, -u.Z
-    local m = math.sqrt(A * A + B * B)
-    local pitch = curPitch
-    if m > 1e-6 then
-        local base = math.atan2(B, A)
-        local off  = math.acos(math.clamp(sinW / m, -1, 1))
-        local p1, p2 = wrapAngle(base + off), wrapAngle(base - off)
-        -- de las dos soluciones, la más cercana al pitch actual (evita saltos)
-        pitch = (math.abs(wrapAngle(p1 - curPitch)) <= math.abs(wrapAngle(p2 - curPitch))) and p1 or p2
-    end
-    -- Nunca se manda la cámara más arriba/abajo del límite (evita volteos)
-    local lim = math.max(maxPitch, math.abs(curPitch))
-    pitch = math.clamp(pitch, -lim, lim)
-
-    -- Yaw con el pitch ya definido
-    local alpha = math.atan2(-u.X, -(math.sin(pitch) * u.Y + math.cos(pitch) * u.Z))
-    local yaw   = wrapAngle(wYaw - alpha)
-
-    return yaw, pitch, curYaw, curPitch, localOff
+local function _0xbb(_0xbc, _0xbd, _0xbe, _0xbf, _0xc0, _0xc1)
+	local _0xc2 = Vector3.new((_0xbd * _0xbc), (_0xbe * _0xbc), (-1)).Unit
+	local _0xc3 = _0xc2:Dot(_0xbf)
+	local _0xc4 = (((_0xc3 * _0xc3) - _0xbf:Dot(_0xbf)) + (_0xc0 * _0xc0))
+	local _0xc5 = (_0xbf + (_0xc2 * (((-_0xc3) + math.sqrt(math.max(_0xc4, 0))))))
+	local _0xc6 = _0xc5.Magnitude
+	if (_0xc6 < 1e-3) then
+		return nil, false
+	end
+	_0xc5 = (_0xc5 / _0xc6)
+	local _0xc7 = math.sqrt(((_0xc5.Y * _0xc5.Y) + (_0xc5.Z * _0xc5.Z)))
+	local _0xc8 = (_0xa7 * _0xc0)
+	return _0xc5, ((((_0xc4 >= (_0xc8 * _0xc8))) and ((math.abs(_0xc1) <= (_0xa8 * _0xc7)))) and ((_0xc5.Z <= (-_0xa9))))
 end
-
--- Pivote de órbita: Focus (≈ tu cabeza) si es fiable; en 1ª persona o con la
--- cámara Scriptable se gira la cámara sobre sí misma.
-local function getOrbitPivot(cam, isBadFn)
-    local camPos = cam.CFrame.Position
-    local pivot  = camPos
-    if cam.CameraType ~= Enum.CameraType.Scriptable then
-        local focusPos = cam.Focus.Position
-        if not isBadFn(focusPos) and (focusPos - camPos).Magnitude < 100 then
-            pivot = focusPos
-        end
-    end
-    if (camPos - pivot).Magnitude < 1.5 then pivot = camPos end
-    return pivot
+local function _0xc9(_0xca, _0xcb, _0xcc, _0xcd, _0xce, _0xcf)
+	local _0xd0 = _0xca.CFrame
+	local _0xd1 = (_0xcc - _0xcb)
+	local _0xd2 = _0xd1.Magnitude
+	if (_0xd2 < 0.5) then
+		return nil
+	end
+	local _0xd3, _0xd4 = _0xad(_0xd0.LookVector)
+	local _0xd5 = _0xd0:VectorToObjectSpace((_0xd0.Position - _0xcb))
+	local _0xd6 = _0xd0:VectorToObjectSpace(_0xca:ViewportPointToRay(_0xcd.X, _0xcd.Y).Direction)
+	local _0xd7, _0xd8 = 0, 0
+	if (_0xd6.Z < (-1e-3)) then
+		_0xd7, _0xd8 = (_0xd6.X / (-_0xd6.Z)), (_0xd6.Y / (-_0xd6.Z))
+	end
+	local _0xd9, _0xda = _0xad(_0xd1, _0xce)
+	local _0xdb = math.sin(_0xda)
+	local _0xdc, _0xdd = _0xbb(1, _0xd7, _0xd8, _0xd5, _0xd2, _0xdb)
+	if (not _0xdd) then
+		local _0xde, _0xdf = 0, 1
+		for _0xe0 = 1, _0xaa do
+			local _0xe1 = (((_0xde + _0xdf)) * 0.5)
+			local _0xe2, _0xe3 = _0xbb(_0xe1, _0xd7, _0xd8, _0xd5, _0xd2, _0xdb)
+			if _0xe3 then
+				_0xde = _0xe1
+			else
+				_0xdf = _0xe1
+			end
+		end
+		_0xdc = _0xbb(_0xde, _0xd7, _0xd8, _0xd5, _0xd2, _0xdb)
+	end
+	if (not _0xdc) then
+		return nil
+	end
+	local _0xe4, _0xe5 = _0xdc.Y, (-_0xdc.Z)
+	local _0xe6 = math.sqrt(((_0xe4 * _0xe4) + (_0xe5 * _0xe5)))
+	local _0xe7 = _0xd4
+	if (_0xe6 > 1e-6) then
+		local _0xe8 = math.atan2(_0xe5, _0xe4)
+		local _0xe9 = math.acos(math.clamp((_0xdb / _0xe6), (-1), 1))
+		local _0xea, _0xeb = _0xab((_0xe8 + _0xe9)), _0xab((_0xe8 - _0xe9))
+		_0xe7 = ((((math.abs(_0xab((_0xea - _0xd4))) <= math.abs(_0xab((_0xeb - _0xd4))))) and _0xea) or _0xeb)
+	end
+	local _0xec = math.max(_0xcf, math.abs(_0xd4))
+	_0xe7 = math.clamp(_0xe7, (-_0xec), _0xec)
+	local _0xed = math.atan2((-_0xdc.X), (-(((math.sin(_0xe7) * _0xdc.Y) + (math.cos(_0xe7) * _0xdc.Z)))))
+	local _0xee = _0xab((_0xd9 - _0xed))
+	return _0xee, _0xe7, _0xd3, _0xd4, _0xd5
 end
-
--- Reconstruye la cámara con yaw+pitch y roll = 0 (horizonte siempre recto),
--- conservando zoom y desplazamiento de hombro (offset local).
-local function applyCameraAngles(cam, pivot, yaw, pitch, localOff)
-    if yaw ~= yaw or pitch ~= pitch then return end
-    local rot = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
-    cam.CFrame = CFrame.new(pivot + rot:VectorToWorldSpace(localOff)) * rot
+local function _0xef(_0xf0, _0xf1)
+	local _0xf2 = _0xf0.CFrame.Position
+	local _0xf3 = _0xf2
+	if (_0xf0.CameraType ~= Enum.CameraType.Scriptable) then
+		local _0xf4 = _0xf0.Focus.Position
+		if ((not _0xf1(_0xf4)) and (((_0xf4 - _0xf2)).Magnitude < 100)) then
+			_0xf3 = _0xf4
+		end
+	end
+	if (((_0xf2 - _0xf3)).Magnitude < 1.5) then
+		_0xf3 = _0xf2
+	end
+	return _0xf3
 end
-
--- Aplica una corrección (errYaw, errPitch ya con zona muerta y ganancia) limitando la velocidad
--- angular: ningún frame puede girar la cámara más de maxTurnSpeed·dt, pase lo que pase.
-local function applyLimitedStep(cam, pivot, curYaw, curPitch, localOff, dYaw, dPitch, maxTurnSpeed, dt)
-    local step    = math.sqrt(dYaw * dYaw + dPitch * dPitch)
-    local maxStep = (maxTurnSpeed or math.huge) * dt
-    if step > maxStep then
-        local k = maxStep / step
-        dYaw, dPitch = dYaw * k, dPitch * k
-    end
-    applyCameraAngles(cam, pivot, curYaw + dYaw, curPitch + dPitch, localOff)
+local function _0xf5(_0xf6, _0xf7, _0xf8, _0xf9, _0xfa)
+	if ((_0xf8 ~= _0xf8) or (_0xf9 ~= _0xf9)) then
+		return
+	end
+	local _0xfb = CFrame.fromEulerAnglesYXZ(_0xf9, _0xf8, 0)
+	_0xf6.CFrame = (CFrame.new((_0xf7 + _0xfb:VectorToWorldSpace(_0xfa))) * _0xfb)
 end
-
-local function notSafe(v) return not safepos(v) end
-
--- Un paso de corrección de cámara (se llama con pcall(fn, args): sin crear closures cada frame)
-local function stepLockCamera(cam, aimPoint, dt)
-    local pivot = getOrbitPivot(cam, notSafe)
-
-    -- Objetivo pegado a ti: no mover la cámara (evita el giro frenético)
-    local toAim = aimPoint - pivot
-    local gain = nearGain(math.sqrt(toAim.X * toAim.X + toAim.Z * toAim.Z), L.nearMinHz, L.nearFullHz)
-    if gain <= 0 then return end
-
-    -- Punto de pantalla por donde sale realmente el disparo
-    local screenPoint
-    if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-        screenPoint = UserInputService:GetMouseLocation()
-    else
-        screenPoint = cam.ViewportSize / 2
-    end
-
-    local goalYaw, goalPitch, curYaw, curPitch, localOff =
-        solveAim(cam, pivot, aimPoint, screenPoint, L.pitchMinHz, L.maxPitch)
-    if not goalYaw or not goalPitch or not curYaw or not curPitch or not localOff then return end
-
-    local errYaw   = wrapAngle(goalYaw - curYaw)
-    local errPitch = goalPitch - curPitch
-
-    -- Zona muerta: dentro de ella no se mueve; fuera solo se avanza hasta su borde
-    local mag = math.sqrt(errYaw * errYaw + errPitch * errPitch)
-    local dead = jitterDeadZone(toAim.Magnitude, L.jitterRadius)
-    if mag <= dead then return end
-    if dead > 0 then
-        local k = (mag - dead) / mag
-        errYaw, errPitch = errYaw * k, errPitch * k
-    end
-    local err = math.max(math.abs(errYaw), math.abs(errPitch))
-
-    -- Rapidez independiente de los FPS que crece con el error
-    local alpha = 1 - math.exp(-(L.trackStiffness + err * L.trackBoost) * dt)
-    if err <= L.snapAngle then alpha = 1 end
-    alpha = alpha * gain
-
-    applyLimitedStep(cam, pivot, curYaw, curPitch, localOff,
-        errYaw * alpha, errPitch * alpha, L.maxTurnSpeed, dt)
+local function _0xfc(_0xfd, _0xfe, _0xff, _0x100, _0x101, _0x102, _0x103, _0x104, _0x105)
+	local _0x106 = math.sqrt(((_0x102 * _0x102) + (_0x103 * _0x103)))
+	local _0x107 = (((_0x104 or math.huge)) * _0x105)
+	if (_0x106 > _0x107) then
+		local _0x108 = (_0x107 / _0x106)
+		_0x102, _0x103 = (_0x102 * _0x108), (_0x103 * _0x108)
+	end
+	_0xf5(_0xfd, _0xfe, (_0xff + _0x102), (_0x100 + _0x103), _0x101)
 end
-
-local function updateLockCamera(dt)
-    L.aimPoint  = nil
-    L.lockValid = false
-    if not L.lockActive or not L.lockedTarget then return end
-    local targetChar = L.lockedTarget.Character
-    if not targetChar or not isTargetValidForLock(L.lockedTarget) then clearLock(); return end
-    L.lockValid = true
-    local cam = refreshCamera()
-    if not cam then return end
-
-    local myChar = lplr and lplr.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-
-    local aimPoint = getAimPoint(targetChar, myRoot and myRoot.Position)
-    if not aimPoint then return end
-    L.aimPoint = aimPoint
-
-    pcall(stepLockCamera, cam, aimPoint, math.min(dt or 0.016, 0.1))
+local function _0x109(_0x10a)
+	return (not _0x7(_0x10a))
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [8]  EXPOSICIÓN DE DATOS (MONITOREO EXTERNO)
--- ──────────────────────────────────────────────────────────────────
-local _exp = { char = nil, active = nil, target = nil, aim = nil }
-
-local function ensureValue(char, className, name)
-    local v = char:FindFirstChild(name)
-    if not v then
-        v = Instance.new(className)
-        v.Name = name
-        v.Parent = char
-    end
-    return v
+local function _0x10b(_0x10c, _0x10d, _0x10e)
+	local _0x10f = _0xef(_0x10c, _0x109)
+	local _0x110 = (_0x10d - _0x10f)
+	local _0x111 = _0xb1(math.sqrt(((_0x110.X * _0x110.X) + (_0x110.Z * _0x110.Z))), _0x12.nearMinHz, _0x12.nearFullHz)
+	if (_0x111 <= 0) then
+		return
+	end
+	local _0x112
+	if (_0x12.aimAtCursor and (_0x3.MouseBehavior ~= Enum.MouseBehavior.LockCenter)) then
+		_0x112 = _0x3:GetMouseLocation()
+	else
+		_0x112 = (_0x10c.ViewportSize / 2)
+	end
+	local _0x113, _0x114, _0x115, _0x116, _0x117 = _0xc9(_0x10c, _0x10f, _0x10d, _0x112, _0x12.pitchMinHz, _0x12.maxPitch)
+	if (((((not _0x113) or (not _0x114)) or (not _0x115)) or (not _0x116)) or (not _0x117)) then
+		return
+	end
+	local _0x118 = _0xab((_0x113 - _0x115))
+	local _0x119 = (_0x114 - _0x116)
+	local _0x11a = math.sqrt(((_0x118 * _0x118) + (_0x119 * _0x119)))
+	local _0x11b = _0xb6(_0x110.Magnitude, _0x12.jitterRadius)
+	if (_0x11a <= _0x11b) then
+		return
+	end
+	if (_0x11b > 0) then
+		local _0x11c = (((_0x11a - _0x11b)) / _0x11a)
+		_0x118, _0x119 = (_0x118 * _0x11c), (_0x119 * _0x11c)
+	end
+	local _0x11d = math.max(math.abs(_0x118), math.abs(_0x119))
+	local _0x11e = (1 - math.exp(((-((_0x12.trackStiffness + (_0x11d * _0x12.trackBoost)))) * _0x10e)))
+	if (_0x11d <= _0x12.snapAngle) then
+		_0x11e = 1
+	end
+	_0x11e = (_0x11e * _0x111)
+	_0xfc(_0x10c, _0x10f, _0x115, _0x116, _0x117, (_0x118 * _0x11e), (_0x119 * _0x11e), _0x12.maxTurnSpeed, _0x10e)
 end
-
-local function updateExposedCharacterData()
-    local char = lplr and lplr.Character
-    if not char then return end
-
-    -- las referencias se buscan una vez por personaje (no 3 FindFirstChild por frame)
-    if _exp.char ~= char
-        or not _exp.active or _exp.active.Parent ~= char
-        or not _exp.target or _exp.target.Parent ~= char
-        or not _exp.aim    or _exp.aim.Parent    ~= char then
-        _exp.char   = char
-        _exp.active = ensureValue(char, "BoolValue",    "AFO_LockActive")
-        _exp.target = ensureValue(char, "ObjectValue",  "AFO_LockedTarget")
-        _exp.aim    = ensureValue(char, "Vector3Value", "AFO_AimPoint")
-    end
-
-    local isValid = L.lockActive and L.lockedTarget ~= nil and L.lockValid
-    if _exp.active.Value ~= isValid then _exp.active.Value = isValid end
-
-    local tgt = isValid and L.lockedTarget or nil
-    if _exp.target.Value ~= tgt then _exp.target.Value = tgt end
-
-    if isValid and L.aimPoint and _exp.aim.Value ~= L.aimPoint then
-        _exp.aim.Value = L.aimPoint
-    end
+local function _0x11f(_0x120)
+	_0x12.aimPoint = nil
+	_0x12.lockValid = false
+	if ((not _0x12.lockActive) or (not _0x12.lockedTarget)) then
+		return
+	end
+	local _0x121 = _0x12.lockedTarget.Character
+	if ((not _0x121) or (not _0x29(_0x12.lockedTarget))) then
+		_0x8f()
+		return
+	end
+	_0x12.lockValid = true
+	local _0x122 = _0x15()
+	if (not _0x122) then
+		return
+	end
+	local _0x123 = (_0x13 and _0x13.Character)
+	local _0x124 = (_0x123 and _0x123:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")))
+	local _0x125 = _0x1e(_0x121, (_0x124 and _0x124.Position))
+	if (not _0x125) then
+		return
+	end
+	_0x12.aimPoint = _0x125
+	pcall(_0x10b, _0x122, _0x125, math.min((_0x120 or 0.016), 0.1))
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [9]  TOGGLE / START / STOP
--- ──────────────────────────────────────────────────────────────────
--- Bloquea a un jugador concreto (también sirve para cambiar de objetivo en caliente)
-local function lockOnPlayer(player)
-    if not L.systemEnabled or not player or player == lplr then return false end
-    if not isTargetValidForLock(player) then return false end
-    L.avatarRequestId = L.avatarRequestId + 1
-    L.lockedTarget    = player
-    L.lockActive      = true
-    applyLockIcon(player)
-    updateLockHighlight()
-    createLockInfoGui(L.infoGuiParent)
-    loadAvatarImage()
-    return true
+local _0x126 = { char = nil, active = nil, target = nil, aim = nil }
+local function _0x127(_0x128, _0x129, _0x12a)
+	local _0x12b = _0x128:FindFirstChild(_0x12a)
+	if (not _0x12b) then
+		_0x12b = Instance.new(_0x129)
+		_0x12b.Name = _0x12a
+		_0x12b.Parent = _0x128
+	end
+	return _0x12b
 end
-
-local function toggleLock()
-    if not L.systemEnabled then return end
-
-    if not L.lockActive then
-        local found = getClosestLockTarget()
-        if found and isTargetValidForLock(found) then
-            lockOnPlayer(found)
-        end
-    else
-        clearLock()
-    end
+local function _0x12c()
+	local _0x12d = (_0x13 and _0x13.Character)
+	if (not _0x12d) then
+		return
+	end
+	if (((((((_0x126.char ~= _0x12d) or (not _0x126.active)) or (_0x126.active.Parent ~= _0x12d)) or (not _0x126.target)) or (_0x126.target.Parent ~= _0x12d)) or (not _0x126.aim)) or (_0x126.aim.Parent ~= _0x12d)) then
+		_0x126.char = _0x12d
+		_0x126.active = _0x127(_0x12d, _0xS_D("\239\194\194\193\251\204\193\216\200"), _0xS_D("\236\235\226\242\225\194\206\198\236\206\217\196\219\200"))
+		_0x126.target = _0x127(_0x12d, _0xS_D("\226\207\199\200\206\217\251\204\193\216\200"), _0xS_D("\236\235\226\242\225\194\206\198\200\201\249\204\223\202\200\217"))
+		_0x126.aim = _0x127(_0x12d, _0xS_D("\251\200\206\217\194\223\158\251\204\193\216\200"), _0xS_D("\236\235\226\242\236\196\192\253\194\196\195\217"))
+	end
+	local _0x12e = ((_0x12.lockActive and (_0x12.lockedTarget ~= nil)) and _0x12.lockValid)
+	if (_0x126.active.Value ~= _0x12e) then
+		_0x126.active.Value = _0x12e
+	end
+	local _0x12f = ((_0x12e and _0x12.lockedTarget) or nil)
+	if (_0x126.target.Value ~= _0x12f) then
+		_0x126.target.Value = _0x12f
+	end
+	if ((_0x12e and _0x12.aimPoint) and (_0x126.aim.Value ~= _0x12.aimPoint)) then
+		_0x126.aim.Value = _0x12.aimPoint
+	end
 end
-
--- Trabajo de cada frame. La cámara va siempre; el panel y el highlight (solo visuales) a 15 Hz.
-local function lockFrame(dt)
-    updateLockCamera(dt)
-    L.guiClock = L.guiClock + dt
-    if L.guiClock >= L.guiInterval then
-        L.guiClock = 0
-        updateLockInfoGui()
-        updateLockHighlight()
-    end
-    updateExposedCharacterData()
+local function _0x130(_0x131)
+	if (((not _0x12.systemEnabled) or (not _0x131)) or (_0x131 == _0x13)) then
+		return false
+	end
+	if (not _0x29(_0x131)) then
+		return false
+	end
+	_0x12.avatarRequestId = (_0x12.avatarRequestId + 1)
+	_0x12.lockedTarget = _0x131
+	_0x12.lockActive = true
+	_0x5a(_0x131)
+	_0x5f()
+	_0x72(_0x12.infoGuiParent)
+	_0x61()
+	return true
 end
-
-local function startLockSystem()
-    if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
-    pcall(function() RunService:UnbindFromRenderStep(L.renderName) end)
-
-    L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if not L.systemEnabled or gpe or isTyping() then return end
-        if input.KeyCode == L.lockKey then toggleLock() end
-    end)
-
-    -- Prioridad justo después de la cámara por defecto: la corrección es la última palabra del frame
-    L.guiClock = 0
-    RunService:BindToRenderStep(L.renderName, Enum.RenderPriority.Camera.Value + 1, function(dt)
-        if not L.systemEnabled then return end
-        profBegin("AFO_Lock")
-        local ok, err = pcall(lockFrame, dt)
-        profEnd()
-        if not ok and not L.errWarned then
-            L.errWarned = true
-            warn("[AFO Lock] " .. tostring(err))
-        end
-    end)
+local function _0x132()
+	if (not _0x12.systemEnabled) then
+		return
+	end
+	if (not _0x12.lockActive) then
+		local _0x133 = _0x2d()
+		if (_0x133 and _0x29(_0x133)) then
+			_0x130(_0x133)
+		end
+	else
+		_0x8f()
+	end
 end
-
-local function stopLockSystem()
-    L.systemEnabled = false
-    L.avatarRequestId = L.avatarRequestId + 1
-    if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
-    pcall(function() RunService:UnbindFromRenderStep(L.renderName) end)
-    clearLock()
-    if L.lockHighlight then
-        pcall(function() L.lockHighlight:Destroy() end)
-        L.lockHighlight = nil
-    end
-    updateExposedCharacterData()
+local function _0x134(_0x135)
+	_0x11f(_0x135)
+	_0x12.guiClock = (_0x12.guiClock + _0x135)
+	if (_0x12.guiClock >= _0x12.guiInterval) then
+		_0x12.guiClock = 0
+		_0x90()
+		_0x5f()
+	end
+	_0x12c()
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [10] GUI EMBEBIBLE — sección "LOCK" del HUD externo
--- ──────────────────────────────────────────────────────────────────
-local HUD_SECTION_HEIGHT = 66
-
-local function buildHUDLockSection(expandZone, makeSection, makeRow, colors)
-    local C_SEC1, C_ACCENT, C_GOLD, C_TEXT, C_SUBTEXT =
-        colors.SEC1, colors.ACCENT, colors.GOLD, colors.TEXT, colors.SUBTEXT
-
-    local lockSec = makeSection(HUD_SECTION_HEIGHT, C_SEC1, C_ACCENT)
-    lockSec.Parent = expandZone
-
-    local ROW_H   = 22
-    local lockRow = makeRow(lockSec, 8)
-
-    local lockIconEmoji = Instance.new("TextLabel", lockRow)
-    lockIconEmoji.Size                 = UDim2.new(0, 18, 1, 0)
-    lockIconEmoji.Position             = UDim2.new(0, 0, 0, 0)
-    lockIconEmoji.BackgroundTransparency = 1
-    lockIconEmoji.Font                 = Enum.Font.Legacy
-    lockIconEmoji.TextSize             = 11
-    lockIconEmoji.TextColor3           = C_GOLD
-    lockIconEmoji.Text                 = "🎯"
-    lockIconEmoji.TextXAlignment       = Enum.TextXAlignment.Center
-    lockIconEmoji.TextYAlignment       = Enum.TextYAlignment.Center
-
-    local lockLabel = Instance.new("TextLabel", lockRow)
-    lockLabel.Size                 = UDim2.new(0, 100, 1, 0)
-    lockLabel.Position             = UDim2.new(0, 22, 0, 0)
-    lockLabel.BackgroundTransparency = 1
-    lockLabel.Font                 = Enum.Font.GothamBold
-    lockLabel.TextSize             = 11
-    lockLabel.TextColor3           = C_TEXT
-    lockLabel.Text                 = FT.lock_label .. "  [" .. L.lockKey.Name .. "]"
-    lockLabel.TextXAlignment       = Enum.TextXAlignment.Left
-    lockLabel.TextYAlignment       = Enum.TextYAlignment.Center
-
-    local lockHint = Instance.new("TextLabel", lockRow)
-    lockHint.Size                 = UDim2.new(1, -128, 1, 0)
-    lockHint.Position             = UDim2.new(0, 124, 0, 0)
-    lockHint.BackgroundTransparency = 1
-    lockHint.Font                 = Enum.Font.Gotham
-    lockHint.TextSize             = 9
-    lockHint.TextColor3           = C_SUBTEXT
-    lockHint.Text                 = FT.lock_hint_prefix .. L.lockKey.Name
-    lockHint.TextXAlignment       = Enum.TextXAlignment.Right
-    lockHint.TextYAlignment       = Enum.TextYAlignment.Center
-
-    L.lockLabels = { label = lockLabel, hint = lockHint }
-
-    -- Fila 2: cuadro con autocompletado.  "apodo  /  nombre   (Enter = completar + lock)
-    local searchRow = makeRow(lockSec, 8 + ROW_H + 6)
-    local searchBox = Instance.new("TextBox", searchRow)
-    searchBox.Name                   = "LockSearchBox"
-    searchBox.Size                   = UDim2.new(1, 0, 1, 0)
-    searchBox.BackgroundColor3       = Color3.fromRGB(18, 12, 30)
-    searchBox.BorderSizePixel        = 0
-    searchBox.Font                   = Enum.Font.Gotham
-    searchBox.TextSize               = 10
-    searchBox.TextColor3             = C_TEXT
-    searchBox.PlaceholderText        = 'Jugador  ·  " para apodo'
-    searchBox.PlaceholderColor3      = C_SUBTEXT
-    searchBox.Text                   = ""
-    searchBox.ClearTextOnFocus       = false
-    searchBox.ClipsDescendants       = true
-    searchBox.TextXAlignment         = Enum.TextXAlignment.Left
-    Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 5)
-    local searchPad = Instance.new("UIPadding", searchBox)
-    searchPad.PaddingLeft = UDim.new(0, 6)
-    local searchStroke = Instance.new("UIStroke", searchBox)
-    searchStroke.Thickness = 1
-
-    local C_NICK = Color3.fromRGB(80, 200, 255)
-    local flashToken = 0
-
-    -- Borde morado = busca por nombre; celeste = modo apodo (se detectó la comilla)
-    local function paintStroke()
-        local _, nickMode = parseQuery(searchBox.Text)
-        searchStroke.Color        = nickMode and C_NICK or C_ACCENT
-        searchStroke.Transparency = nickMode and 0.2 or 0.6
-    end
-    paintStroke()
-
-    local function flash(color)
-        flashToken = flashToken + 1
-        local token = flashToken
-        searchStroke.Color        = color
-        searchStroke.Transparency = 0
-        task.delay(0.6, function()
-            if token == flashToken and searchStroke.Parent then paintStroke() end
-        end)
-    end
-
-    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        if searchBox:IsFocused() then paintStroke() end
-    end)
-
-    searchBox.FocusLost:Connect(function(enterPressed)
-        if trimText(searchBox.Text) == "" then paintStroke() return end
-        local player, completed = autocompletePlayer(searchBox.Text)
-        if not player then
-            flash(Color3.fromRGB(255, 80, 80))
-            return
-        end
-        searchBox.Text = completed
-        if enterPressed then
-            flash(lockOnPlayer(player) and Color3.fromRGB(80, 255, 150) or Color3.fromRGB(255, 80, 80))
-        else
-            paintStroke()
-        end
-    end)
-
-    L.searchBox = searchBox
-    return lockSec
+local function _0x136()
+	if _0x12.lockConn then
+		_0x12.lockConn:Disconnect()
+		_0x12.lockConn = nil
+	end
+	pcall(function()
+	_0x2:UnbindFromRenderStep(_0x12.renderName)
+end)
+	_0x12.lockConn = _0x3.InputBegan:Connect(function(_0x137, _0x138)
+	if (((not _0x12.systemEnabled) or _0x138) or _0x9()) then
+		return
+	end
+	if (_0x137.KeyCode == _0x12.lockKey) then
+		_0x132()
+	end
+end)
+	_0x12.guiClock = 0
+	_0x2:BindToRenderStep(_0x12.renderName, (Enum.RenderPriority.Camera.Value + 1), function(_0x139)
+	if (not _0x12.systemEnabled) then
+		return
+	end
+	_0xa(_0xS_D("\236\235\226\242\225\194\206\198"))
+	local _0x13a, _0x13b = pcall(_0x134, _0x139)
+	_0xb()
+	if ((not _0x13a) and (not _0x12.errWarned)) then
+		_0x12.errWarned = true
+		warn((_0xS_D("\246\236\235\226\141\225\194\206\198\240\141") .. tostring(_0x13b)))
+	end
+end)
 end
-
--- ──────────────────────────────────────────────────────────────────
--- [11] API PÚBLICA
--- ──────────────────────────────────────────────────────────────────
-local M = {}
-
-function M.Start(lplrRef, lockKeyCode)
-    lplr   = lplrRef or Players.LocalPlayer
-    camera = workspace.CurrentCamera
-    if lockKeyCode then L.lockKey = lockKeyCode end
-    _reloadFT()
-    L.systemEnabled = true
-    startLockSystem()
+local function _0x13c()
+	_0x12.systemEnabled = false
+	_0x12.avatarRequestId = (_0x12.avatarRequestId + 1)
+	if _0x12.lockConn then
+		_0x12.lockConn:Disconnect()
+		_0x12.lockConn = nil
+	end
+	pcall(function()
+	_0x2:UnbindFromRenderStep(_0x12.renderName)
+end)
+	_0x8f()
+	if _0x12.lockHighlight then
+		pcall(function()
+	_0x12.lockHighlight:Destroy()
+end)
+		_0x12.lockHighlight = nil
+	end
+	_0x12c()
 end
-
-function M.Stop()
-    stopLockSystem()
+local _0x13d = 66
+local function _0x13e(_0x13f, _0x140, _0x141, _0x142)
+	local _0x143, _0x144, _0x145, _0x146, _0x147 = _0x142.SEC1, _0x142.ACCENT, _0x142.GOLD, _0x142.TEXT, _0x142.SUBTEXT
+	local _0x148 = _0x140(_0x13d, _0x143, _0x144)
+	_0x148.Parent = _0x13f
+	local _0x149 = 22
+	local _0x14a = _0x141(_0x148, 8)
+	local _0x14b = Instance.new(_0xS_D("\249\200\213\217\225\204\207\200\193"), _0x14a)
+	_0x14b.Size = UDim2.new(0, 18, 1, 0)
+	_0x14b.Position = UDim2.new(0, 0, 0, 0)
+	_0x14b.BackgroundTransparency = 1
+	_0x14b.Font = Enum.Font.Legacy
+	_0x14b.TextSize = 11
+	_0x14b.TextColor3 = _0x145
+	_0x14b.Text = _0xS_D("\093\050\035\002")
+	_0x14b.TextXAlignment = Enum.TextXAlignment.Center
+	_0x14b.TextYAlignment = Enum.TextYAlignment.Center
+	local _0x14c = Instance.new(_0xS_D("\249\200\213\217\225\204\207\200\193"), _0x14a)
+	_0x14c.Size = UDim2.new(0, 100, 1, 0)
+	_0x14c.Position = UDim2.new(0, 22, 0, 0)
+	_0x14c.BackgroundTransparency = 1
+	_0x14c.Font = Enum.Font.GothamBold
+	_0x14c.TextSize = 11
+	_0x14c.TextColor3 = _0x146
+	_0x14c.Text = (_0xd.lock_label .. (_0xS_D("\141\141\246") .. (_0x12.lockKey.Name .. _0xS_D("\240"))))
+	_0x14c.TextXAlignment = Enum.TextXAlignment.Left
+	_0x14c.TextYAlignment = Enum.TextYAlignment.Center
+	local _0x14d = Instance.new(_0xS_D("\249\200\213\217\225\204\207\200\193"), _0x14a)
+	_0x14d.Size = UDim2.new(1, (-128), 1, 0)
+	_0x14d.Position = UDim2.new(0, 124, 0, 0)
+	_0x14d.BackgroundTransparency = 1
+	_0x14d.Font = Enum.Font.Gotham
+	_0x14d.TextSize = 9
+	_0x14d.TextColor3 = _0x147
+	_0x14d.Text = (_0xd.lock_hint_prefix .. _0x12.lockKey.Name)
+	_0x14d.TextXAlignment = Enum.TextXAlignment.Right
+	_0x14d.TextYAlignment = Enum.TextYAlignment.Center
+	_0x12.lockLabels = { label = _0x14c, hint = _0x14d }
+	local _0x14e = _0x141(_0x148, ((8 + _0x149) + 6))
+	local _0x14f = Instance.new(_0xS_D("\249\200\213\217\239\194\213"), _0x14e)
+	_0x14f.Name = _0xS_D("\225\194\206\198\254\200\204\223\206\197\239\194\213")
+	_0x14f.Size = UDim2.new(1, 0, 1, 0)
+	_0x14f.BackgroundColor3 = Color3.fromRGB(18, 12, 30)
+	_0x14f.BorderSizePixel = 0
+	_0x14f.Font = Enum.Font.Gotham
+	_0x14f.TextSize = 10
+	_0x14f.TextColor3 = _0x146
+	_0x14f.PlaceholderText = _0xS_D("\231\216\202\204\201\194\223\141\141\111\026\141\141\143\141\221\204\223\204\141\204\221\194\201\194")
+	_0x14f.PlaceholderColor3 = _0x147
+	_0x14f.Text = _0xS_D("")
+	_0x14f.ClearTextOnFocus = false
+	_0x14f.ClipsDescendants = true
+	_0x14f.TextXAlignment = Enum.TextXAlignment.Left
+	Instance.new(_0xS_D("\248\228\238\194\223\195\200\223"), _0x14f).CornerRadius = UDim.new(0, 5)
+	local _0x150 = Instance.new(_0xS_D("\248\228\253\204\201\201\196\195\202"), _0x14f)
+	_0x150.PaddingLeft = UDim.new(0, 6)
+	local _0x151 = Instance.new(_0xS_D("\248\228\254\217\223\194\198\200"), _0x14f)
+	_0x151.Thickness = 1
+	local _0x152 = Color3.fromRGB(80, 200, 255)
+	local _0x153 = 0
+	local function _0x154()
+		local _0x155, _0x156 = _0x40(_0x14f.Text)
+		_0x151.Color = ((_0x156 and _0x152) or _0x144)
+		_0x151.Transparency = ((_0x156 and 0.2) or 0.6)
+	end
+	_0x154()
+	local function _0x157(_0x158)
+		_0x153 = (_0x153 + 1)
+		local _0x159 = _0x153
+		_0x151.Color = _0x158
+		_0x151.Transparency = 0
+		task.delay(0.6, function()
+	if ((_0x159 == _0x153) and _0x151.Parent) then
+		_0x154()
+	end
+end)
+	end
+	_0x14f:GetPropertyChangedSignal(_0xS_D("\249\200\213\217")):Connect(function()
+	if _0x14f:IsFocused() then
+		_0x154()
+	end
+end)
+	_0x14f.FocusLost:Connect(function(_0x15a)
+	if (_0x3e(_0x14f.Text) == _0xS_D("")) then
+		_0x154()
+		return
+	end
+	local _0x15b, _0x15c = _0x53(_0x14f.Text)
+	if (not _0x15b) then
+		_0x157(Color3.fromRGB(255, 80, 80))
+		return
+	end
+	_0x14f.Text = _0x15c
+	if _0x15a then
+		_0x157(((_0x130(_0x15b) and Color3.fromRGB(80, 255, 150)) or Color3.fromRGB(255, 80, 80)))
+	else
+		_0x154()
+	end
+end)
+	_0x12.searchBox = _0x14f
+	return _0x148
 end
-
-function M.Toggle()
-    toggleLock()
+local _0x15d = {}
+function _0x15d.Start(_0x15e, _0x15f)
+	_0x13 = (_0x15e or _0x1.LocalPlayer)
+	_0x14 = workspace.CurrentCamera
+	if _0x15f then
+		_0x12.lockKey = _0x15f
+	end
+	_0xe()
+	_0x12.systemEnabled = true
+	_0x136()
 end
-
-function M.SetLockKey(keyCode)
-    L.lockKey = keyCode
-    if L.lockLabels then
-        L.lockLabels.label.Text = FT.lock_label .. "  [" .. keyCode.Name .. "]"
-        L.lockLabels.hint.Text  = FT.lock_hint_prefix .. keyCode.Name
-    end
-    if not L.systemEnabled then return end
-    if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
-    L.lockConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if not L.systemEnabled or gpe or isTyping() then return end
-        if input.KeyCode == L.lockKey then toggleLock() end
-    end)
+function _0x15d.Stop()
+	_0x13c()
 end
-
--- Autocompletado: "apodo -> DisplayName, nombre -> usuario
-function M.ParseQuery(text)         return parseQuery(text) end
-function M.AutocompletePlayer(text) return autocompletePlayer(text) end
-function M.SearchPlayers(text)
-    local query, nickMode = parseQuery(text)
-    return searchPlayers(query, nickMode)
+function _0x15d.Toggle()
+	_0x132()
 end
--- Acepta un Player o un texto ("apodo / nombre) y lo bloquea
-function M.LockOnPlayer(playerOrText)
-    local player = playerOrText
-    if type(playerOrText) == "string" then
-        player = autocompletePlayer(playerOrText)
-    end
-    return lockOnPlayer(player)
+function _0x15d.SetLockKey(_0x160)
+	_0x12.lockKey = _0x160
+	if _0x12.lockLabels then
+		_0x12.lockLabels.label.Text = (_0xd.lock_label .. (_0xS_D("\141\141\246") .. (_0x160.Name .. _0xS_D("\240"))))
+		_0x12.lockLabels.hint.Text = (_0xd.lock_hint_prefix .. _0x160.Name)
+	end
+	if (not _0x12.systemEnabled) then
+		return
+	end
+	if _0x12.lockConn then
+		_0x12.lockConn:Disconnect()
+		_0x12.lockConn = nil
+	end
+	_0x12.lockConn = _0x3.InputBegan:Connect(function(_0x161, _0x162)
+	if (((not _0x12.systemEnabled) or _0x162) or _0x9()) then
+		return
+	end
+	if (_0x161.KeyCode == _0x12.lockKey) then
+		_0x132()
+	end
+end)
 end
-
--- Puntería: usa estos valores para ajustar el pivote desde fuera
-function M.SetAimPart(name)           L.aimPart = name end             -- "Head", "UpperTorso"... o nil (auto)
-function M.SetAimOffset(v3)           L.aimOffset = v3 or Vector3.zero end
-function M.SetAimAtCursor(enabled)    L.aimAtCursor = enabled == true end
-function M.SetTrackStiffness(n)       L.trackStiffness = math.max(tonumber(n) or 40, 1) end
-function M.SetTrackBoost(n)           L.trackBoost = math.max(tonumber(n) or 60, 0) end
-function M.SetProjectileSpeed(n)      L.projectileSpeed = math.max(tonumber(n) or 0, 0) end
-function M.SetJitterRadius(n)         L.jitterRadius = math.max(tonumber(n) or 0.6, 0) end   -- 0 = puntería exacta de cerca
-function M.SetMaxTurnSpeedDeg(n)      L.maxTurnSpeed = math.rad(math.max(tonumber(n) or 2000, 1)) end
--- Punto exacto al que apunta la cámara (úsalo para lanzar tus esferas)
-function M.GetAimPoint()              return L.aimPoint end
-
-function M.GetLockKey()  return L.lockKey   end
-function M.IsActive()    return L.lockActive end
-function M.GetTarget()   return L.lockedTarget end
-
-function M.IsLockActive()
-    return L.lockActive == true
-        and L.lockedTarget ~= nil
-        and isTargetValidForLock(L.lockedTarget)
+function _0x15d.ParseQuery(_0x163)
+	return _0x40(_0x163)
 end
-
-function M.GetTargetInfo()
-    if not M.IsLockActive() then return nil end
-    return L.lockedTarget
+function _0x15d.AutocompletePlayer(_0x164)
+	return _0x53(_0x164)
 end
-
-function M.GetTargetHealth()
-    if not M.IsLockActive() then return 0, 0 end
-    local char = L.lockedTarget.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return 0, 0 end
-    return math.max(hum.Health, 0), math.max(hum.MaxHealth, 1)
+function _0x15d.SearchPlayers(_0x165)
+	local _0x166, _0x167 = _0x40(_0x165)
+	return _0x46(_0x166, _0x167)
 end
-
-function M.GetTargetDistance()
-    if not M.IsLockActive() then return 0 end
-    local myChar = lplr and lplr.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local tChar  = L.lockedTarget.Character
-    local tRoot  = tChar and tChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not tRoot then return 0 end
-    
-    local dist = (myRoot.Position - tRoot.Position).Magnitude
-    if isnan(dist) then return 0 end
-    return dist
+function _0x15d.LockOnPlayer(_0x168)
+	local _0x169 = _0x168
+	if (type(_0x168) == _0xS_D("\222\217\223\196\195\202")) then
+		_0x169 = _0x53(_0x168)
+	end
+	return _0x130(_0x169)
 end
-
-function M.GetStatus()
-    local active = M.IsLockActive()
-    local health, maxHealth = M.GetTargetHealth()
-    return {
-        lockActive = active,
-        target     = active and L.lockedTarget or nil,
-        targetName = active and L.lockedTarget.Name or "",
-        targetDisplayName = active and (L.lockedTarget.DisplayName or L.lockedTarget.Name) or "",
-        health     = health,
-        maxHealth  = maxHealth,
-        distance   = M.GetTargetDistance(),
-    }
+function _0x15d.SetAimPart(_0x16a)
+	_0x12.aimPart = _0x16a
 end
-
-M.CreateInfoGui = function(parentFrame)
-    if L.systemEnabled and L.lockActive and L.lockedTarget then
-        createLockInfoGui(parentFrame)
-    end
+function _0x15d.SetAimOffset(_0x16b)
+	_0x12.aimOffset = (_0x16b or Vector3.zero)
 end
-M.DestroyInfoGui      = destroyLockInfoGui
-M.BuildHUDLockSection = buildHUDLockSection
-M.HUD_SECTION_HEIGHT  = HUD_SECTION_HEIGHT
-
-return M
+function _0x15d.SetAimAtCursor(_0x16c)
+	_0x12.aimAtCursor = (_0x16c == true)
+end
+function _0x15d.SetTrackStiffness(_0x16d)
+	_0x12.trackStiffness = math.max((tonumber(_0x16d) or 40), 1)
+end
+function _0x15d.SetTrackBoost(_0x16e)
+	_0x12.trackBoost = math.max((tonumber(_0x16e) or 60), 0)
+end
+function _0x15d.SetProjectileSpeed(_0x16f)
+	_0x12.projectileSpeed = math.max((tonumber(_0x16f) or 0), 0)
+end
+function _0x15d.SetJitterRadius(_0x170)
+	_0x12.jitterRadius = math.max((tonumber(_0x170) or 0.6), 0)
+end
+function _0x15d.SetMaxTurnSpeedDeg(_0x171)
+	_0x12.maxTurnSpeed = math.rad(math.max((tonumber(_0x171) or 2000), 1))
+end
+function _0x15d.GetAimPoint()
+	return _0x12.aimPoint
+end
+function _0x15d.GetLockKey()
+	return _0x12.lockKey
+end
+function _0x15d.IsActive()
+	return _0x12.lockActive
+end
+function _0x15d.GetTarget()
+	return _0x12.lockedTarget
+end
+function _0x15d.IsLockActive()
+	return (((_0x12.lockActive == true) and (_0x12.lockedTarget ~= nil)) and _0x29(_0x12.lockedTarget))
+end
+function _0x15d.GetTargetInfo()
+	if (not _0x15d.IsLockActive()) then
+		return nil
+	end
+	return _0x12.lockedTarget
+end
+function _0x15d.GetTargetHealth()
+	if (not _0x15d.IsLockActive()) then
+		return 0, 0
+	end
+	local _0x172 = _0x12.lockedTarget.Character
+	local _0x173 = (_0x172 and _0x172:FindFirstChildOfClass(_0xS_D("\229\216\192\204\195\194\196\201")))
+	if (not _0x173) then
+		return 0, 0
+	end
+	return math.max(_0x173.Health, 0), math.max(_0x173.MaxHealth, 1)
+end
+function _0x15d.GetTargetDistance()
+	if (not _0x15d.IsLockActive()) then
+		return 0
+	end
+	local _0x174 = (_0x13 and _0x13.Character)
+	local _0x175 = (_0x174 and _0x174:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")))
+	local _0x176 = _0x12.lockedTarget.Character
+	local _0x177 = (_0x176 and _0x176:FindFirstChild(_0xS_D("\229\216\192\204\195\194\196\201\255\194\194\217\253\204\223\217")))
+	if ((not _0x175) or (not _0x177)) then
+		return 0
+	end
+	local _0x178 = ((_0x175.Position - _0x177.Position)).Magnitude
+	if _0x5(_0x178) then
+		return 0
+	end
+	return _0x178
+end
+function _0x15d.GetStatus()
+	local _0x179 = _0x15d.IsLockActive()
+	local _0x17a, _0x17b = _0x15d.GetTargetHealth()
+	return { lockActive = _0x179, target = ((_0x179 and _0x12.lockedTarget) or nil), targetName = ((_0x179 and _0x12.lockedTarget.Name) or _0xS_D("")), targetDisplayName = ((_0x179 and ((_0x12.lockedTarget.DisplayName or _0x12.lockedTarget.Name))) or _0xS_D("")), health = _0x17a, maxHealth = _0x17b, distance = _0x15d.GetTargetDistance() }
+end
+_0x15d.CreateInfoGui = function(_0x17c)
+	if ((_0x12.systemEnabled and _0x12.lockActive) and _0x12.lockedTarget) then
+		_0x72(_0x17c)
+	end
+end
+_0x15d.DestroyInfoGui = _0x8e
+_0x15d.BuildHUDLockSection = _0x13e
+_0x15d.HUD_SECTION_HEIGHT = _0x13d
+return _0x15d
