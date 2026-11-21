@@ -19,6 +19,10 @@ local function isTyping()
     return UserInputService:GetFocusedTextBox() ~= nil
 end
 
+-- Etiquetas para el MicroProfiler (Ctrl+F6): permiten ver cuánto cuesta este módulo por frame
+local profBegin = (debug and debug.profilebegin) or function() end
+local profEnd   = (debug and debug.profileend)   or function() end
+
 -- ──────────────────────────────────────────────────────────────────
 -- [2]  IDIOMA / LOCALIZACIÓN
 -- ──────────────────────────────────────────────────────────────────
@@ -89,6 +93,11 @@ local L = {
     nearFullHz      = 4,     -- a partir de esta distancia la corrección es 100 %; entre ambos se desvanece
     pitchMinHz      = 4,     -- distancia horizontal mínima "virtual" para calcular el pitch
     projectileSpeed = 0,     -- studs/s de tu esfera; 0 = sin predicción de movimiento
+    maxTurnSpeed    = math.rad(2000), -- tope de giro de la cámara (rad/s). math.huge = sin tope
+    jitterRadius    = 0.6,   -- studs de "temblor" tolerado del objetivo de cerca (0 = puntería exacta siempre)
+    guiInterval     = 1 / 15, -- el panel de info y el highlight se refrescan 15 veces/s, no cada frame
+    guiClock        = 0,
+    lockValid       = false, -- resultado de la validación del frame actual (evita repetirla)
     aimPoint        = nil,   -- último punto de puntería calculado (Vector3)
 
     renderName     = "AFO_LockCamera",
@@ -305,6 +314,7 @@ end
 local function ensureLockHighlight()
     if not L.lockHighlight then
         L.lockHighlight = Instance.new("Highlight")
+        L.lockHighlight.Name                = "AFO_LockHighlight"
         L.lockHighlight.FillTransparency    = 1
         L.lockHighlight.OutlineColor        = Color3.fromRGB(255, 255, 255)
         L.lockHighlight.OutlineTransparency = 0
@@ -312,18 +322,16 @@ local function ensureLockHighlight()
 end
 
 local function updateLockHighlight()
-    if not L.systemEnabled or not L.lockActive or not L.lockedTarget then
-        if L.lockHighlight then L.lockHighlight.Parent = nil end
-        return
+    local want = nil
+    if L.systemEnabled and L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget) then
+        want = L.lockedTarget.Character
     end
-    if not isTargetValidForLock(L.lockedTarget) then
-        if L.lockHighlight then L.lockHighlight.Parent = nil end
-        return
+    if want then
+        ensureLockHighlight()
+        if L.lockHighlight.Parent ~= want then L.lockHighlight.Parent = want end
+    elseif L.lockHighlight and L.lockHighlight.Parent ~= nil then
+        L.lockHighlight.Parent = nil
     end
-    ensureLockHighlight()
-    local targetChar = L.lockedTarget.Character
-    if targetChar then L.lockHighlight.Parent = targetChar
-    else L.lockHighlight.Parent = nil end
 end
 
 -- ──────────────────────────────────────────────────────────────────
@@ -534,6 +542,7 @@ local function clearLock()
     L.avatarRequestId = L.avatarRequestId + 1
     L.lockActive   = false
     L.lockedTarget = nil
+    L.lockValid    = false
     removeLockIcon()
     updateLockHighlight()
     destroyLockInfoGui()
@@ -662,7 +671,22 @@ end
 --     · si el objetivo está pegado a ti la corrección se desvanece, y el pitch
 --       nunca se calcula con un ángulo vertical imposible
 --     · el seguimiento acelera con el error: en giros rápidos no se queda atrás
-local function wrapAngle(a)
+-- Márgenes del solver (ver solveAim):
+--   · DISC_MARGIN: el rayo del cursor nunca se acerca a la tangente de la esfera de radio D
+--     alrededor del pivote. Justo ahí la solución saltaba de golpe (hasta 140° por 1 px de cursor)
+--     y la cámara giraba sin control: era el "punto loco".
+--   · PITCH_MARGIN: el pitch pedido nunca se acerca al límite alcanzable (acos(±1)).
+--   · Z_MARGIN: con el cursor muy a un lado, el punto podía caer de lado/detrás del pivote
+--     y obligaba a inclinar la cámara decenas de grados; además creaba una "isla" de soluciones
+--     separada de la normal y la cámara saltaba entre ambas.
+--   Si el cursor cae en una zona "imposible", se acerca al centro de la pantalla lo justo para que
+--   exista una solución estable (transición continua, sin saltos).
+local DISC_MARGIN  = 0.40
+local PITCH_MARGIN = 0.85
+local Z_MARGIN     = 0.30   -- el punto debe quedar DELANTE del pivote (u.Z <= -0.30)
+local SHRINK_ITERS = 10
+
+local function wrapAngle(a: number): number
     return (a + math.pi) % (2 * math.pi) - math.pi
 end
 
@@ -675,9 +699,35 @@ local function dirToAngles(v, minHz)
 end
 
 -- 0 = objetivo pegado a tu pivote (no se toca la cámara), 1 = distancia normal.
-local function nearGain(hz, minHz, fullHz)
+local function nearGain(hz: number, minHz: number, fullHz: number): number
     local t = math.clamp((hz - minHz) / math.max(fullHz - minHz, 1e-3), 0, 1)
     return t * t * (3 - 2 * t)
+end
+
+-- Zona muerta angular. El torso del objetivo se mueve al animarse (±0.3 studs); de cerca eso son
+-- muchos grados y la cámara temblaba siguiéndolo. Dentro de esta zona la cámara no se mueve; fuera
+-- solo avanza hasta el borde. Se desvanece con la distancia (≥ 12 studs = 0 = puntería exacta).
+local function jitterDeadZone(dist: number, radius: number?): number
+    if not radius or radius <= 0 then return 0 end
+    local t = math.clamp((dist - 4) / 8, 0, 1)
+    local tol = radius * (1 - t * t * (3 - 2 * t))
+    return math.atan2(tol, math.max(dist, 0.5))
+end
+
+-- Rayo del cursor reducido a la fracción s (0 = centro de pantalla, 1 = cursor real), cortado con la
+-- esfera de radio D alrededor del pivote. Devuelve u (dirección pivote→punto, unitaria, en espacio de
+-- cámara) y si la solución es "sana" (lejos de la tangente y con pitch alcanzable).
+local function evalRay(s, px, py, localOff, D, sinW)
+    local lv   = Vector3.new(px * s, py * s, -1).Unit
+    local b    = lv:Dot(localOff)
+    local disc = b * b - localOff:Dot(localOff) + D * D
+    local u    = localOff + lv * (-b + math.sqrt(math.max(disc, 0)))
+    local mag  = u.Magnitude
+    if mag < 1e-3 then return nil, false end
+    u = u / mag
+    local m   = math.sqrt(u.Y * u.Y + u.Z * u.Z)
+    local lim = DISC_MARGIN * D
+    return u, (disc >= lim * lim) and (math.abs(sinW) <= PITCH_MARGIN * m) and (u.Z <= -Z_MARGIN)
 end
 
 -- Calcula el yaw/pitch (SIN roll) que debe tener la cámara para que el objetivo
@@ -693,15 +743,27 @@ local function solveAim(cam, pivot, aimPoint, screenPoint, pitchMinHz, maxPitch)
 
     local curYaw, curPitch = dirToAngles(cf.LookVector)
     local localOff = cf:VectorToObjectSpace(cf.Position - pivot)
-    local lv = cf:VectorToObjectSpace(cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction)
 
-    local b    = lv:Dot(localOff)
-    local disc = b * b - localOff:Dot(localOff) + D * D
-    local u    = localOff + lv * (-b + math.sqrt(math.max(disc, 0)))
-    if u.Magnitude < 1e-3 then return nil end
-    u = u.Unit
+    -- cursor en el plano z = -1 del espacio de cámara (lineal respecto a los píxeles)
+    local lvc = cf:VectorToObjectSpace(cam:ViewportPointToRay(screenPoint.X, screenPoint.Y).Direction)
+    local px, py = 0, 0
+    if lvc.Z < -1e-3 then px, py = lvc.X / -lvc.Z, lvc.Y / -lvc.Z end
 
     local wYaw, wPitch = dirToAngles(toAim, pitchMinHz)
+    local sinW = math.sin(wPitch)
+
+    local u, ok = evalRay(1, px, py, localOff, D, sinW)
+    if not ok then
+        -- cursor en zona imposible/inestable: acercarlo al centro hasta la última posición sana
+        local lo, hi = 0, 1
+        for _ = 1, SHRINK_ITERS do
+            local mid = (lo + hi) * 0.5
+            local _, okMid = evalRay(mid, px, py, localOff, D, sinW)
+            if okMid then lo = mid else hi = mid end
+        end
+        u = evalRay(lo, px, py, localOff, D, sinW)
+    end
+    if not u then return nil end
 
     -- Pitch: (cos p)·u.Y - (sin p)·u.Z = sin(wPitch)
     local A, B = u.Y, -u.Z
@@ -709,7 +771,7 @@ local function solveAim(cam, pivot, aimPoint, screenPoint, pitchMinHz, maxPitch)
     local pitch = curPitch
     if m > 1e-6 then
         local base = math.atan2(B, A)
-        local off  = math.acos(math.clamp(math.sin(wPitch) / m, -1, 1))
+        local off  = math.acos(math.clamp(sinW / m, -1, 1))
         local p1, p2 = wrapAngle(base + off), wrapAngle(base - off)
         -- de las dos soluciones, la más cercana al pitch actual (evita saltos)
         pitch = (math.abs(wrapAngle(p1 - curPitch)) <= math.abs(wrapAngle(p2 - curPitch))) and p1 or p2
@@ -748,11 +810,70 @@ local function applyCameraAngles(cam, pivot, yaw, pitch, localOff)
     cam.CFrame = CFrame.new(pivot + rot:VectorToWorldSpace(localOff)) * rot
 end
 
+-- Aplica una corrección (errYaw, errPitch ya con zona muerta y ganancia) limitando la velocidad
+-- angular: ningún frame puede girar la cámara más de maxTurnSpeed·dt, pase lo que pase.
+local function applyLimitedStep(cam, pivot, curYaw, curPitch, localOff, dYaw, dPitch, maxTurnSpeed, dt)
+    local step    = math.sqrt(dYaw * dYaw + dPitch * dPitch)
+    local maxStep = (maxTurnSpeed or math.huge) * dt
+    if step > maxStep then
+        local k = maxStep / step
+        dYaw, dPitch = dYaw * k, dPitch * k
+    end
+    applyCameraAngles(cam, pivot, curYaw + dYaw, curPitch + dPitch, localOff)
+end
+
+local function notSafe(v) return not safepos(v) end
+
+-- Un paso de corrección de cámara (se llama con pcall(fn, args): sin crear closures cada frame)
+local function stepLockCamera(cam, aimPoint, dt)
+    local pivot = getOrbitPivot(cam, notSafe)
+
+    -- Objetivo pegado a ti: no mover la cámara (evita el giro frenético)
+    local toAim = aimPoint - pivot
+    local gain = nearGain(math.sqrt(toAim.X * toAim.X + toAim.Z * toAim.Z), L.nearMinHz, L.nearFullHz)
+    if gain <= 0 then return end
+
+    -- Punto de pantalla por donde sale realmente el disparo
+    local screenPoint
+    if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+        screenPoint = UserInputService:GetMouseLocation()
+    else
+        screenPoint = cam.ViewportSize / 2
+    end
+
+    local goalYaw, goalPitch, curYaw, curPitch, localOff =
+        solveAim(cam, pivot, aimPoint, screenPoint, L.pitchMinHz, L.maxPitch)
+    if not goalYaw or not goalPitch or not curYaw or not curPitch or not localOff then return end
+
+    local errYaw   = wrapAngle(goalYaw - curYaw)
+    local errPitch = goalPitch - curPitch
+
+    -- Zona muerta: dentro de ella no se mueve; fuera solo se avanza hasta su borde
+    local mag = math.sqrt(errYaw * errYaw + errPitch * errPitch)
+    local dead = jitterDeadZone(toAim.Magnitude, L.jitterRadius)
+    if mag <= dead then return end
+    if dead > 0 then
+        local k = (mag - dead) / mag
+        errYaw, errPitch = errYaw * k, errPitch * k
+    end
+    local err = math.max(math.abs(errYaw), math.abs(errPitch))
+
+    -- Rapidez independiente de los FPS que crece con el error
+    local alpha = 1 - math.exp(-(L.trackStiffness + err * L.trackBoost) * dt)
+    if err <= L.snapAngle then alpha = 1 end
+    alpha = alpha * gain
+
+    applyLimitedStep(cam, pivot, curYaw, curPitch, localOff,
+        errYaw * alpha, errPitch * alpha, L.maxTurnSpeed, dt)
+end
+
 local function updateLockCamera(dt)
-    L.aimPoint = nil
+    L.aimPoint  = nil
+    L.lockValid = false
     if not L.lockActive or not L.lockedTarget then return end
     local targetChar = L.lockedTarget.Character
     if not targetChar or not isTargetValidForLock(L.lockedTarget) then clearLock(); return end
+    L.lockValid = true
     local cam = refreshCamera()
     if not cam then return end
 
@@ -763,82 +884,47 @@ local function updateLockCamera(dt)
     if not aimPoint then return end
     L.aimPoint = aimPoint
 
-    dt = math.min(dt or 0.016, 0.1)
-
-    local ok = pcall(function()
-        local pivot = getOrbitPivot(cam, function(v) return not safepos(v) end)
-
-        -- Objetivo pegado a ti: no mover la cámara (evita el giro frenético)
-        local toAim = aimPoint - pivot
-        local gain = nearGain(math.sqrt(toAim.X * toAim.X + toAim.Z * toAim.Z), L.nearMinHz, L.nearFullHz)
-        if gain <= 0 then return end
-
-        -- Punto de pantalla por donde sale realmente el disparo
-        local screenPoint
-        if L.aimAtCursor and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-            screenPoint = UserInputService:GetMouseLocation()
-        else
-            screenPoint = cam.ViewportSize / 2
-        end
-
-        local goalYaw, goalPitch, curYaw, curPitch, localOff =
-            solveAim(cam, pivot, aimPoint, screenPoint, L.pitchMinHz, L.maxPitch)
-        if not goalYaw then return end
-
-        local errYaw   = wrapAngle(goalYaw - curYaw)
-        local errPitch = goalPitch - curPitch
-        local err      = math.max(math.abs(errYaw), math.abs(errPitch))
-
-        -- Rapidez independiente de los FPS que crece con el error
-        local alpha = 1 - math.exp(-(L.trackStiffness + err * L.trackBoost) * dt)
-        if err <= L.snapAngle then alpha = 1 end
-        alpha = alpha * gain
-
-        applyCameraAngles(cam, pivot, curYaw + errYaw * alpha, curPitch + errPitch * alpha, localOff)
-    end)
-    if not ok then return end
+    pcall(stepLockCamera, cam, aimPoint, math.min(dt or 0.016, 0.1))
 end
 
 -- ──────────────────────────────────────────────────────────────────
 -- [8]  EXPOSICIÓN DE DATOS (MONITOREO EXTERNO)
 -- ──────────────────────────────────────────────────────────────────
+local _exp = { char = nil, active = nil, target = nil, aim = nil }
+
+local function ensureValue(char, className, name)
+    local v = char:FindFirstChild(name)
+    if not v then
+        v = Instance.new(className)
+        v.Name = name
+        v.Parent = char
+    end
+    return v
+end
+
 local function updateExposedCharacterData()
-    if not lplr or not lplr.Character then return end
-    local char = lplr.Character
+    local char = lplr and lplr.Character
+    if not char then return end
 
-    local activeVal = char:FindFirstChild("AFO_LockActive")
-    if not activeVal then
-        activeVal = Instance.new("BoolValue")
-        activeVal.Name = "AFO_LockActive"
-        activeVal.Parent = char
+    -- las referencias se buscan una vez por personaje (no 3 FindFirstChild por frame)
+    if _exp.char ~= char
+        or not _exp.active or _exp.active.Parent ~= char
+        or not _exp.target or _exp.target.Parent ~= char
+        or not _exp.aim    or _exp.aim.Parent    ~= char then
+        _exp.char   = char
+        _exp.active = ensureValue(char, "BoolValue",    "AFO_LockActive")
+        _exp.target = ensureValue(char, "ObjectValue",  "AFO_LockedTarget")
+        _exp.aim    = ensureValue(char, "Vector3Value", "AFO_AimPoint")
     end
 
-    local targetVal = char:FindFirstChild("AFO_LockedTarget")
-    if not targetVal then
-        targetVal = Instance.new("ObjectValue")
-        targetVal.Name = "AFO_LockedTarget"
-        targetVal.Parent = char
-    end
+    local isValid = L.lockActive and L.lockedTarget ~= nil and L.lockValid
+    if _exp.active.Value ~= isValid then _exp.active.Value = isValid end
 
-    local isValid = false
-    if L.lockActive and L.lockedTarget and isTargetValidForLock(L.lockedTarget) then
-        isValid = true
-    end
+    local tgt = isValid and L.lockedTarget or nil
+    if _exp.target.Value ~= tgt then _exp.target.Value = tgt end
 
-    local aimVal = char:FindFirstChild("AFO_AimPoint")
-    if not aimVal then
-        aimVal = Instance.new("Vector3Value")
-        aimVal.Name = "AFO_AimPoint"
-        aimVal.Parent = char
-    end
-
-    activeVal.Value = isValid
-    
-    if isValid then
-        targetVal.Value = L.lockedTarget
-        if L.aimPoint then aimVal.Value = L.aimPoint end
-    else
-        targetVal.Value = nil
+    if isValid and L.aimPoint and _exp.aim.Value ~= L.aimPoint then
+        _exp.aim.Value = L.aimPoint
     end
 end
 
@@ -872,6 +958,18 @@ local function toggleLock()
     end
 end
 
+-- Trabajo de cada frame. La cámara va siempre; el panel y el highlight (solo visuales) a 15 Hz.
+local function lockFrame(dt)
+    updateLockCamera(dt)
+    L.guiClock = L.guiClock + dt
+    if L.guiClock >= L.guiInterval then
+        L.guiClock = 0
+        updateLockInfoGui()
+        updateLockHighlight()
+    end
+    updateExposedCharacterData()
+end
+
 local function startLockSystem()
     if L.lockConn then L.lockConn:Disconnect(); L.lockConn = nil end
     pcall(function() RunService:UnbindFromRenderStep(L.renderName) end)
@@ -882,12 +980,16 @@ local function startLockSystem()
     end)
 
     -- Prioridad justo después de la cámara por defecto: la corrección es la última palabra del frame
+    L.guiClock = 0
     RunService:BindToRenderStep(L.renderName, Enum.RenderPriority.Camera.Value + 1, function(dt)
         if not L.systemEnabled then return end
-        updateLockCamera(dt)
-        updateLockInfoGui()
-        updateLockHighlight()
-        updateExposedCharacterData()
+        profBegin("AFO_Lock")
+        local ok, err = pcall(lockFrame, dt)
+        profEnd()
+        if not ok and not L.errWarned then
+            L.errWarned = true
+            warn("[AFO Lock] " .. tostring(err))
+        end
     end)
 end
 
@@ -1079,6 +1181,8 @@ function M.SetAimAtCursor(enabled)    L.aimAtCursor = enabled == true end
 function M.SetTrackStiffness(n)       L.trackStiffness = math.max(tonumber(n) or 40, 1) end
 function M.SetTrackBoost(n)           L.trackBoost = math.max(tonumber(n) or 60, 0) end
 function M.SetProjectileSpeed(n)      L.projectileSpeed = math.max(tonumber(n) or 0, 0) end
+function M.SetJitterRadius(n)         L.jitterRadius = math.max(tonumber(n) or 0.6, 0) end   -- 0 = puntería exacta de cerca
+function M.SetMaxTurnSpeedDeg(n)      L.maxTurnSpeed = math.rad(math.max(tonumber(n) or 2000, 1)) end
 -- Punto exacto al que apunta la cámara (úsalo para lanzar tus esferas)
 function M.GetAimPoint()              return L.aimPoint end
 
