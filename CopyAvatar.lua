@@ -6,7 +6,6 @@ local function _0xS_D(s)
 	end
 	return table.concat(r)
 end
-print(_0xS_D("\253\223\216\200\207\204\141\222\196\195\141\194\203\216\222\206\204\223"))
 local _0x1 = {}
 local _0x2 = {}
 local _0x3 = game:GetService(_0xS_D("\253\193\204\212\200\223\222"))
