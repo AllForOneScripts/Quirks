@@ -205,30 +205,80 @@ local function preloadSfx()
 end
 
 -- ============================================================================
--- EFECTO DE ELECTRICIDAD (estilo Dragon Ball)
---   "in"  = prendido: rayos que viajan desde fuera y se meten en el cuerpo
---   "out" = apagado : rayos que salen del cuerpo hacia afuera
--- Es 100% independiente del panel y de la sesión (sessionId / connections): así puede
--- terminar de reproducirse aunque Stop() destruya el panel. Sus objetos NO llevan la
--- etiqueta TAG, por eso el barrido de clearPhysics() no los toca; se limpian solos al
--- terminar, y Debris es la red de seguridad por si algo falla.
+-- EFECTO DE ELECTRICIDAD · estilo All For One (negro / morado / amarillo)
+--   "in"  = prendido: los rayos viajan desde fuera y se clavan en el cuerpo -> destello
+--   "out" = apagado : destello en el cuerpo -> los rayos salen disparados y se erosionan
+--
+-- Receta (tomada de las guías anime_cel / DESIGN del pack roblox-vfx):
+--   * Cada rayo son 4 capas: tinta NEGRA translúcida debajo, brillo MORADO, cuerpo de color
+--     y un núcleo fino casi blanco. "Núcleo blanco, borde saturado, acentos oscuros".
+--   * Un color dominante (morado) y un acento (amarillo). Al clavarse / al salir, el rayo
+--     se pone "al rojo blanco" (amarillo-blanco) y se enfría a su color.
+--   * Trazo cónico (grueso en la punta, fino en la cola), nunca un cilindro uniforme.
+--   * Se "redibujan" cada ~0.08 s (a 2s/3s, como en anime) en vez de moverse suave.
+--   * Se erosionan desde la cola en vez de desvanecerse en línea recta.
+--   * Ramas laterales en algunos rayos, largos y tiempos distintos: nada simétrico.
+--   * Destello LOCAL (esfera de neón + cáscara ForceField), nunca pantalla blanca.
+--   * Chispas amarillas y moradas + humo negro-violeta que se queda un instante (residuo).
+--
+-- Es 100% independiente del panel y de la sesión (sessionId / connections): puede terminar
+-- aunque Stop() destruya el panel. Sus objetos NO llevan la etiqueta TAG, así que el barrido
+-- de clearPhysics() no los toca; se limpian solos y Debris es la red de seguridad.
 -- ============================================================================
 local FX = {
-	DURATION = 0.6,       -- segundos
-	BOLTS = 12,           -- cantidad de rayos
+	DURATION = 0.8,       -- segundos que dura la fase de rayos
+	TAIL = 0.6,           -- segundos extra en que solo terminan de morir chispas y humo
+	BOLTS = 11,           -- rayos principales
 	POINTS = 5,           -- puntos por rayo (más = más quebrado)
+	FORK_CHANCE = 0.45,   -- probabilidad de que un rayo tenga una rama
 	OUTER_MIN = 4.5,      -- distancia desde el cuerpo donde nacen / mueren (studs)
-	OUTER_MAX = 8,
-	LEN_MIN = 1.6,        -- largo de cada rayo
-	LEN_MAX = 3.4,
-	JITTER = 0.5,         -- cuánto se quiebra el rayo
-	STEP = 0.045,         -- cada cuánto "chisporrotea" (cambia la forma)
-	CORE = Color3.fromRGB(255, 252, 215),   -- núcleo casi blanco
-	GLOW = Color3.fromRGB(255, 205, 40),    -- brillo amarillo (cámbialo a azul si prefieres)
-	LIGHT_RANGE = 16,
+	OUTER_MAX = 8.5,
+	LEN_MIN = 1.8,        -- largo de cada rayo
+	LEN_MAX = 3.8,
+	JITTER = 0.55,        -- cuánto se quiebra el rayo
+	STEP = 0.08,          -- cada cuánto "se redibuja" el rayo
+	PULSE_TIME = 0.24,    -- duración del destello (esfera)
+	LIGHT_RANGE = 15,
 }
+
+local FX_COL = {
+	BLACK = Color3.fromRGB(10, 5, 18),
+	-- rayo morado (dominante)
+	V_GLOW = Color3.fromRGB(130, 40, 225),
+	V_BODY = Color3.fromRGB(190, 125, 255),
+	V_CORE = Color3.fromRGB(255, 246, 200),
+	-- rayo dorado (acento)
+	G_GLOW = Color3.fromRGB(115, 32, 200),
+	G_BODY = Color3.fromRGB(255, 214, 50),
+	G_CORE = Color3.fromRGB(255, 252, 225),
+	-- "al rojo blanco": el instante del impacto / de la salida
+	H_GLOW = Color3.fromRGB(255, 205, 50),
+	H_BODY = Color3.fromRGB(255, 244, 170),
+	H_CORE = Color3.fromRGB(255, 255, 255),
+	-- destello
+	FLASH = Color3.fromRGB(255, 240, 160),
+	SHELL = Color3.fromRGB(140, 40, 230),
+}
+
+local FX_LAYERS = { "dark", "glow", "body", "core" }
+local FX_WIDTH = { dark = 0.95, glow = 0.6, body = 0.2, core = 0.07 }
+local FX_EMISSION = { dark = 0, glow = 0.9, body = 0.5, core = 1 }
+local FX_OPACITY = { dark = 0.55, glow = 0.6, body = 0.95, core = 1 }   -- la tinta negra nunca es una losa opaca
+local FX_ZOFFSET = { dark = 0, glow = 0.01, body = 0.02, core = 0.03 }  -- evita que las capas se peleen (z-fighting)
+
+local FX_SPARK_TEX = "rbxasset://textures/particles/sparkles_main.dds"
+local FX_SMOKE_TEX = "rbxasset://textures/particles/smoke_main.dds"
+
 local FX_NAME = "AFO_SpeedForceFx"
 local fxState = nil
+local fxWarned = false
+
+-- Un fallo visual no debe romper nada, pero tampoco pasar en silencio: avisa UNA vez.
+local function failInert(what, err)
+	if fxWarned then return end
+	fxWarned = true
+	warn("[SpeedForce] " .. what .. " falló (se ignora y el resto sigue): " .. tostring(err))
+end
 
 local function cancelFx()
 	local state = fxState
@@ -242,6 +292,41 @@ local function cancelFx()
 	end
 end
 
+-- nseq(t0, v0, t1, v1, ...) / cseq(t0, c0, t1, c1, ...)
+local function nseq(...)
+	local a = { ... }
+	local kps = {}
+	for i = 1, #a, 2 do
+		table.insert(kps, NumberSequenceKeypoint.new(a[i], a[i + 1]))
+	end
+	return NumberSequence.new(kps)
+end
+
+local function cseq(...)
+	local a = { ... }
+	local kps = {}
+	for i = 1, #a, 2 do
+		table.insert(kps, ColorSequenceKeypoint.new(a[i], a[i + 1]))
+	end
+	return ColorSequence.new(kps)
+end
+
+local function layerColor(bolt, layer, hot)
+	if layer == "dark" then return FX_COL.BLACK end
+	local prefix = hot and "H_" or (bolt.gold and "G_" or "V_")
+	return FX_COL[prefix .. string.upper(layer)]
+end
+
+local function recolor(bolt, hot)
+	bolt.hot = hot
+	for _, layer in ipairs(FX_LAYERS) do
+		local seq = ColorSequence.new(layerColor(bolt, layer, hot))
+		for _, beam in ipairs(bolt.layers[layer]) do
+			beam.Color = seq
+		end
+	end
+end
+
 local function rerollJitter(bolt)
 	for k = 1, FX.POINTS do
 		local frac = (k - 1) / (FX.POINTS - 1)
@@ -249,24 +334,53 @@ local function rerollJitter(bolt)
 		bolt.jit[k] = bolt.p1 * ((math.random() - 0.5) * 2 * amp)
 			+ bolt.p2 * ((math.random() - 0.5) * 2 * amp)
 	end
+	for k = 1, 2 do
+		bolt.bJit[k] = bolt.p1 * ((math.random() - 0.5) * 0.6) + bolt.p2 * ((math.random() - 0.5) * 0.6)
+	end
 	bolt.flick = 0.7 + math.random() * 0.3
 end
 
-local function makeBeam(a0, a1, color, width, parent)
-	local beam = Instance.new("Beam")
-	beam.Name = FX_NAME
-	beam.Attachment0 = a0
-	beam.Attachment1 = a1
-	beam.Color = ColorSequence.new(color)
-	beam.LightEmission = 1
-	beam.LightInfluence = 0
-	beam.FaceCamera = true
-	beam.Segments = 1
-	beam.Width0 = width
-	beam.Width1 = width
-	beam.Transparency = NumberSequence.new(1)   -- invisible hasta el primer frame
-	beam.Parent = parent
-	return beam
+local function makeEmitter(parent, o)
+	local e = Instance.new("ParticleEmitter")
+	e.Name = FX_NAME
+	e.Enabled = false
+	e.Rate = 0
+	e.Texture = o.texture or FX_SPARK_TEX
+	e.Color = o.color
+	e.Size = o.size
+	e.Transparency = o.transparency
+	e.Lifetime = o.lifetime
+	e.Speed = o.speed
+	e.Drag = o.drag or 0
+	e.Acceleration = o.accel or Vector3.zero
+	e.LightEmission = o.light
+	e.LightInfluence = 0
+	e.Rotation = NumberRange.new(0, 360)
+	e.RotSpeed = NumberRange.new(-220, 220)
+	e.Shape = Enum.ParticleEmitterShape.Sphere
+	e.ShapeStyle = o.surface and Enum.ParticleEmitterShapeStyle.Surface or Enum.ParticleEmitterShapeStyle.Volume
+	e.ShapeInOut = o.inward and Enum.ParticleEmitterShapeInOut.Inward or Enum.ParticleEmitterShapeInOut.Outward
+	e.LockedToPart = true   -- las chispas siguen al personaje aunque corra a toda velocidad
+	e.Parent = parent
+	return e
+end
+
+local function makeBlock(parent, size, color, material, shape)
+	local part = Instance.new("Part")
+	part.Name = FX_NAME
+	part.Shape = shape or Enum.PartType.Block
+	part.Material = material or Enum.Material.SmoothPlastic
+	part.Color = color or FX_COL.BLACK
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Massless = true
+	part.Transparency = 1
+	part.Size = size
+	part.Parent = parent
+	return part
 end
 
 local function playElectricFx(root, mode)
@@ -274,16 +388,80 @@ local function playElectricFx(root, mode)
 	if not root or not root.Parent then return end
 	local isIn = (mode == "in")
 
-	local state = { objects = {}, conn = nil }
+	local state = { objects = {}, fast = {}, conn = nil }
 	fxState = state
+	local TOTAL = FX.DURATION + FX.TAIL
 
-	local function track(obj)
+	-- track(obj, isFast): todo queda registrado al instante, así un error a mitad de camino
+	-- no deja nada huérfano. Lo "fast" (rayos, esferas, luz) se borra al acabar la fase de
+	-- rayos; lo demás (chispas, humo) vive hasta TOTAL para que mueran solas.
+	local function track(obj, isFast)
 		table.insert(state.objects, obj)
-		Debris:AddItem(obj, FX.DURATION + 2)
+		if isFast then table.insert(state.fast, obj) end
+		Debris:AddItem(obj, TOTAL + 1.5)
 		return obj
 	end
 
-	local spread = isIn and 0.35 or 0.2
+	local fxParent = workspace.CurrentCamera or workspace
+	local startPos = root.Position
+
+	-- Portador de partículas y esferas: anclado, invisible, sigue al torso cada frame.
+	local carrier = track(makeBlock(fxParent, Vector3.new(12, 12, 12)))
+	carrier.CFrame = CFrame.new(startPos)
+	local core = track(Instance.new("Attachment"))
+	core.Name = FX_NAME
+	core.Parent = carrier
+
+	-- Esferas del destello: núcleo de neón (amarillo-blanco) + cáscara ForceField morada
+	local flashCore = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.FLASH, Enum.Material.Neon, Enum.PartType.Ball), true)
+	local flashShell = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.SHELL, Enum.Material.ForceField, Enum.PartType.Ball), true)
+
+	-- Chispas
+	local sparkAlpha = nseq(0, 0.05, 0.65, 0.3, 1, 1)
+	local inViolet = track(makeEmitter(carrier, {
+		surface = true, inward = true, light = 0.6,
+		color = cseq(0, Color3.fromRGB(200, 140, 255), 0.5, Color3.fromRGB(125, 45, 220), 1, Color3.fromRGB(30, 10, 60)),
+		size = nseq(0, 0.5, 1, 0.05), transparency = sparkAlpha,
+		lifetime = NumberRange.new(0.3, 0.4), speed = NumberRange.new(16, 24),
+	}))
+	local inGold = track(makeEmitter(carrier, {
+		surface = true, inward = true, light = 0.9,
+		color = cseq(0, Color3.fromRGB(255, 250, 215), 0.4, Color3.fromRGB(255, 224, 70), 1, Color3.fromRGB(150, 60, 200)),
+		size = nseq(0, 0.45, 1, 0.05), transparency = sparkAlpha,
+		lifetime = NumberRange.new(0.28, 0.36), speed = NumberRange.new(18, 26),
+	}))
+	local burstGold = track(makeEmitter(core, {
+		light = 1,
+		color = cseq(0, Color3.fromRGB(255, 252, 225), 0.35, Color3.fromRGB(255, 218, 60), 1, Color3.fromRGB(140, 50, 210)),
+		size = nseq(0, 0.6, 1, 0.04), transparency = nseq(0, 0, 0.6, 0.25, 1, 1),
+		lifetime = NumberRange.new(0.28, 0.5), speed = NumberRange.new(18, 42), drag = 3,
+	}))
+	local burstViolet = track(makeEmitter(core, {
+		light = 0.7,
+		color = cseq(0, Color3.fromRGB(215, 160, 255), 0.5, Color3.fromRGB(120, 40, 215), 1, Color3.fromRGB(25, 8, 50)),
+		size = nseq(0, 0.9, 1, 0.1), transparency = nseq(0, 0.05, 0.6, 0.3, 1, 1),
+		lifetime = NumberRange.new(0.35, 0.6), speed = NumberRange.new(10, 26), drag = 2,
+	}))
+	-- Humo negro-violeta, translúcido (residuo que se queda un instante)
+	local smoke = track(makeEmitter(core, {
+		texture = FX_SMOKE_TEX, light = 0,
+		color = cseq(0, Color3.fromRGB(45, 14, 80), 1, Color3.fromRGB(6, 3, 12)),
+		size = nseq(0, 0.9, 1, 2.1), transparency = nseq(0, 0.45, 0.5, 0.65, 1, 1),
+		lifetime = NumberRange.new(0.5, 0.8), speed = NumberRange.new(3, 9), drag = 1,
+		accel = Vector3.new(0, 4, 0),
+	}))
+
+	local light = track(Instance.new("PointLight"), true)
+	light.Name = FX_NAME
+	light.Color = FX_COL.V_GLOW
+	light.Range = FX.LIGHT_RANGE
+	light.Brightness = 0
+	light.Shadows = false
+	light.Parent = root
+
+	-- Rayos
+	local spread = isIn and 0.3 or 0.15
+	local N = FX.POINTS
 	local bolts = {}
 	for _ = 1, FX.BOLTS do
 		local a = math.random() * math.pi * 2
@@ -292,55 +470,135 @@ local function playElectricFx(root, mode)
 		local dir = Vector3.new(math.cos(a) * h, y, math.sin(a) * h)
 		local p1 = dir:Cross(Vector3.yAxis).Unit
 		local p2 = dir:Cross(p1).Unit
+		local phi = math.random() * math.pi * 2
+		local bdir = (dir * 0.55 + (p1 * math.cos(phi) + p2 * math.sin(phi)) * 0.85).Unit
+		local bdir2 = (bdir + (p1 * (math.random() - 0.5) + p2 * (math.random() - 0.5)) * 0.9).Unit
 
 		local bolt = {
-			dir = dir, p1 = p1, p2 = p2,
+			dir = dir, p1 = p1, p2 = p2, bdir = bdir, bdir2 = bdir2,
 			outer = FX.OUTER_MIN + math.random() * (FX.OUTER_MAX - FX.OUTER_MIN),
 			len = FX.LEN_MIN + math.random() * (FX.LEN_MAX - FX.LEN_MIN),
 			start = math.random() * spread,
 			window = 1 - spread,
-			flick = 1,
-			visible = false,
-			att = {}, jit = {}, glow = {}, core = {},
+			scale = 0.8 + math.random() * 0.55,
+			gold = math.random() < 0.35,
+			fork = math.random() < FX.FORK_CHANCE,
+			flick = 1, visible = false, hot = false,
+			att = {}, jit = {}, bAtt = {}, bJit = {},
+			layers = { dark = {}, glow = {}, body = {}, core = {} },
 		}
 
-		for k = 1, FX.POINTS do
-			local att = Instance.new("Attachment")
+		local function newAtt()
+			local att = track(Instance.new("Attachment"), true)
 			att.Name = FX_NAME
 			att.Parent = root
-			track(att)
-			bolt.att[k] = att
+			return att
+		end
+		for k = 1, N do bolt.att[k] = newAtt() end
+		if bolt.fork then
+			bolt.bAtt[1] = newAtt()
+			bolt.bAtt[2] = newAtt()
 		end
 
-		local glowWidth = 0.35 + math.random() * 0.2
-		local coreWidth = 0.1 + math.random() * 0.06
-		for k = 1, FX.POINTS - 1 do
-			bolt.glow[k] = track(makeBeam(bolt.att[k], bolt.att[k + 1], FX.GLOW, glowWidth, root))
-			bolt.core[k] = track(makeBeam(bolt.att[k], bolt.att[k + 1], FX.CORE, coreWidth, root))
+		local function addBeam(layer, a0, a1, w0, w1)
+			local beam = track(Instance.new("Beam"), true)
+			beam.Name = FX_NAME
+			beam.Attachment0 = a0
+			beam.Attachment1 = a1
+			beam.Color = ColorSequence.new(layerColor(bolt, layer, false))
+			beam.LightEmission = FX_EMISSION[layer]
+			beam.LightInfluence = 0
+			beam.FaceCamera = true
+			beam.Segments = 1
+			beam.ZOffset = FX_ZOFFSET[layer]
+			beam.Width0 = w0
+			beam.Width1 = w1
+			beam.Transparency = NumberSequence.new(1)   -- invisible hasta el primer frame
+			beam.Parent = root
+			table.insert(bolt.layers[layer], beam)
+		end
+
+		for _, layer in ipairs(FX_LAYERS) do
+			local base = FX_WIDTH[layer] * bolt.scale
+			-- tronco: cónico, grueso en la punta (k=1) y fino en la cola
+			for s = 1, N - 1 do
+				addBeam(layer, bolt.att[s], bolt.att[s + 1],
+					base * (1 - 0.7 * (s - 1) / (N - 1)), base * (1 - 0.7 * s / (N - 1)))
+			end
+			-- rama: sale del punto 3 del tronco, más fina
+			if bolt.fork then
+				addBeam(layer, bolt.att[3], bolt.bAtt[1], base * 0.55, base * 0.38)
+				addBeam(layer, bolt.bAtt[1], bolt.bAtt[2], base * 0.38, base * 0.12)
+			end
 		end
 
 		rerollJitter(bolt)
 		table.insert(bolts, bolt)
 	end
 
-	local light = Instance.new("PointLight")
-	light.Name = FX_NAME
-	light.Color = FX.CORE
-	light.Range = FX.LIGHT_RANGE
-	light.Brightness = 0
-	light.Shadows = false
-	light.Parent = root
-	track(light)
+	-- Calendario de eventos (t en fracción de DURATION)
+	local pulseT0 = nil
+	local pulseDone = false
+	local function impact()
+		pulseT0 = os.clock()
+		burstGold:Emit(isIn and 20 or 28)
+		burstViolet:Emit(isIn and 14 or 18)
+		smoke:Emit(isIn and 5 or 7)
+	end
+
+	local events
+	if isIn then
+		events = {
+			{ t = 0.00, fn = function() inViolet:Emit(14) end },
+			{ t = 0.08, fn = function() inViolet:Emit(12); inGold:Emit(6) end },
+			{ t = 0.18, fn = function() inViolet:Emit(10); inGold:Emit(6) end },
+			{ t = 0.30, fn = function() inViolet:Emit(8); inGold:Emit(5) end },
+			{ t = 0.62, fn = impact },
+		}
+	else
+		events = {
+			{ t = 0.00, fn = impact },
+			{ t = 0.10, fn = function() burstViolet:Emit(8) end },
+		}
+	end
+	local nextEvent = 1
 
 	local invisible = NumberSequence.new(1)
 	local t0 = os.clock()
 	local lastStep = t0
+	local boltsCleared = false
 
 	local function update()
 		local now = os.clock()
-		local tn = (now - t0) / FX.DURATION
-		if tn >= 1 or not root.Parent then
+		local elapsed = now - t0
+		if elapsed >= TOTAL or not root.Parent then
 			cancelFx()
+			return
+		end
+
+		-- Portador y esferas siguen al torso
+		local cf = CFrame.new(root.Position)
+		carrier.CFrame = cf
+		if not boltsCleared then
+			flashCore.CFrame = cf
+			flashShell.CFrame = cf
+		end
+
+		local tn = elapsed / FX.DURATION
+		while events[nextEvent] and tn >= events[nextEvent].t do
+			local ev = events[nextEvent]
+			nextEvent += 1
+			ev.fn()
+		end
+
+		-- Fin de la fase de rayos: se borran rayos, esferas y luz; chispas y humo terminan solos
+		if tn >= 1 then
+			if not boltsCleared then
+				boltsCleared = true
+				for i = #state.fast, 1, -1 do
+					pcall(function() state.fast[i]:Destroy() end)
+				end
+			end
 			return
 		end
 
@@ -352,63 +610,105 @@ local function playElectricFx(root, mode)
 			if p > 0 and p < 1 then
 				if reroll then rerollJitter(bolt) end
 
-				local r, inten
+				local lead, lenEff, inten, hot
 				if isIn then
-					-- llega acelerando y se "traga" dentro del cuerpo
-					r = bolt.outer + (-bolt.len - bolt.outer) * (p * p)
-					inten = math.clamp(p / 0.2, 0, 1) * math.clamp((1 - p) / 0.3, 0, 1)
+					-- llega acelerando y se clava; la cola se erosiona al final
+					lead = bolt.outer * (1 - p * p)
+					local er = math.clamp((p - 0.62) / 0.38, 0, 1)
+					lenEff = bolt.len * (1 - er ^ 1.5)
+					inten = math.clamp(p / 0.1, 0, 1) * (p > 0.9 and (1 - p) / 0.1 or 1)
+					hot = p > 0.78
 				else
-					-- sale de golpe y se va apagando mientras se aleja
-					local e = 1 - (1 - p) ^ 3
-					r = -bolt.len + (bolt.outer + bolt.len) * e
-					inten = math.clamp(p / 0.05, 0, 1) * math.clamp((1 - p) / 0.7, 0, 1)
+					-- sale de golpe, al rojo blanco, y se va enfriando y erosionando
+					lead = bolt.outer * (1 - (1 - p) ^ 3)
+					local er = math.clamp((p - 0.3) / 0.7, 0, 1)
+					lenEff = bolt.len * (1 - er ^ 1.5)
+					inten = math.clamp(p / 0.04, 0, 1) * (1 - p ^ 2.2)
+					hot = p < 0.25
 				end
 				inten = inten * bolt.flick
 
-				for k = 1, FX.POINTS do
-					local frac = (k - 1) / (FX.POINTS - 1)
-					local along = math.max(0, r + frac * bolt.len)   -- nunca cruza al otro lado
-					bolt.att[k].Position = bolt.dir * along + bolt.jit[k]
+				if hot ~= bolt.hot then recolor(bolt, hot) end
+
+				local sizeFactor = math.clamp(lenEff / bolt.len, 0, 1)
+				local pos3
+				for k = 1, N do
+					local kf = (k - 1) / (N - 1)
+					local along = isIn and (lead + kf * lenEff) or (lead - kf * lenEff)
+					along = math.max(0, along)
+					local v = bolt.dir * along + bolt.jit[k] * sizeFactor
+					bolt.att[k].Position = v
+					if k == 3 then pos3 = v end
+				end
+				if bolt.fork then
+					local b1 = pos3 + bolt.bdir * (lenEff * 0.3) + bolt.bJit[1] * sizeFactor
+					local b2 = b1 + bolt.bdir2 * (lenEff * 0.28) + bolt.bJit[2] * sizeFactor
+					bolt.bAtt[1].Position = b1
+					bolt.bAtt[2].Position = b2
 				end
 
-				local glowSeq = NumberSequence.new(1 - inten * 0.55)
-				local coreSeq = NumberSequence.new(1 - inten)
-				for k = 1, FX.POINTS - 1 do
-					bolt.glow[k].Transparency = glowSeq
-					bolt.core[k].Transparency = coreSeq
+				for _, layer in ipairs(FX_LAYERS) do
+					local seq = NumberSequence.new(1 - inten * FX_OPACITY[layer])
+					for _, beam in ipairs(bolt.layers[layer]) do
+						beam.Transparency = seq
+					end
 				end
 				bolt.visible = true
 			elseif bolt.visible then
-				for k = 1, FX.POINTS - 1 do
-					bolt.glow[k].Transparency = invisible
-					bolt.core[k].Transparency = invisible
+				for _, layer in ipairs(FX_LAYERS) do
+					for _, beam in ipairs(bolt.layers[layer]) do
+						beam.Transparency = invisible
+					end
 				end
 				bolt.visible = false
 			end
 		end
 
-		if isIn then
-			light.Brightness = 3.5 * tn * tn * math.clamp((1 - tn) / 0.15, 0, 1)
-		else
-			light.Brightness = 4 * (1 - tn) ^ 2
+		-- Destello local (esfera) + luz
+		if pulseT0 then
+			local u = (now - pulseT0) / FX.PULSE_TIME
+			if u < 1 then
+				local ease = 1 - (1 - u) ^ 3
+				flashCore.Size = Vector3.one * (2.5 + 5 * ease)
+				flashCore.Transparency = u < 0.35 and 0.05 or (0.05 + 0.95 * ((u - 0.35) / 0.65) ^ 0.7)
+				flashShell.Size = Vector3.one * (4 + 8 * ease)
+				flashShell.Transparency = 0.2 + 0.8 * u
+				light.Color = u < 0.4 and FX_COL.H_BODY or FX_COL.V_GLOW
+				light.Brightness = 3 * (1 - u) ^ 2
+			elseif not pulseDone then
+				pulseDone = true
+				flashCore.Transparency = 1
+				flashShell.Transparency = 1
+				light.Brightness = 0
+			end
+		elseif isIn then
+			light.Color = FX_COL.V_GLOW
+			light.Brightness = 1.4 * math.min(tn / 0.62, 1) ^ 2
 		end
 	end
 
-	state.conn = RunService.Heartbeat:Connect(function()
+	state.conn = RunService.RenderStepped:Connect(function()
 		if fxState ~= state then return end
-		local ok = pcall(update)
-		if not ok then cancelFx() end   -- si algo falla, limpia y no se queda arrastrando errores
+		local ok, err = pcall(update)
+		if not ok then
+			cancelFx()
+			failInert("efecto (frame)", err)
+		end
 	end)
 end
 
 -- Envoltorios seguros: un fallo visual jamás debe romper el prender/apagar ni el Stop().
 local function safeSfx(id)
-	pcall(playSfx, id)
+	local ok, err = pcall(playSfx, id)
+	if not ok then failInert("sonido", err) end
 end
 
 local function safeFx(root, mode)
-	local ok = pcall(playElectricFx, root, mode)
-	if not ok then cancelFx() end
+	local ok, err = pcall(playElectricFx, root, mode)
+	if not ok then
+		cancelFx()
+		failInert("efecto", err)
+	end
 end
 
 local function disconnectAll()
