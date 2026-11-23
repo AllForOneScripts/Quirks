@@ -14,14 +14,12 @@ local keys = nil
 local active = false
 local connections = {}
 
--- Variables de GUI
 local gui, mainFrame, setPanelOpen
 local isOpen = false
 local toggleKey = Enum.KeyCode.F5
 local meterLabel, meterGradient, meterNeedle, meterNeedleParts
 local meterFrac, meterColorFrac = 0, -1
 
--- Variables de físicas y personaje
 local character, humanoid, rootPart
 local movementAttachment, linearVelocity
 local isEnabled = true
@@ -35,30 +33,22 @@ local lastDashEnd = 0
 local boostEndTime = 0
 local EXPLOSION_BASE_FORCE = 130
 
--- Paleta de colores heredada
 local C_BLACK = Color3.fromRGB(15, 15, 20)
 local C_PURPLE = Color3.fromRGB(100, 50, 150)
 local C_TEXT = Color3.fromRGB(255, 255, 255)
 local C_SUB = Color3.fromRGB(180, 180, 180)
 
--- Todo lo que este script crea en el personaje lleva esta etiqueta y se guarda en
--- createdObjects, para poder destruirlo aunque se pierda la referencia directa.
 local TAG = "AFO_SpeedForce"
 local createdObjects = {}
-local sessionId = 0          -- sube con cada Start/Stop: invalida hilos y bucles viejos
+local sessionId = 0
 local heartbeatConn = nil
-local startPhysicsLoop       -- se asigna dentro de Start
+local startPhysicsLoop
 
 local env = (getgenv and getgenv()) or _G
+local EFFECTS_ENABLED = true
 
--- Atributo que se pone a un panel ajeno para que, al cerrarlo desde otra copia, NO suene ni
--- se vea el efecto de apagado (solo debe verse cuando el usuario cierra SU panel con la X).
 local SILENT_ATTR = "AFO_SilentStop"
 
--- ============================================================================
--- IDIOMA: mismo sistema de detección que CopyAvatar (es / en)
--- "SPEEDFORCE" se mantiene igual en ambos idiomas.
--- ============================================================================
 local I18N = {}
 I18N.strings = {
 	es = {
@@ -147,18 +137,15 @@ function I18N.detect()
 end
 
 local currentLang = "en"
-local applyLanguage          -- se asigna dentro de Start (necesita los elementos del panel)
+local applyLanguage
 
 local function L(key)
 	local t = I18N.strings[currentLang] or I18N.strings.en
 	return t[key] or I18N.strings.en[key] or ""
 end
 
--- ============================================================================
--- SONIDOS (van en SoundService: sobreviven a Stop() y a la destrucción del panel)
--- ============================================================================
-local SFX_ON_ID = "rbxassetid://118075222341359"     -- prender
-local SFX_OFF_ID = "rbxassetid://112416614144985"    -- apagar
+local SFX_ON_ID = "rbxassetid://118075222341359"
+local SFX_OFF_ID = "rbxassetid://112416614144985"
 local SFX_VOLUME = 4
 local currentSfx = nil
 
@@ -188,6 +175,7 @@ local function playSfx(id)
 end
 
 local function preloadSfx()
+	if not EFFECTS_ENABLED then return end
 	task.spawn(function()
 		local list = {}
 		for _, id in ipairs({ SFX_ON_ID, SFX_OFF_ID }) do
@@ -204,58 +192,37 @@ local function preloadSfx()
 	end)
 end
 
--- ============================================================================
--- EFECTO DE ELECTRICIDAD · estilo All For One (negro / morado / amarillo)
---   "in"  = prendido: los rayos viajan desde fuera y se clavan en el cuerpo -> destello
---   "out" = apagado : destello en el cuerpo -> los rayos salen disparados y se erosionan
---
--- Receta (tomada de las guías anime_cel / DESIGN del pack roblox-vfx):
---   * Cada rayo son 4 capas: tinta NEGRA translúcida debajo, brillo MORADO, cuerpo de color
---     y un núcleo fino casi blanco. "Núcleo blanco, borde saturado, acentos oscuros".
---   * Un color dominante (morado) y un acento (amarillo). Al clavarse / al salir, el rayo
---     se pone "al rojo blanco" (amarillo-blanco) y se enfría a su color.
---   * Trazo cónico (grueso en la punta, fino en la cola), nunca un cilindro uniforme.
---   * Se "redibujan" cada ~0.08 s (a 2s/3s, como en anime) en vez de moverse suave.
---   * Se erosionan desde la cola en vez de desvanecerse en línea recta.
---   * Ramas laterales en algunos rayos, largos y tiempos distintos: nada simétrico.
---   * Destello LOCAL (esfera de neón + cáscara ForceField), nunca pantalla blanca.
---   * Chispas amarillas y moradas + humo negro-violeta que se queda un instante (residuo).
---
--- Es 100% independiente del panel y de la sesión (sessionId / connections): puede terminar
--- aunque Stop() destruya el panel. Sus objetos NO llevan la etiqueta TAG, así que el barrido
--- de clearPhysics() no los toca; se limpian solos y Debris es la red de seguridad.
--- ============================================================================
 local FX = {
-	DURATION = 0.8,       -- segundos que dura la fase de rayos
-	TAIL = 0.6,           -- segundos extra en que solo terminan de morir chispas y humo
-	BOLTS = 11,           -- rayos principales
-	POINTS = 5,           -- puntos por rayo (más = más quebrado)
-	FORK_CHANCE = 0.45,   -- probabilidad de que un rayo tenga una rama
-	OUTER_MIN = 4.5,      -- distancia desde el cuerpo donde nacen / mueren (studs)
+	DURATION = 0.8,
+	TAIL = 0.6,
+	BOLTS = 11,
+	POINTS = 5,
+	FORK_CHANCE = 0.45,
+	OUTER_MIN = 4.5,
 	OUTER_MAX = 8.5,
-	LEN_MIN = 1.8,        -- largo de cada rayo
+	LEN_MIN = 1.8,
 	LEN_MAX = 3.8,
-	JITTER = 0.55,        -- cuánto se quiebra el rayo
-	STEP = 0.08,          -- cada cuánto "se redibuja" el rayo
-	PULSE_TIME = 0.24,    -- duración del destello (esfera)
+	JITTER = 0.55,
+	STEP = 0.08,
+	PULSE_TIME = 0.24,
 	LIGHT_RANGE = 15,
 }
 
 local FX_COL = {
 	BLACK = Color3.fromRGB(10, 5, 18),
-	-- rayo morado (dominante)
+
 	V_GLOW = Color3.fromRGB(130, 40, 225),
 	V_BODY = Color3.fromRGB(190, 125, 255),
 	V_CORE = Color3.fromRGB(255, 246, 200),
-	-- rayo dorado (acento)
+
 	G_GLOW = Color3.fromRGB(115, 32, 200),
 	G_BODY = Color3.fromRGB(255, 214, 50),
 	G_CORE = Color3.fromRGB(255, 252, 225),
-	-- "al rojo blanco": el instante del impacto / de la salida
+
 	H_GLOW = Color3.fromRGB(255, 205, 50),
 	H_BODY = Color3.fromRGB(255, 244, 170),
 	H_CORE = Color3.fromRGB(255, 255, 255),
-	-- destello
+
 	FLASH = Color3.fromRGB(255, 240, 160),
 	SHELL = Color3.fromRGB(140, 40, 230),
 }
@@ -263,8 +230,8 @@ local FX_COL = {
 local FX_LAYERS = { "dark", "glow", "body", "core" }
 local FX_WIDTH = { dark = 0.95, glow = 0.6, body = 0.2, core = 0.07 }
 local FX_EMISSION = { dark = 0, glow = 0.9, body = 0.5, core = 1 }
-local FX_OPACITY = { dark = 0.55, glow = 0.6, body = 0.95, core = 1 }   -- la tinta negra nunca es una losa opaca
-local FX_ZOFFSET = { dark = 0, glow = 0.01, body = 0.02, core = 0.03 }  -- evita que las capas se peleen (z-fighting)
+local FX_OPACITY = { dark = 0.55, glow = 0.6, body = 0.95, core = 1 }
+local FX_ZOFFSET = { dark = 0, glow = 0.01, body = 0.02, core = 0.03 }
 
 local FX_SPARK_TEX = "rbxasset://textures/particles/sparkles_main.dds"
 local FX_SMOKE_TEX = "rbxasset://textures/particles/smoke_main.dds"
@@ -273,7 +240,6 @@ local FX_NAME = "AFO_SpeedForceFx"
 local fxState = nil
 local fxWarned = false
 
--- Un fallo visual no debe romper nada, pero tampoco pasar en silencio: avisa UNA vez.
 local function failInert(what, err)
 	if fxWarned then return end
 	fxWarned = true
@@ -292,7 +258,6 @@ local function cancelFx()
 	end
 end
 
--- nseq(t0, v0, t1, v1, ...) / cseq(t0, c0, t1, c1, ...)
 local function nseq(...)
 	local a = { ... }
 	local kps = {}
@@ -330,7 +295,7 @@ end
 local function rerollJitter(bolt)
 	for k = 1, FX.POINTS do
 		local frac = (k - 1) / (FX.POINTS - 1)
-		local amp = FX.JITTER * math.sin(math.pi * frac)   -- los extremos quedan sobre el eje
+		local amp = FX.JITTER * math.sin(math.pi * frac)
 		bolt.jit[k] = bolt.p1 * ((math.random() - 0.5) * 2 * amp)
 			+ bolt.p2 * ((math.random() - 0.5) * 2 * amp)
 	end
@@ -360,7 +325,7 @@ local function makeEmitter(parent, o)
 	e.Shape = Enum.ParticleEmitterShape.Sphere
 	e.ShapeStyle = o.surface and Enum.ParticleEmitterShapeStyle.Surface or Enum.ParticleEmitterShapeStyle.Volume
 	e.ShapeInOut = o.inward and Enum.ParticleEmitterShapeInOut.Inward or Enum.ParticleEmitterShapeInOut.Outward
-	e.LockedToPart = true   -- las chispas siguen al personaje aunque corra a toda velocidad
+	e.LockedToPart = true
 	e.Parent = parent
 	return e
 end
@@ -384,7 +349,7 @@ local function makeBlock(parent, size, color, material, shape)
 end
 
 local function playElectricFx(root, mode)
-	cancelFx()   -- si había uno a medias (clics rápidos), se corta limpio
+	cancelFx()
 	if not root or not root.Parent then return end
 	local isIn = (mode == "in")
 
@@ -392,9 +357,6 @@ local function playElectricFx(root, mode)
 	fxState = state
 	local TOTAL = FX.DURATION + FX.TAIL
 
-	-- track(obj, isFast): todo queda registrado al instante, así un error a mitad de camino
-	-- no deja nada huérfano. Lo "fast" (rayos, esferas, luz) se borra al acabar la fase de
-	-- rayos; lo demás (chispas, humo) vive hasta TOTAL para que mueran solas.
 	local function track(obj, isFast)
 		table.insert(state.objects, obj)
 		if isFast then table.insert(state.fast, obj) end
@@ -405,18 +367,15 @@ local function playElectricFx(root, mode)
 	local fxParent = workspace.CurrentCamera or workspace
 	local startPos = root.Position
 
-	-- Portador de partículas y esferas: anclado, invisible, sigue al torso cada frame.
 	local carrier = track(makeBlock(fxParent, Vector3.new(12, 12, 12)))
 	carrier.CFrame = CFrame.new(startPos)
 	local core = track(Instance.new("Attachment"))
 	core.Name = FX_NAME
 	core.Parent = carrier
 
-	-- Esferas del destello: núcleo de neón (amarillo-blanco) + cáscara ForceField morada
 	local flashCore = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.FLASH, Enum.Material.Neon, Enum.PartType.Ball), true)
 	local flashShell = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.SHELL, Enum.Material.ForceField, Enum.PartType.Ball), true)
 
-	-- Chispas
 	local sparkAlpha = nseq(0, 0.05, 0.65, 0.3, 1, 1)
 	local inViolet = track(makeEmitter(carrier, {
 		surface = true, inward = true, light = 0.6,
@@ -442,7 +401,7 @@ local function playElectricFx(root, mode)
 		size = nseq(0, 0.9, 1, 0.1), transparency = nseq(0, 0.05, 0.6, 0.3, 1, 1),
 		lifetime = NumberRange.new(0.35, 0.6), speed = NumberRange.new(10, 26), drag = 2,
 	}))
-	-- Humo negro-violeta, translúcido (residuo que se queda un instante)
+
 	local smoke = track(makeEmitter(core, {
 		texture = FX_SMOKE_TEX, light = 0,
 		color = cseq(0, Color3.fromRGB(45, 14, 80), 1, Color3.fromRGB(6, 3, 12)),
@@ -457,9 +416,8 @@ local function playElectricFx(root, mode)
 	light.Range = FX.LIGHT_RANGE
 	light.Brightness = 0
 	light.Shadows = false
-	light.Parent = root
+	light.Parent = carrier
 
-	-- Rayos
 	local spread = isIn and 0.3 or 0.15
 	local N = FX.POINTS
 	local bolts = {}
@@ -491,7 +449,7 @@ local function playElectricFx(root, mode)
 		local function newAtt()
 			local att = track(Instance.new("Attachment"), true)
 			att.Name = FX_NAME
-			att.Parent = root
+			att.Parent = carrier
 			return att
 		end
 		for k = 1, N do bolt.att[k] = newAtt() end
@@ -513,19 +471,19 @@ local function playElectricFx(root, mode)
 			beam.ZOffset = FX_ZOFFSET[layer]
 			beam.Width0 = w0
 			beam.Width1 = w1
-			beam.Transparency = NumberSequence.new(1)   -- invisible hasta el primer frame
-			beam.Parent = root
+			beam.Transparency = NumberSequence.new(1)
+			beam.Parent = carrier
 			table.insert(bolt.layers[layer], beam)
 		end
 
 		for _, layer in ipairs(FX_LAYERS) do
 			local base = FX_WIDTH[layer] * bolt.scale
-			-- tronco: cónico, grueso en la punta (k=1) y fino en la cola
+
 			for s = 1, N - 1 do
 				addBeam(layer, bolt.att[s], bolt.att[s + 1],
 					base * (1 - 0.7 * (s - 1) / (N - 1)), base * (1 - 0.7 * s / (N - 1)))
 			end
-			-- rama: sale del punto 3 del tronco, más fina
+
 			if bolt.fork then
 				addBeam(layer, bolt.att[3], bolt.bAtt[1], base * 0.55, base * 0.38)
 				addBeam(layer, bolt.bAtt[1], bolt.bAtt[2], base * 0.38, base * 0.12)
@@ -536,7 +494,6 @@ local function playElectricFx(root, mode)
 		table.insert(bolts, bolt)
 	end
 
-	-- Calendario de eventos (t en fracción de DURATION)
 	local pulseT0 = nil
 	local pulseDone = false
 	local function impact()
@@ -576,7 +533,6 @@ local function playElectricFx(root, mode)
 			return
 		end
 
-		-- Portador y esferas siguen al torso
 		local cf = CFrame.new(root.Position)
 		carrier.CFrame = cf
 		if not boltsCleared then
@@ -591,7 +547,6 @@ local function playElectricFx(root, mode)
 			ev.fn()
 		end
 
-		-- Fin de la fase de rayos: se borran rayos, esferas y luz; chispas y humo terminan solos
 		if tn >= 1 then
 			if not boltsCleared then
 				boltsCleared = true
@@ -612,14 +567,14 @@ local function playElectricFx(root, mode)
 
 				local lead, lenEff, inten, hot
 				if isIn then
-					-- llega acelerando y se clava; la cola se erosiona al final
+
 					lead = bolt.outer * (1 - p * p)
 					local er = math.clamp((p - 0.62) / 0.38, 0, 1)
 					lenEff = bolt.len * (1 - er ^ 1.5)
 					inten = math.clamp(p / 0.1, 0, 1) * (p > 0.9 and (1 - p) / 0.1 or 1)
 					hot = p > 0.78
 				else
-					-- sale de golpe, al rojo blanco, y se va enfriando y erosionando
+
 					lead = bolt.outer * (1 - (1 - p) ^ 3)
 					local er = math.clamp((p - 0.3) / 0.7, 0, 1)
 					lenEff = bolt.len * (1 - er ^ 1.5)
@@ -664,7 +619,6 @@ local function playElectricFx(root, mode)
 			end
 		end
 
-		-- Destello local (esfera) + luz
 		if pulseT0 then
 			local u = (now - pulseT0) / FX.PULSE_TIME
 			if u < 1 then
@@ -697,13 +651,14 @@ local function playElectricFx(root, mode)
 	end)
 end
 
--- Envoltorios seguros: un fallo visual jamás debe romper el prender/apagar ni el Stop().
 local function safeSfx(id)
+	if not EFFECTS_ENABLED then return end
 	local ok, err = pcall(playSfx, id)
 	if not ok then failInert("sonido", err) end
 end
 
 local function safeFx(root, mode)
+	if not EFFECTS_ENABLED then return end
 	local ok, err = pcall(playElectricFx, root, mode)
 	if not ok then
 		cancelFx()
@@ -777,7 +732,6 @@ local function destroyTracked()
 	movementAttachment = nil
 end
 
--- Restos de versiones anteriores del script (no tenían etiqueta): mismo "molde" exacto.
 local function isLegacyLeftover(obj)
 	if not obj:IsA("LinearVelocity") or obj.Name ~= "LinearVelocity" then return false end
 	if not obj.Parent or obj.Parent.Name ~= "HumanoidRootPart" then return false end
@@ -815,10 +769,6 @@ local function clearPhysics()
 	isExploding = false
 end
 
--- Apaga cualquier OTRA copia de SpeedForce que siga viva (p. ej. la version vieja que carga el
--- hub desde GitHub). Su boton X llama al Stop() de ESA copia, asi que se detiene su bucle y su
--- fisica de verdad; despues se borra su panel. Sin esto, la copia vieja seguiria recreando su
--- LinearVelocity cada frame y se sumaria a la nueva (doble freno = "mas friccion").
 local function shutdownForeignInstances()
 	local playerGui = localPlayer and localPlayer:FindFirstChild("PlayerGui")
 	if not playerGui then return end
@@ -910,17 +860,17 @@ function M.Close()
 	return true
 end
 
--- Stop(true) = apagado "con despedida" (sonido + electricidad saliendo). Solo el botón X lo usa.
--- Stop() sin argumentos es silencioso: lo usan Start(), la re-ejecución del script y el hub, así
--- no suena ni se ve nada cuando el script solo se está reiniciando o reemplazando.
 function M.Stop(withEffect)
-	-- Se decide ANTES de tocar el estado, y solo si de verdad estaba prendido.
+	if withEffect ~= true then
+		cancelFx()
+	end
+
 	if withEffect == true and active and isEnabled then
 		safeSfx(SFX_OFF_ID)
 		safeFx(rootPart, "out")
 	end
 
-	sessionId += 1           -- mata cualquier hilo / bucle de esta sesión
+	sessionId += 1
 	active = false
 	isEnabled = false
 
@@ -930,8 +880,8 @@ function M.Stop(withEffect)
 	if gui and gui.Parent then
 		gui:Destroy()
 	end
-	shutdownForeignInstances()   -- copias anteriores / versión vieja del hub
-	clearPhysics()               -- y después se barre lo que hayan dejado
+	shutdownForeignInstances()
+	clearPhysics()
 
 	gui = nil
 	mainFrame = nil
@@ -980,7 +930,7 @@ function M.Start(firstArgument, secondArgument)
 	boostEndTime = 0
 
 	local playerGui = localPlayer:WaitForChild("PlayerGui")
-	
+
 	gui = Instance.new("ScreenGui")
 	gui.Name = "AFO_CustomMovement"
 	gui.ResetOnSpawn = false
@@ -1151,16 +1101,16 @@ function M.Start(firstArgument, secondArgument)
 		local major = (i % 5 == 0)
 		local len = major and 8 or 5
 		local radius = GAUGE_R - 8 - len / 2
-		local tick = Instance.new("Frame")
-		tick.AnchorPoint = Vector2.new(0.5, 0.5)
-		tick.Position = UDim2.fromOffset(GAUGE_R - math.cos(a) * radius, GAUGE_R - math.sin(a) * radius)
-		tick.Size = UDim2.fromOffset(major and 2 or 1, len)
-		tick.Rotation = math.deg(a) - 90
-		tick.BackgroundColor3 = gaugeColor(i / 10)
-		tick.BackgroundTransparency = major and 0.05 or 0.45
-		tick.BorderSizePixel = 0
-		tick.ZIndex = 12
-		tick.Parent = dialClip
+		local mark = Instance.new("Frame")
+		mark.AnchorPoint = Vector2.new(0.5, 0.5)
+		mark.Position = UDim2.fromOffset(GAUGE_R - math.cos(a) * radius, GAUGE_R - math.sin(a) * radius)
+		mark.Size = UDim2.fromOffset(major and 2 or 1, len)
+		mark.Rotation = math.deg(a) - 90
+		mark.BackgroundColor3 = gaugeColor(i / 10)
+		mark.BackgroundTransparency = major and 0.05 or 0.45
+		mark.BorderSizePixel = 0
+		mark.ZIndex = 12
+		mark.Parent = dialClip
 	end
 
 	local needleLen = GAUGE_R - 14
@@ -1268,7 +1218,7 @@ function M.Start(firstArgument, secondArgument)
 		if open and applyLanguage then
 			applyLanguage()
 		end
-		local position = isOpen 
+		local position = isOpen
 			and UDim2.new(0, 20, 0, 190)
 			or UDim2.new(0, -300, 0, 190)
 
@@ -1294,7 +1244,7 @@ function M.Start(firstArgument, secondArgument)
 				if startPhysicsLoop then startPhysicsLoop() end
 				refreshToggleText()
 				toggleBtn.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
-				-- Prendido a mano: sonido + electricidad entrando al cuerpo
+
 				safeSfx(SFX_ON_ID)
 				safeFx(rootPart, "in")
 			else
@@ -1305,12 +1255,12 @@ function M.Start(firstArgument, secondArgument)
 				end
 			end
 		else
-			-- Apagado a mano: sonido + electricidad saliendo del cuerpo
+
 			safeSfx(SFX_OFF_ID)
 			safeFx(rootPart, "out")
 			isEnabled = false
-			stopPhysicsLoop()   -- el bucle deja de correr por completo
-			clearPhysics()      -- y se elimina todo lo que cancelaba impulsos
+			stopPhysicsLoop()
+			clearPhysics()
 			refreshToggleText()
 			toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 10, 60)
 		end
@@ -1337,7 +1287,7 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	local function setupCharacter(char)
-		clearPhysics()   -- fuera cualquier LinearVelocity del personaje anterior
+		clearPhysics()
 		character, humanoid, rootPart = nil, nil, nil
 		local newHumanoid = char:WaitForChild("Humanoid")
 		local newRoot = char:WaitForChild("HumanoidRootPart")
@@ -1363,7 +1313,7 @@ function M.Start(firstArgument, secondArgument)
 	if localPlayer.Character then
 		setupCharacter(localPlayer.Character)
 	end
-	if mySession ~= sessionId then return false end   -- se llamó a Stop mientras cargaba
+	if mySession ~= sessionId then return false end
 	table.insert(connections, localPlayer.CharacterAdded:Connect(setupCharacter))
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gpe)
@@ -1409,9 +1359,9 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	local function onHeartbeat(deltaTime)
-		if not isEnabled or not character or not humanoid or not rootPart or not character.Parent then 
+		if not isEnabled or not character or not humanoid or not rootPart or not character.Parent then
 			updateMeter(0, deltaTime)
-			return 
+			return
 		end
 
 		local vel = rootPart.AssemblyLinearVelocity
@@ -1423,7 +1373,6 @@ function M.Start(firstArgument, secondArgument)
 		if isRagdoll then isExploding = false end
 
 		local moveDir = humanoid.MoveDirection
-		local currentTime = tick()
 		local camera = workspace.CurrentCamera
 
 		if isRagdoll and moveDir.Magnitude < 0.01 then
@@ -1526,7 +1475,6 @@ function M.Start(firstArgument, secondArgument)
 			linearVelocity.MaxAxesForce = Vector3.new(activeForce, 0, activeForce)
 			linearVelocity.VectorVelocity = Vector3.new(targetVelocityVector.X, 0, targetVelocityVector.Z)
 
-			-- CORRECCIÓN: Normalizar la velocidad de las animaciones para que manos y pies vayan a velocidad normal
 			for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
 				local animName = track.Name:lower()
 				if animName:find("walk") or animName:find("run") or animName:find("move") or animName:find("climb") then
@@ -1552,7 +1500,6 @@ function M.Start(firstArgument, secondArgument)
 	return true
 end
 
--- Imprime en consola qué fuerzas/velocidades hay sobre tu HumanoidRootPart y de quién son.
 function M.Diagnose()
 	local char = localPlayer and localPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1583,7 +1530,6 @@ function M.Diagnose()
 	return found
 end
 
--- Si ya había otra copia de este módulo corriendo (re-ejecución del script), se apaga primero.
 do
 	local previousStop = env.__AFO_SpeedForceStop
 	if type(previousStop) == "function" then
@@ -1591,30 +1537,6 @@ do
 	end
 	env.__AFO_SpeedForceStop = function() M.Stop() end
 	env.AFO_SpeedForceDiagnose = function() return M.Diagnose() end
-end
-
--- ============================================================================
--- AUTO-ARRANQUE
--- Este archivo es un módulo (devuelve M) y por sí solo no abre nada: alguien tiene que llamar
--- a M.Start(). Si lo pones como LocalScript nadie lo llama y parece que "no carga".
---   * Si corre directamente como LocalScript -> se inicia solo.
---   * Si lo carga un hub / require / loadstring (ModuleScript o ejecutor) -> NO se auto-inicia;
---     el hub llama a M.Start(keys, player) como siempre.
---   * Para desactivarlo aunque sea LocalScript: _G.AFO_SpeedForceAutoStart = false
--- ============================================================================
-do
-	local runningAsLocalScript = false
-	pcall(function()
-		runningAsLocalScript = typeof(script) == "Instance" and script:IsA("LocalScript")
-	end)
-	if runningAsLocalScript and env.AFO_SpeedForceAutoStart ~= false then
-		task.spawn(function()
-			local ok, result = pcall(M.Start)
-			if not ok then
-				warn("[SpeedForce] No se pudo iniciar: " .. tostring(result))
-			end
-		end)
-	end
 end
 
 return M
