@@ -4,22 +4,20 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
-local SoundService = game:GetService("SoundService")
-local Debris = game:GetService("Debris")
-local ContentProvider = game:GetService("ContentProvider")
-local LocalizationService = game:GetService("LocalizationService")
 
 local localPlayer = nil
 local keys = nil
 local active = false
 local connections = {}
 
+-- Variables de GUI
 local gui, mainFrame, setPanelOpen
 local isOpen = false
 local toggleKey = Enum.KeyCode.F5
 local meterLabel, meterGradient, meterNeedle, meterNeedleParts
 local meterFrac, meterColorFrac = 0, -1
 
+-- Variables de físicas y personaje
 local character, humanoid, rootPart
 local movementAttachment, linearVelocity
 local isEnabled = true
@@ -33,638 +31,21 @@ local lastDashEnd = 0
 local boostEndTime = 0
 local EXPLOSION_BASE_FORCE = 130
 
+-- Paleta de colores heredada
 local C_BLACK = Color3.fromRGB(15, 15, 20)
 local C_PURPLE = Color3.fromRGB(100, 50, 150)
 local C_TEXT = Color3.fromRGB(255, 255, 255)
 local C_SUB = Color3.fromRGB(180, 180, 180)
 
+-- Todo lo que este script crea en el personaje lleva esta etiqueta y se guarda en
+-- createdObjects, para poder destruirlo aunque se pierda la referencia directa.
 local TAG = "AFO_SpeedForce"
 local createdObjects = {}
-local sessionId = 0
+local sessionId = 0          -- sube con cada Start/Stop: invalida hilos y bucles viejos
 local heartbeatConn = nil
-local startPhysicsLoop
+local startPhysicsLoop       -- se asigna dentro de Start
 
 local env = (getgenv and getgenv()) or _G
-local EFFECTS_ENABLED = true
-
-local SILENT_ATTR = "AFO_SilentStop"
-
-local I18N = {}
-I18N.strings = {
-	es = {
-		title = "SPEEDFORCE",
-		placeholder = "Velocidad...",
-		on = "Prendido",
-		off = "Apagado",
-		invalid = "Inv\195\161lido",
-	},
-	en = {
-		title = "SPEEDFORCE",
-		placeholder = "Speed...",
-		on = "On",
-		off = "Off",
-		invalid = "Invalid",
-	},
-}
-I18N.markers = {
-	es = {
-		"personajes", "despert", "sobrecarga", "presiona", "patada", "disparo", "ataque", "rel\195\161mpago", "relampago",
-		"velocidad", "aplicar", "jugador", "ajustes", "configuraci\195\179n", "configuracion", "tienda", "misiones",
-		"inventario", "amigos", "habilidades", "equipo", "m\195\161xim", "maxim", "nivel de", "salir", "cerrar",
-	},
-	en = {
-		"characters", "awaken", "overload", "press ", "kick", "shot", "attack", "lightning", "speed", "apply",
-		"player", "settings", "shop", "quests", "inventory", "friends", "skills", "team", "maximum", "level of",
-		"leave", "close",
-	},
-}
-I18N.forced = nil
-
-function I18N.score(text, scores)
-	text = string.lower(text)
-	for lang, markers in pairs(I18N.markers) do
-		for _, marker in ipairs(markers) do
-			if text:find(marker, 1, true) then
-				scores[lang] = scores[lang] + 1
-			end
-		end
-	end
-	if text:find("[\195\161\195\169\195\173\195\179\195\186\195\177\194\191\194\161]") then
-		scores.es = scores.es + 1
-	end
-end
-
-function I18N.detect()
-	if I18N.forced and I18N.strings[I18N.forced] then
-		return I18N.forced
-	end
-	local code = ""
-	pcall(function()
-		code = string.lower(LocalizationService.RobloxLocaleId or "")
-	end)
-	if code == "" then
-		pcall(function()
-			code = string.lower(LocalizationService.SystemLocaleId or "")
-		end)
-	end
-	local prefix = code:sub(1, 2)
-	if I18N.strings[prefix] then
-		return prefix
-	end
-	local scores = { es = 0, en = 0 }
-	pcall(function()
-		local playerGui = localPlayer and localPlayer:FindFirstChildOfClass("PlayerGui")
-		if not playerGui then
-			return
-		end
-		local checked = 0
-		for _, d in ipairs(playerGui:GetDescendants()) do
-			if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
-				if not d:FindFirstAncestor("AFO_AvatarChanger") and not d:FindFirstAncestor("AFO_CustomMovement") then
-					I18N.score(d.Text, scores)
-				end
-				checked = checked + 1
-				if checked > 3000 then
-					break
-				end
-			end
-		end
-	end)
-	if scores.es ~= scores.en then
-		return scores.es > scores.en and "es" or "en"
-	end
-	return "en"
-end
-
-local currentLang = "en"
-local applyLanguage
-
-local function L(key)
-	local t = I18N.strings[currentLang] or I18N.strings.en
-	return t[key] or I18N.strings.en[key] or ""
-end
-
-local SFX_ON_ID = "rbxassetid://118075222341359"
-local SFX_OFF_ID = "rbxassetid://112416614144985"
-local SFX_VOLUME = 4
-local currentSfx = nil
-
-local function playSfx(id)
-	if currentSfx then
-		local old = currentSfx
-		currentSfx = nil
-		pcall(function()
-			old:Stop()
-			old:Destroy()
-		end)
-	end
-	local sound = Instance.new("Sound")
-	sound.Name = "AFO_SpeedForceSfx"
-	sound.SoundId = id
-	sound.Volume = SFX_VOLUME
-	sound.Parent = SoundService
-	currentSfx = sound
-	sound.Ended:Once(function()
-		if currentSfx == sound then
-			currentSfx = nil
-		end
-		sound:Destroy()
-	end)
-	Debris:AddItem(sound, 20)
-	sound:Play()
-end
-
-local function preloadSfx()
-	if not EFFECTS_ENABLED then return end
-	task.spawn(function()
-		local list = {}
-		for _, id in ipairs({ SFX_ON_ID, SFX_OFF_ID }) do
-			local sound = Instance.new("Sound")
-			sound.SoundId = id
-			table.insert(list, sound)
-		end
-		pcall(function()
-			ContentProvider:PreloadAsync(list)
-		end)
-		for _, sound in ipairs(list) do
-			sound:Destroy()
-		end
-	end)
-end
-
-local FX = {
-	DURATION = 0.8,
-	TAIL = 0.6,
-	BOLTS = 11,
-	POINTS = 5,
-	FORK_CHANCE = 0.45,
-	OUTER_MIN = 4.5,
-	OUTER_MAX = 8.5,
-	LEN_MIN = 1.8,
-	LEN_MAX = 3.8,
-	JITTER = 0.55,
-	STEP = 0.08,
-	PULSE_TIME = 0.24,
-	LIGHT_RANGE = 15,
-}
-
-local FX_COL = {
-	BLACK = Color3.fromRGB(10, 5, 18),
-
-	V_GLOW = Color3.fromRGB(130, 40, 225),
-	V_BODY = Color3.fromRGB(190, 125, 255),
-	V_CORE = Color3.fromRGB(255, 246, 200),
-
-	G_GLOW = Color3.fromRGB(115, 32, 200),
-	G_BODY = Color3.fromRGB(255, 214, 50),
-	G_CORE = Color3.fromRGB(255, 252, 225),
-
-	H_GLOW = Color3.fromRGB(255, 205, 50),
-	H_BODY = Color3.fromRGB(255, 244, 170),
-	H_CORE = Color3.fromRGB(255, 255, 255),
-
-	FLASH = Color3.fromRGB(255, 240, 160),
-	SHELL = Color3.fromRGB(140, 40, 230),
-}
-
-local FX_LAYERS = { "dark", "glow", "body", "core" }
-local FX_WIDTH = { dark = 0.95, glow = 0.6, body = 0.2, core = 0.07 }
-local FX_EMISSION = { dark = 0, glow = 0.9, body = 0.5, core = 1 }
-local FX_OPACITY = { dark = 0.55, glow = 0.6, body = 0.95, core = 1 }
-local FX_ZOFFSET = { dark = 0, glow = 0.01, body = 0.02, core = 0.03 }
-
-local FX_SPARK_TEX = "rbxasset://textures/particles/sparkles_main.dds"
-local FX_SMOKE_TEX = "rbxasset://textures/particles/smoke_main.dds"
-
-local FX_NAME = "AFO_SpeedForceFx"
-local fxState = nil
-local fxWarned = false
-
-local function failInert(what, err)
-	if fxWarned then return end
-	fxWarned = true
-	warn("[SpeedForce] " .. what .. " falló (se ignora y el resto sigue): " .. tostring(err))
-end
-
-local function cancelFx()
-	local state = fxState
-	fxState = nil
-	if not state then return end
-	if state.conn then
-		pcall(function() state.conn:Disconnect() end)
-	end
-	for i = #state.objects, 1, -1 do
-		pcall(function() state.objects[i]:Destroy() end)
-	end
-end
-
-local function nseq(...)
-	local a = { ... }
-	local kps = {}
-	for i = 1, #a, 2 do
-		table.insert(kps, NumberSequenceKeypoint.new(a[i], a[i + 1]))
-	end
-	return NumberSequence.new(kps)
-end
-
-local function cseq(...)
-	local a = { ... }
-	local kps = {}
-	for i = 1, #a, 2 do
-		table.insert(kps, ColorSequenceKeypoint.new(a[i], a[i + 1]))
-	end
-	return ColorSequence.new(kps)
-end
-
-local function layerColor(bolt, layer, hot)
-	if layer == "dark" then return FX_COL.BLACK end
-	local prefix = hot and "H_" or (bolt.gold and "G_" or "V_")
-	return FX_COL[prefix .. string.upper(layer)]
-end
-
-local function recolor(bolt, hot)
-	bolt.hot = hot
-	for _, layer in ipairs(FX_LAYERS) do
-		local seq = ColorSequence.new(layerColor(bolt, layer, hot))
-		for _, beam in ipairs(bolt.layers[layer]) do
-			beam.Color = seq
-		end
-	end
-end
-
-local function rerollJitter(bolt)
-	for k = 1, FX.POINTS do
-		local frac = (k - 1) / (FX.POINTS - 1)
-		local amp = FX.JITTER * math.sin(math.pi * frac)
-		bolt.jit[k] = bolt.p1 * ((math.random() - 0.5) * 2 * amp)
-			+ bolt.p2 * ((math.random() - 0.5) * 2 * amp)
-	end
-	for k = 1, 2 do
-		bolt.bJit[k] = bolt.p1 * ((math.random() - 0.5) * 0.6) + bolt.p2 * ((math.random() - 0.5) * 0.6)
-	end
-	bolt.flick = 0.7 + math.random() * 0.3
-end
-
-local function makeEmitter(parent, o)
-	local e = Instance.new("ParticleEmitter")
-	e.Name = FX_NAME
-	e.Enabled = false
-	e.Rate = 0
-	e.Texture = o.texture or FX_SPARK_TEX
-	e.Color = o.color
-	e.Size = o.size
-	e.Transparency = o.transparency
-	e.Lifetime = o.lifetime
-	e.Speed = o.speed
-	e.Drag = o.drag or 0
-	e.Acceleration = o.accel or Vector3.zero
-	e.LightEmission = o.light
-	e.LightInfluence = 0
-	e.Rotation = NumberRange.new(0, 360)
-	e.RotSpeed = NumberRange.new(-220, 220)
-	e.Shape = Enum.ParticleEmitterShape.Sphere
-	e.ShapeStyle = o.surface and Enum.ParticleEmitterShapeStyle.Surface or Enum.ParticleEmitterShapeStyle.Volume
-	e.ShapeInOut = o.inward and Enum.ParticleEmitterShapeInOut.Inward or Enum.ParticleEmitterShapeInOut.Outward
-	e.LockedToPart = true
-	e.Parent = parent
-	return e
-end
-
-local function makeBlock(parent, size, color, material, shape)
-	local part = Instance.new("Part")
-	part.Name = FX_NAME
-	part.Shape = shape or Enum.PartType.Block
-	part.Material = material or Enum.Material.SmoothPlastic
-	part.Color = color or FX_COL.BLACK
-	part.Anchored = true
-	part.CanCollide = false
-	part.CanQuery = false
-	part.CanTouch = false
-	part.CastShadow = false
-	part.Massless = true
-	part.Transparency = 1
-	part.Size = size
-	part.Parent = parent
-	return part
-end
-
-local function playElectricFx(root, mode)
-	cancelFx()
-	if not root or not root.Parent then return end
-	local isIn = (mode == "in")
-
-	local state = { objects = {}, fast = {}, conn = nil }
-	fxState = state
-	local TOTAL = FX.DURATION + FX.TAIL
-
-	local function track(obj, isFast)
-		table.insert(state.objects, obj)
-		if isFast then table.insert(state.fast, obj) end
-		Debris:AddItem(obj, TOTAL + 1.5)
-		return obj
-	end
-
-	local fxParent = workspace.CurrentCamera or workspace
-	local startPos = root.Position
-
-	local carrier = track(makeBlock(fxParent, Vector3.new(12, 12, 12)))
-	carrier.CFrame = CFrame.new(startPos)
-	local core = track(Instance.new("Attachment"))
-	core.Name = FX_NAME
-	core.Parent = carrier
-
-	local flashCore = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.FLASH, Enum.Material.Neon, Enum.PartType.Ball), true)
-	local flashShell = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.SHELL, Enum.Material.ForceField, Enum.PartType.Ball), true)
-
-	local sparkAlpha = nseq(0, 0.05, 0.65, 0.3, 1, 1)
-	local inViolet = track(makeEmitter(carrier, {
-		surface = true, inward = true, light = 0.6,
-		color = cseq(0, Color3.fromRGB(200, 140, 255), 0.5, Color3.fromRGB(125, 45, 220), 1, Color3.fromRGB(30, 10, 60)),
-		size = nseq(0, 0.5, 1, 0.05), transparency = sparkAlpha,
-		lifetime = NumberRange.new(0.3, 0.4), speed = NumberRange.new(16, 24),
-	}))
-	local inGold = track(makeEmitter(carrier, {
-		surface = true, inward = true, light = 0.9,
-		color = cseq(0, Color3.fromRGB(255, 250, 215), 0.4, Color3.fromRGB(255, 224, 70), 1, Color3.fromRGB(150, 60, 200)),
-		size = nseq(0, 0.45, 1, 0.05), transparency = sparkAlpha,
-		lifetime = NumberRange.new(0.28, 0.36), speed = NumberRange.new(18, 26),
-	}))
-	local burstGold = track(makeEmitter(core, {
-		light = 1,
-		color = cseq(0, Color3.fromRGB(255, 252, 225), 0.35, Color3.fromRGB(255, 218, 60), 1, Color3.fromRGB(140, 50, 210)),
-		size = nseq(0, 0.6, 1, 0.04), transparency = nseq(0, 0, 0.6, 0.25, 1, 1),
-		lifetime = NumberRange.new(0.28, 0.5), speed = NumberRange.new(18, 42), drag = 3,
-	}))
-	local burstViolet = track(makeEmitter(core, {
-		light = 0.7,
-		color = cseq(0, Color3.fromRGB(215, 160, 255), 0.5, Color3.fromRGB(120, 40, 215), 1, Color3.fromRGB(25, 8, 50)),
-		size = nseq(0, 0.9, 1, 0.1), transparency = nseq(0, 0.05, 0.6, 0.3, 1, 1),
-		lifetime = NumberRange.new(0.35, 0.6), speed = NumberRange.new(10, 26), drag = 2,
-	}))
-
-	local smoke = track(makeEmitter(core, {
-		texture = FX_SMOKE_TEX, light = 0,
-		color = cseq(0, Color3.fromRGB(45, 14, 80), 1, Color3.fromRGB(6, 3, 12)),
-		size = nseq(0, 0.9, 1, 2.1), transparency = nseq(0, 0.45, 0.5, 0.65, 1, 1),
-		lifetime = NumberRange.new(0.5, 0.8), speed = NumberRange.new(3, 9), drag = 1,
-		accel = Vector3.new(0, 4, 0),
-	}))
-
-	local light = track(Instance.new("PointLight"), true)
-	light.Name = FX_NAME
-	light.Color = FX_COL.V_GLOW
-	light.Range = FX.LIGHT_RANGE
-	light.Brightness = 0
-	light.Shadows = false
-	light.Parent = carrier
-
-	local spread = isIn and 0.3 or 0.15
-	local N = FX.POINTS
-	local bolts = {}
-	for _ = 1, FX.BOLTS do
-		local a = math.random() * math.pi * 2
-		local y = math.clamp((math.random() - 0.45) * 1.5, -0.7, 0.8)
-		local h = math.sqrt(1 - y * y)
-		local dir = Vector3.new(math.cos(a) * h, y, math.sin(a) * h)
-		local p1 = dir:Cross(Vector3.yAxis).Unit
-		local p2 = dir:Cross(p1).Unit
-		local phi = math.random() * math.pi * 2
-		local bdir = (dir * 0.55 + (p1 * math.cos(phi) + p2 * math.sin(phi)) * 0.85).Unit
-		local bdir2 = (bdir + (p1 * (math.random() - 0.5) + p2 * (math.random() - 0.5)) * 0.9).Unit
-
-		local bolt = {
-			dir = dir, p1 = p1, p2 = p2, bdir = bdir, bdir2 = bdir2,
-			outer = FX.OUTER_MIN + math.random() * (FX.OUTER_MAX - FX.OUTER_MIN),
-			len = FX.LEN_MIN + math.random() * (FX.LEN_MAX - FX.LEN_MIN),
-			start = math.random() * spread,
-			window = 1 - spread,
-			scale = 0.8 + math.random() * 0.55,
-			gold = math.random() < 0.35,
-			fork = math.random() < FX.FORK_CHANCE,
-			flick = 1, visible = false, hot = false,
-			att = {}, jit = {}, bAtt = {}, bJit = {},
-			layers = { dark = {}, glow = {}, body = {}, core = {} },
-		}
-
-		local function newAtt()
-			local att = track(Instance.new("Attachment"), true)
-			att.Name = FX_NAME
-			att.Parent = carrier
-			return att
-		end
-		for k = 1, N do bolt.att[k] = newAtt() end
-		if bolt.fork then
-			bolt.bAtt[1] = newAtt()
-			bolt.bAtt[2] = newAtt()
-		end
-
-		local function addBeam(layer, a0, a1, w0, w1)
-			local beam = track(Instance.new("Beam"), true)
-			beam.Name = FX_NAME
-			beam.Attachment0 = a0
-			beam.Attachment1 = a1
-			beam.Color = ColorSequence.new(layerColor(bolt, layer, false))
-			beam.LightEmission = FX_EMISSION[layer]
-			beam.LightInfluence = 0
-			beam.FaceCamera = true
-			beam.Segments = 1
-			beam.ZOffset = FX_ZOFFSET[layer]
-			beam.Width0 = w0
-			beam.Width1 = w1
-			beam.Transparency = NumberSequence.new(1)
-			beam.Parent = carrier
-			table.insert(bolt.layers[layer], beam)
-		end
-
-		for _, layer in ipairs(FX_LAYERS) do
-			local base = FX_WIDTH[layer] * bolt.scale
-
-			for s = 1, N - 1 do
-				addBeam(layer, bolt.att[s], bolt.att[s + 1],
-					base * (1 - 0.7 * (s - 1) / (N - 1)), base * (1 - 0.7 * s / (N - 1)))
-			end
-
-			if bolt.fork then
-				addBeam(layer, bolt.att[3], bolt.bAtt[1], base * 0.55, base * 0.38)
-				addBeam(layer, bolt.bAtt[1], bolt.bAtt[2], base * 0.38, base * 0.12)
-			end
-		end
-
-		rerollJitter(bolt)
-		table.insert(bolts, bolt)
-	end
-
-	local pulseT0 = nil
-	local pulseDone = false
-	local function impact()
-		pulseT0 = os.clock()
-		burstGold:Emit(isIn and 20 or 28)
-		burstViolet:Emit(isIn and 14 or 18)
-		smoke:Emit(isIn and 5 or 7)
-	end
-
-	local events
-	if isIn then
-		events = {
-			{ t = 0.00, fn = function() inViolet:Emit(14) end },
-			{ t = 0.08, fn = function() inViolet:Emit(12); inGold:Emit(6) end },
-			{ t = 0.18, fn = function() inViolet:Emit(10); inGold:Emit(6) end },
-			{ t = 0.30, fn = function() inViolet:Emit(8); inGold:Emit(5) end },
-			{ t = 0.62, fn = impact },
-		}
-	else
-		events = {
-			{ t = 0.00, fn = impact },
-			{ t = 0.10, fn = function() burstViolet:Emit(8) end },
-		}
-	end
-	local nextEvent = 1
-
-	local invisible = NumberSequence.new(1)
-	local t0 = os.clock()
-	local lastStep = t0
-	local boltsCleared = false
-
-	local function update()
-		local now = os.clock()
-		local elapsed = now - t0
-		if elapsed >= TOTAL or not root.Parent then
-			cancelFx()
-			return
-		end
-
-		local cf = CFrame.new(root.Position)
-		carrier.CFrame = cf
-		if not boltsCleared then
-			flashCore.CFrame = cf
-			flashShell.CFrame = cf
-		end
-
-		local tn = elapsed / FX.DURATION
-		while events[nextEvent] and tn >= events[nextEvent].t do
-			local ev = events[nextEvent]
-			nextEvent += 1
-			ev.fn()
-		end
-
-		if tn >= 1 then
-			if not boltsCleared then
-				boltsCleared = true
-				for i = #state.fast, 1, -1 do
-					pcall(function() state.fast[i]:Destroy() end)
-				end
-			end
-			return
-		end
-
-		local reroll = (now - lastStep) >= FX.STEP
-		if reroll then lastStep = now end
-
-		for _, bolt in ipairs(bolts) do
-			local p = (tn - bolt.start) / bolt.window
-			if p > 0 and p < 1 then
-				if reroll then rerollJitter(bolt) end
-
-				local lead, lenEff, inten, hot
-				if isIn then
-
-					lead = bolt.outer * (1 - p * p)
-					local er = math.clamp((p - 0.62) / 0.38, 0, 1)
-					lenEff = bolt.len * (1 - er ^ 1.5)
-					inten = math.clamp(p / 0.1, 0, 1) * (p > 0.9 and (1 - p) / 0.1 or 1)
-					hot = p > 0.78
-				else
-
-					lead = bolt.outer * (1 - (1 - p) ^ 3)
-					local er = math.clamp((p - 0.3) / 0.7, 0, 1)
-					lenEff = bolt.len * (1 - er ^ 1.5)
-					inten = math.clamp(p / 0.04, 0, 1) * (1 - p ^ 2.2)
-					hot = p < 0.25
-				end
-				inten = inten * bolt.flick
-
-				if hot ~= bolt.hot then recolor(bolt, hot) end
-
-				local sizeFactor = math.clamp(lenEff / bolt.len, 0, 1)
-				local pos3
-				for k = 1, N do
-					local kf = (k - 1) / (N - 1)
-					local along = isIn and (lead + kf * lenEff) or (lead - kf * lenEff)
-					along = math.max(0, along)
-					local v = bolt.dir * along + bolt.jit[k] * sizeFactor
-					bolt.att[k].Position = v
-					if k == 3 then pos3 = v end
-				end
-				if bolt.fork then
-					local b1 = pos3 + bolt.bdir * (lenEff * 0.3) + bolt.bJit[1] * sizeFactor
-					local b2 = b1 + bolt.bdir2 * (lenEff * 0.28) + bolt.bJit[2] * sizeFactor
-					bolt.bAtt[1].Position = b1
-					bolt.bAtt[2].Position = b2
-				end
-
-				for _, layer in ipairs(FX_LAYERS) do
-					local seq = NumberSequence.new(1 - inten * FX_OPACITY[layer])
-					for _, beam in ipairs(bolt.layers[layer]) do
-						beam.Transparency = seq
-					end
-				end
-				bolt.visible = true
-			elseif bolt.visible then
-				for _, layer in ipairs(FX_LAYERS) do
-					for _, beam in ipairs(bolt.layers[layer]) do
-						beam.Transparency = invisible
-					end
-				end
-				bolt.visible = false
-			end
-		end
-
-		if pulseT0 then
-			local u = (now - pulseT0) / FX.PULSE_TIME
-			if u < 1 then
-				local ease = 1 - (1 - u) ^ 3
-				flashCore.Size = Vector3.one * (2.5 + 5 * ease)
-				flashCore.Transparency = u < 0.35 and 0.05 or (0.05 + 0.95 * ((u - 0.35) / 0.65) ^ 0.7)
-				flashShell.Size = Vector3.one * (4 + 8 * ease)
-				flashShell.Transparency = 0.2 + 0.8 * u
-				light.Color = u < 0.4 and FX_COL.H_BODY or FX_COL.V_GLOW
-				light.Brightness = 3 * (1 - u) ^ 2
-			elseif not pulseDone then
-				pulseDone = true
-				flashCore.Transparency = 1
-				flashShell.Transparency = 1
-				light.Brightness = 0
-			end
-		elseif isIn then
-			light.Color = FX_COL.V_GLOW
-			light.Brightness = 1.4 * math.min(tn / 0.62, 1) ^ 2
-		end
-	end
-
-	state.conn = RunService.RenderStepped:Connect(function()
-		if fxState ~= state then return end
-		local ok, err = pcall(update)
-		if not ok then
-			cancelFx()
-			failInert("efecto (frame)", err)
-		end
-	end)
-end
-
-local function safeSfx(id)
-	if not EFFECTS_ENABLED then return end
-	local ok, err = pcall(playSfx, id)
-	if not ok then failInert("sonido", err) end
-end
-
-local function safeFx(root, mode)
-	if not EFFECTS_ENABLED then return end
-	local ok, err = pcall(playElectricFx, root, mode)
-	if not ok then
-		cancelFx()
-		failInert("efecto", err)
-	end
-end
 
 local function disconnectAll()
 	for _, conn in ipairs(connections) do
@@ -732,6 +113,7 @@ local function destroyTracked()
 	movementAttachment = nil
 end
 
+-- Restos de versiones anteriores del script (no tenían etiqueta): mismo "molde" exacto.
 local function isLegacyLeftover(obj)
 	if not obj:IsA("LinearVelocity") or obj.Name ~= "LinearVelocity" then return false end
 	if not obj.Parent or obj.Parent.Name ~= "HumanoidRootPart" then return false end
@@ -769,12 +151,15 @@ local function clearPhysics()
 	isExploding = false
 end
 
+-- Apaga cualquier OTRA copia de SpeedForce que siga viva (p. ej. la version vieja que carga el
+-- hub desde GitHub). Su boton X llama al Stop() de ESA copia, asi que se detiene su bucle y su
+-- fisica de verdad; despues se borra su panel. Sin esto, la copia vieja seguiria recreando su
+-- LinearVelocity cada frame y se sumaria a la nueva (doble freno = "mas friccion").
 local function shutdownForeignInstances()
 	local playerGui = localPlayer and localPlayer:FindFirstChild("PlayerGui")
 	if not playerGui then return end
 	for _, g in ipairs(playerGui:GetChildren()) do
 		if g.Name == "AFO_CustomMovement" and g ~= gui then
-			pcall(function() g:SetAttribute(SILENT_ATTR, true) end)
 			local buttons = {}
 			for _, d in ipairs(g:GetDescendants()) do
 				if d:IsA("TextButton") and d.Text == "X" then
@@ -825,13 +210,6 @@ local function createPhysics()
 	linearVelocity = lv
 end
 
-function M.SetLanguage(code)
-	I18N.forced = (type(code) == "string" and I18N.strings[string.lower(code)]) and string.lower(code) or nil
-	if active and applyLanguage then
-		applyLanguage()
-	end
-end
-
 function M.SetKey(keyCode)
 	if typeof(keyCode) ~= "EnumItem" then
 		return
@@ -860,17 +238,8 @@ function M.Close()
 	return true
 end
 
-function M.Stop(withEffect)
-	if withEffect ~= true then
-		cancelFx()
-	end
-
-	if withEffect == true and active and isEnabled then
-		safeSfx(SFX_OFF_ID)
-		safeFx(rootPart, "out")
-	end
-
-	sessionId += 1
+function M.Stop()
+	sessionId += 1           -- mata cualquier hilo / bucle de esta sesión
 	active = false
 	isEnabled = false
 
@@ -880,15 +249,14 @@ function M.Stop(withEffect)
 	if gui and gui.Parent then
 		gui:Destroy()
 	end
-	shutdownForeignInstances()
-	clearPhysics()
+	shutdownForeignInstances()   -- copias anteriores / versión vieja del hub
+	clearPhysics()               -- y después se barre lo que hayan dejado
 
 	gui = nil
 	mainFrame = nil
 	meterLabel, meterGradient, meterNeedle, meterNeedleParts = nil, nil, nil, nil
 	meterFrac, meterColorFrac = 0, -1
 	setPanelOpen = nil
-	applyLanguage = nil
 	isOpen = false
 	character, humanoid, rootPart = nil, nil, nil
 	isExploding = false
@@ -917,7 +285,6 @@ function M.Start(firstArgument, secondArgument)
 
 	M.Stop()
 	local mySession = sessionId
-	preloadSfx()
 
 	active = true
 	isEnabled = true
@@ -930,7 +297,7 @@ function M.Start(firstArgument, secondArgument)
 	boostEndTime = 0
 
 	local playerGui = localPlayer:WaitForChild("PlayerGui")
-
+	
 	gui = Instance.new("ScreenGui")
 	gui.Name = "AFO_CustomMovement"
 	gui.ResetOnSpawn = false
@@ -992,7 +359,7 @@ function M.Start(firstArgument, secondArgument)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 14
 	title.TextColor3 = C_TEXT
-	title.Text = I18N.strings.en.title
+	title.Text = "SPEEDFORCE"
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.TextYAlignment = Enum.TextYAlignment.Center
 	title.Parent = titleBox
@@ -1012,7 +379,7 @@ function M.Start(firstArgument, secondArgument)
 	textBox.BackgroundTransparency = 0.3
 	textBox.TextColor3 = C_TEXT
 	textBox.PlaceholderColor3 = C_SUB
-	textBox.PlaceholderText = ""
+	textBox.PlaceholderText = "Velocidad..."
 	textBox.Text = tostring(currentSpeed)
 	textBox.Font = Enum.Font.Gotham
 	textBox.TextSize = 12
@@ -1035,7 +402,7 @@ function M.Start(firstArgument, secondArgument)
 	toggleBtn.TextColor3 = C_TEXT
 	toggleBtn.Font = Enum.Font.GothamBold
 	toggleBtn.TextSize = 12
-	toggleBtn.Text = ""
+	toggleBtn.Text = "ON"
 	toggleBtn.BorderSizePixel = 0
 	toggleBtn.Parent = mainFrame
 	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
@@ -1101,16 +468,16 @@ function M.Start(firstArgument, secondArgument)
 		local major = (i % 5 == 0)
 		local len = major and 8 or 5
 		local radius = GAUGE_R - 8 - len / 2
-		local mark = Instance.new("Frame")
-		mark.AnchorPoint = Vector2.new(0.5, 0.5)
-		mark.Position = UDim2.fromOffset(GAUGE_R - math.cos(a) * radius, GAUGE_R - math.sin(a) * radius)
-		mark.Size = UDim2.fromOffset(major and 2 or 1, len)
-		mark.Rotation = math.deg(a) - 90
-		mark.BackgroundColor3 = gaugeColor(i / 10)
-		mark.BackgroundTransparency = major and 0.05 or 0.45
-		mark.BorderSizePixel = 0
-		mark.ZIndex = 12
-		mark.Parent = dialClip
+		local tick = Instance.new("Frame")
+		tick.AnchorPoint = Vector2.new(0.5, 0.5)
+		tick.Position = UDim2.fromOffset(GAUGE_R - math.cos(a) * radius, GAUGE_R - math.sin(a) * radius)
+		tick.Size = UDim2.fromOffset(major and 2 or 1, len)
+		tick.Rotation = math.deg(a) - 90
+		tick.BackgroundColor3 = gaugeColor(i / 10)
+		tick.BackgroundTransparency = major and 0.05 or 0.45
+		tick.BorderSizePixel = 0
+		tick.ZIndex = 12
+		tick.Parent = dialClip
 	end
 
 	local needleLen = GAUGE_R - 14
@@ -1197,28 +564,12 @@ function M.Start(firstArgument, secondArgument)
 	meterFrac, meterColorFrac = 0, -1
 	updateMeter(0, 1)
 
-	local function refreshToggleText()
-		toggleBtn.Text = isEnabled and L("on") or L("off")
-	end
-
-	applyLanguage = function()
-		currentLang = I18N.detect()
-		local t = I18N.strings[currentLang] or I18N.strings.en
-		title.Text = t.title
-		textBox.PlaceholderText = t.placeholder
-		refreshToggleText()
-	end
-	applyLanguage()
-
 	local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 	setPanelOpen = function(open)
 		if not active or not mainFrame or not mainFrame.Parent then return end
 		isOpen = open
-		if open and applyLanguage then
-			applyLanguage()
-		end
-		local position = isOpen
+		local position = isOpen 
 			and UDim2.new(0, 20, 0, 190)
 			or UDim2.new(0, -300, 0, 190)
 
@@ -1242,26 +593,20 @@ function M.Start(firstArgument, secondArgument)
 					currentSmoothSpeed = gameBaseSpeed
 				end
 				if startPhysicsLoop then startPhysicsLoop() end
-				refreshToggleText()
+				toggleBtn.Text = "ON"
 				toggleBtn.BackgroundColor3 = Color3.fromRGB(80, 20, 140)
-
-				safeSfx(SFX_ON_ID)
-				safeFx(rootPart, "in")
 			else
-				toggleBtn.Text = L("invalid")
+				toggleBtn.Text = "Inválido"
 				task.wait(1)
-				if mySession == sessionId and not isEnabled and toggleBtn.Parent then
-					refreshToggleText()
+				if not isEnabled then
+					toggleBtn.Text = "OFF"
 				end
 			end
 		else
-
-			safeSfx(SFX_OFF_ID)
-			safeFx(rootPart, "out")
 			isEnabled = false
-			stopPhysicsLoop()
-			clearPhysics()
-			refreshToggleText()
+			stopPhysicsLoop()   -- el bucle deja de correr por completo
+			clearPhysics()      -- y se elimina todo lo que cancelaba impulsos
+			toggleBtn.Text = "OFF"
 			toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 10, 60)
 		end
 	end))
@@ -1276,8 +621,7 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	table.insert(connections, closeButton.MouseButton1Click:Connect(function()
-		local silent = gui and gui:GetAttribute(SILENT_ATTR)
-		M.Stop(not silent)
+		M.Stop()
 	end))
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -1287,7 +631,7 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	local function setupCharacter(char)
-		clearPhysics()
+		clearPhysics()   -- fuera cualquier LinearVelocity del personaje anterior
 		character, humanoid, rootPart = nil, nil, nil
 		local newHumanoid = char:WaitForChild("Humanoid")
 		local newRoot = char:WaitForChild("HumanoidRootPart")
@@ -1313,7 +657,7 @@ function M.Start(firstArgument, secondArgument)
 	if localPlayer.Character then
 		setupCharacter(localPlayer.Character)
 	end
-	if mySession ~= sessionId then return false end
+	if mySession ~= sessionId then return false end   -- se llamó a Stop mientras cargaba
 	table.insert(connections, localPlayer.CharacterAdded:Connect(setupCharacter))
 
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gpe)
@@ -1359,9 +703,9 @@ function M.Start(firstArgument, secondArgument)
 	end))
 
 	local function onHeartbeat(deltaTime)
-		if not isEnabled or not character or not humanoid or not rootPart or not character.Parent then
+		if not isEnabled or not character or not humanoid or not rootPart or not character.Parent then 
 			updateMeter(0, deltaTime)
-			return
+			return 
 		end
 
 		local vel = rootPart.AssemblyLinearVelocity
@@ -1373,6 +717,7 @@ function M.Start(firstArgument, secondArgument)
 		if isRagdoll then isExploding = false end
 
 		local moveDir = humanoid.MoveDirection
+		local currentTime = tick()
 		local camera = workspace.CurrentCamera
 
 		if isRagdoll and moveDir.Magnitude < 0.01 then
@@ -1475,6 +820,7 @@ function M.Start(firstArgument, secondArgument)
 			linearVelocity.MaxAxesForce = Vector3.new(activeForce, 0, activeForce)
 			linearVelocity.VectorVelocity = Vector3.new(targetVelocityVector.X, 0, targetVelocityVector.Z)
 
+			-- CORRECCIÓN: Normalizar la velocidad de las animaciones para que manos y pies vayan a velocidad normal
 			for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
 				local animName = track.Name:lower()
 				if animName:find("walk") or animName:find("run") or animName:find("move") or animName:find("climb") then
@@ -1500,6 +846,7 @@ function M.Start(firstArgument, secondArgument)
 	return true
 end
 
+-- Imprime en consola qué fuerzas/velocidades hay sobre tu HumanoidRootPart y de quién son.
 function M.Diagnose()
 	local char = localPlayer and localPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1530,6 +877,7 @@ function M.Diagnose()
 	return found
 end
 
+-- Si ya había otra copia de este módulo corriendo (re-ejecución del script), se apaga primero.
 do
 	local previousStop = env.__AFO_SpeedForceStop
 	if type(previousStop) == "function" then
