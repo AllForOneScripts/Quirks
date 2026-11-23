@@ -191,40 +191,52 @@ local function preloadSfx()
 end
 
 local FX = {
-	DURATION = 0.38,
+	DURATION = 0.42,
 	TAIL = 0.4,
 	BOLTS = 14,
 	POINTS = 7,
 	FORK_AT = 4,
 	FORK_CHANCE = 0.7,
+	GOLD_CHANCE = 0.3,
+	BLACK_CHANCE = 0.3,
 	OUTER_MIN = 5,
 	OUTER_MAX = 11,
 	LEN_MIN = 2.6,
 	LEN_MAX = 5.5,
 	JITTER = 0.6,
 	STEP = 0.022,
-	PULSE_TIME = 0.14,
+	PULSE_TIME = 0.15,
 	LIGHT_RANGE = 24,
 }
 
 local FX_COL = {
 	BLACK = Color3.fromRGB(10, 5, 18),
-	V_GLOW = Color3.fromRGB(105, 55, 235),
-	V_BODY = Color3.fromRGB(180, 160, 255),
-	V_CORE = Color3.fromRGB(250, 246, 255),
-	G_GLOW = Color3.fromRGB(110, 60, 225),
-	G_BODY = Color3.fromRGB(255, 238, 175),
-	G_CORE = Color3.fromRGB(255, 253, 240),
-	H_GLOW = Color3.fromRGB(170, 140, 255),
-	H_BODY = Color3.fromRGB(235, 228, 255),
+	V_GLOW = Color3.fromRGB(130, 40, 225),
+	V_BODY = Color3.fromRGB(190, 125, 255),
+	V_CORE = Color3.fromRGB(255, 246, 200),
+	G_GLOW = Color3.fromRGB(255, 180, 25),
+	G_BODY = Color3.fromRGB(255, 214, 50),
+	G_CORE = Color3.fromRGB(255, 252, 225),
+	H_GLOW = Color3.fromRGB(255, 205, 50),
+	H_BODY = Color3.fromRGB(255, 244, 170),
 	H_CORE = Color3.fromRGB(255, 255, 255),
+	K_GLOW = Color3.fromRGB(45, 10, 80),
+	K_BODY = Color3.fromRGB(8, 4, 14),
+	K_CORE = Color3.fromRGB(105, 50, 185),
+	KH_GLOW = Color3.fromRGB(85, 22, 160),
+	KH_BODY = Color3.fromRGB(14, 6, 26),
+	KH_CORE = Color3.fromRGB(215, 175, 255),
+	FLASH = Color3.fromRGB(255, 240, 160),
+	SHELL = Color3.fromRGB(140, 40, 230),
 }
 
-local FX_LAYERS = { "glow", "body", "core" }
-local FX_WIDTH = { glow = 0.4, body = 0.15, core = 0.055 }
-local FX_EMISSION = { glow = 1, body = 0.55, core = 1 }
-local FX_OPACITY = { glow = 0.5, body = 0.9, core = 1 }
-local FX_ZOFFSET = { glow = 0, body = 0.01, core = 0.02 }
+local FX_LAYERS = { "dark", "glow", "body", "core" }
+local FX_WIDTH = { dark = 0.62, glow = 0.4, body = 0.15, core = 0.055 }
+local FX_EMISSION = { dark = 0, glow = 1, body = 0.55, core = 1 }
+local FX_EMISSION_BLACK = { dark = 0, glow = 0, body = 0, core = 0.8 }
+local FX_KIND_PREFIX = { violet = "V_", gold = "G_", black = "K_" }
+local FX_OPACITY = { dark = 0.55, glow = 0.55, body = 0.95, core = 1 }
+local FX_ZOFFSET = { dark = 0, glow = 0.01, body = 0.02, core = 0.03 }
 
 local FX_SPARK_TEX = "rbxasset://textures/particles/sparkles_main.dds"
 local FX_SMOKE_TEX = "rbxasset://textures/particles/smoke_main.dds"
@@ -270,7 +282,13 @@ local function cseq(...)
 end
 
 local function layerColor(bolt, layer, hot)
-	local prefix = hot and "H_" or (bolt.gold and "G_" or "V_")
+	if layer == "dark" then return FX_COL.BLACK end
+	local prefix
+	if hot then
+		prefix = bolt.kind == "black" and "KH_" or "H_"
+	else
+		prefix = FX_KIND_PREFIX[bolt.kind]
+	end
 	return FX_COL[prefix .. string.upper(layer)]
 end
 
@@ -328,11 +346,12 @@ local function makeEmitter(parent, o)
 	return e
 end
 
-local function makeBlock(parent, size)
+local function makeBlock(parent, size, color, material, shape)
 	local part = Instance.new("Part")
 	part.Name = FX_NAME
-	part.Material = Enum.Material.SmoothPlastic
-	part.Color = FX_COL.BLACK
+	part.Shape = shape or Enum.PartType.Block
+	part.Material = material or Enum.Material.SmoothPlastic
+	part.Color = color or FX_COL.BLACK
 	part.Anchored = true
 	part.CanCollide = false
 	part.CanQuery = false
@@ -370,46 +389,49 @@ local function playElectricFx(root, mode)
 	core.Name = FX_NAME
 	core.Parent = carrier
 
+	local flashCore = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.FLASH, Enum.Material.Neon, Enum.PartType.Ball), true)
+	local flashShell = track(makeBlock(fxParent, Vector3.one * 2, FX_COL.SHELL, Enum.Material.ForceField, Enum.PartType.Ball), true)
+
 	local sparkAlpha = nseq(0, 0, 0.7, 0.25, 1, 1)
 	local gravity = Vector3.new(0, -70, 0)
 
 	local inViolet = track(makeEmitter(carrier, {
 		surface = true, inward = true, streak = true, light = 0.7,
-		color = cseq(0, Color3.fromRGB(245, 235, 255), 0.5, Color3.fromRGB(150, 105, 255), 1, Color3.fromRGB(45, 20, 110)),
-		size = nseq(0, 0.3, 1, 0.03), transparency = sparkAlpha,
+		color = cseq(0, Color3.fromRGB(200, 140, 255), 0.5, Color3.fromRGB(125, 45, 220), 1, Color3.fromRGB(30, 10, 60)),
+		size = nseq(0, 0.36, 1, 0.03), transparency = sparkAlpha,
 		lifetime = NumberRange.new(0.14, 0.22), speed = NumberRange.new(34, 52),
 	}))
 	local inGold = track(makeEmitter(carrier, {
 		surface = true, inward = true, streak = true, light = 0.9,
-		color = cseq(0, Color3.fromRGB(255, 253, 240), 0.4, Color3.fromRGB(255, 208, 105), 1, Color3.fromRGB(150, 60, 35)),
-		size = nseq(0, 0.28, 1, 0.02), transparency = sparkAlpha,
+		color = cseq(0, Color3.fromRGB(255, 250, 215), 0.4, Color3.fromRGB(255, 224, 70), 1, Color3.fromRGB(150, 60, 200)),
+		size = nseq(0, 0.34, 1, 0.03), transparency = sparkAlpha,
 		lifetime = NumberRange.new(0.12, 0.2), speed = NumberRange.new(38, 58),
 	}))
 	local burstGold = track(makeEmitter(core, {
 		streak = true, light = 1,
-		color = cseq(0, Color3.fromRGB(255, 253, 240), 0.3, Color3.fromRGB(255, 205, 100), 1, Color3.fromRGB(160, 60, 30)),
-		size = nseq(0, 0.32, 1, 0.02), transparency = sparkAlpha,
+		color = cseq(0, Color3.fromRGB(255, 252, 225), 0.35, Color3.fromRGB(255, 218, 60), 1, Color3.fromRGB(140, 50, 210)),
+		size = nseq(0, 0.4, 1, 0.03), transparency = sparkAlpha,
 		lifetime = NumberRange.new(0.2, 0.45), speed = NumberRange.new(40, 95), drag = 2.2,
 		accel = gravity,
 	}))
 	local burstViolet = track(makeEmitter(core, {
 		streak = true, light = 0.8,
-		color = cseq(0, Color3.fromRGB(245, 235, 255), 0.4, Color3.fromRGB(150, 105, 255), 1, Color3.fromRGB(45, 20, 110)),
-		size = nseq(0, 0.36, 1, 0.02), transparency = sparkAlpha,
+		color = cseq(0, Color3.fromRGB(215, 160, 255), 0.5, Color3.fromRGB(120, 40, 215), 1, Color3.fromRGB(25, 8, 50)),
+		size = nseq(0, 0.44, 1, 0.03), transparency = sparkAlpha,
 		lifetime = NumberRange.new(0.18, 0.4), speed = NumberRange.new(30, 80), drag = 2.4,
 		accel = gravity,
 	}))
 	local smoke = track(makeEmitter(core, {
 		texture = FX_SMOKE_TEX, light = 0,
-		color = cseq(0, Color3.fromRGB(46, 42, 56), 1, Color3.fromRGB(14, 12, 18)),
-		size = nseq(0, 0.8, 1, 2.4), transparency = nseq(0, 0.6, 0.5, 0.75, 1, 1),
+		color = cseq(0, Color3.fromRGB(45, 14, 80), 1, Color3.fromRGB(6, 3, 12)),
+		size = nseq(0, 0.8, 1, 2.4), transparency = nseq(0, 0.5, 0.5, 0.7, 1, 1),
 		lifetime = NumberRange.new(0.4, 0.7), speed = NumberRange.new(3, 10), drag = 1.5,
 		accel = Vector3.new(0, 5, 0),
 	}))
 	local flare = track(makeEmitter(core, {
 		texture = FX_SMOKE_TEX, light = 1,
-		color = cseq(0, Color3.fromRGB(255, 255, 255), 0.4, Color3.fromRGB(190, 165, 255), 1, Color3.fromRGB(90, 40, 200)),
-		size = nseq(0, 9, 1, 15), transparency = nseq(0, 0.35, 1, 1),
+		color = cseq(0, Color3.fromRGB(255, 248, 200), 0.4, Color3.fromRGB(200, 120, 255), 1, Color3.fromRGB(110, 40, 200)),
+		size = nseq(0, 9, 1, 15), transparency = nseq(0, 0.4, 1, 1),
 		lifetime = NumberRange.new(0.09, 0.13), speed = NumberRange.new(0, 0),
 	}))
 
@@ -424,7 +446,7 @@ local function playElectricFx(root, mode)
 	local spread = isIn and 0.25 or 0.1
 	local N = FX.POINTS
 	local bolts = {}
-	for _ = 1, FX.BOLTS do
+	for i = 1, FX.BOLTS do
 		local a = math.random() * math.pi * 2
 		local y = math.clamp((math.random() - 0.45) * 1.5, -0.7, 0.8)
 		local h = math.sqrt(1 - y * y)
@@ -435,18 +457,30 @@ local function playElectricFx(root, mode)
 		local bdir = (dir * 0.55 + (p1 * math.cos(phi) + p2 * math.sin(phi)) * 0.85).Unit
 		local bdir2 = (bdir + (p1 * (math.random() - 0.5) + p2 * (math.random() - 0.5)) * 0.9).Unit
 
+		local kind
+		if i == 1 then
+			kind = "violet"
+		elseif i == 2 then
+			kind = "gold"
+		elseif i == 3 then
+			kind = "black"
+		else
+			local roll = math.random()
+			kind = roll < FX.GOLD_CHANCE and "gold" or (roll < FX.GOLD_CHANCE + FX.BLACK_CHANCE and "black" or "violet")
+		end
+
 		local bolt = {
 			dir = dir, p1 = p1, p2 = p2, bdir = bdir, bdir2 = bdir2,
 			outer = FX.OUTER_MIN + math.random() * (FX.OUTER_MAX - FX.OUTER_MIN),
 			len = FX.LEN_MIN + math.random() * (FX.LEN_MAX - FX.LEN_MIN),
 			start = math.random() * spread,
 			window = 1 - spread,
-			scale = 0.8 + math.random() * 0.55,
-			gold = math.random() < 0.3,
+			scale = (0.8 + math.random() * 0.55) * (kind == "black" and 1.25 or 1),
+			kind = kind,
 			fork = math.random() < FX.FORK_CHANCE,
 			flick = 1, visible = false, hot = false,
 			att = {}, jit = {}, bAtt = {}, bJit = {},
-			layers = { glow = {}, body = {}, core = {} },
+			layers = { dark = {}, glow = {}, body = {}, core = {} },
 		}
 
 		local function newAtt()
@@ -467,7 +501,7 @@ local function playElectricFx(root, mode)
 			beam.Attachment0 = a0
 			beam.Attachment1 = a1
 			beam.Color = ColorSequence.new(layerColor(bolt, layer, false))
-			beam.LightEmission = FX_EMISSION[layer]
+			beam.LightEmission = (bolt.kind == "black" and FX_EMISSION_BLACK or FX_EMISSION)[layer]
 			beam.LightInfluence = 0
 			beam.FaceCamera = true
 			beam.Segments = 1
@@ -496,6 +530,7 @@ local function playElectricFx(root, mode)
 	end
 
 	local pulseT0 = nil
+	local pulseDone = false
 	local function impact()
 		pulseT0 = os.clock()
 		flare:Emit(isIn and 2 or 3)
@@ -535,7 +570,12 @@ local function playElectricFx(root, mode)
 			return
 		end
 
-		carrier.CFrame = CFrame.new(root.Position)
+		local cf = CFrame.new(root.Position)
+		carrier.CFrame = cf
+		if not boltsCleared then
+			flashCore.CFrame = cf
+			flashShell.CFrame = cf
+		end
 
 		local tn = elapsed / FX.DURATION
 		while events[nextEvent] and tn >= events[nextEvent].t do
@@ -617,9 +657,19 @@ local function playElectricFx(root, mode)
 		if pulseT0 then
 			local u = (now - pulseT0) / FX.PULSE_TIME
 			if u < 1 then
+				local ease = 1 - (1 - u) ^ 3
+				flashCore.Size = Vector3.one * (3 + 7 * ease)
+				flashCore.Transparency = u < 0.35 and 0.05 or (0.05 + 0.95 * ((u - 0.35) / 0.65) ^ 0.7)
+				flashShell.Size = Vector3.one * (5 + 11 * ease)
+				flashShell.Transparency = 0.2 + 0.8 * u
 				light.Color = u < 0.4 and FX_COL.H_BODY or FX_COL.V_GLOW
 				light.Brightness = 7 * (1 - u) ^ 2
 			else
+				if not pulseDone then
+					pulseDone = true
+					flashCore.Transparency = 1
+					flashShell.Transparency = 1
+				end
 				light.Color = FX_COL.V_GLOW
 				light.Brightness = isIn and 0 or (2.2 * (1 - tn) * math.random())
 			end
@@ -1481,43 +1531,12 @@ function M.Start(firstArgument, secondArgument)
 	return true
 end
 
-function M.Diagnose()
-	local char = localPlayer and localPlayer.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local panels = 0
-	local playerGui = localPlayer and localPlayer:FindFirstChild("PlayerGui")
-	if playerGui then
-		for _, g in ipairs(playerGui:GetChildren()) do
-			if g.Name == "AFO_CustomMovement" then panels += 1 end
-		end
-	end
-	print(("[SpeedForce] activo=%s | habilitado=%s | bucle=%s | paneles=%d")
-		:format(tostring(active), tostring(isEnabled), tostring(heartbeatConn ~= nil), panels))
-	local found = 0
-	if root then
-		local kinds = { LinearVelocity = true, BodyVelocity = true, BodyPosition = true, VectorForce = true,
-			AlignPosition = true, BodyForce = true, BodyThrust = true, LineForce = true }
-		for _, d in ipairs(root:GetDescendants()) do
-			if kinds[d.ClassName] then
-				found += 1
-				local owner = d:GetAttribute(TAG) and "esta copia" or "OTRO / versión vieja"
-				local force = "?"
-				pcall(function() force = tostring(d.MaxAxesForce or d.MaxForce or d.Force) end)
-				print(("[SpeedForce]  %s '%s' | dueño: %s | fuerza: %s"):format(d.ClassName, d.Name, owner, force))
-			end
-		end
-	end
-	print(("[SpeedForce] controladores de movimiento sobre tu personaje: %d"):format(found))
-	return found
-end
-
 do
 	local previousStop = env.__AFO_SpeedForceStop
 	if type(previousStop) == "function" then
 		pcall(previousStop)
 	end
 	env.__AFO_SpeedForceStop = function() M.Stop() end
-	env.AFO_SpeedForceDiagnose = function() return M.Diagnose() end
 end
 
 return M
