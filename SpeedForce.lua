@@ -1593,4 +1593,28 @@ do
 	env.AFO_SpeedForceDiagnose = function() return M.Diagnose() end
 end
 
+-- ============================================================================
+-- AUTO-ARRANQUE
+-- Este archivo es un módulo (devuelve M) y por sí solo no abre nada: alguien tiene que llamar
+-- a M.Start(). Si lo pones como LocalScript nadie lo llama y parece que "no carga".
+--   * Si corre directamente como LocalScript -> se inicia solo.
+--   * Si lo carga un hub / require / loadstring (ModuleScript o ejecutor) -> NO se auto-inicia;
+--     el hub llama a M.Start(keys, player) como siempre.
+--   * Para desactivarlo aunque sea LocalScript: _G.AFO_SpeedForceAutoStart = false
+-- ============================================================================
+do
+	local runningAsLocalScript = false
+	pcall(function()
+		runningAsLocalScript = typeof(script) == "Instance" and script:IsA("LocalScript")
+	end)
+	if runningAsLocalScript and env.AFO_SpeedForceAutoStart ~= false then
+		task.spawn(function()
+			local ok, result = pcall(M.Start)
+			if not ok then
+				warn("[SpeedForce] No se pudo iniciar: " .. tostring(result))
+			end
+		end)
+	end
+end
+
 return M
