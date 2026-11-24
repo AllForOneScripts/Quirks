@@ -4,7 +4,10 @@
 	Space (mantener)  -> la gravedad pierde: salto enorme + planeo antigravitacional
 	Ctrl              -> slam (ZAAASH) a la cabeza de un objetivo, o caída épica al suelo según la altura
 	Space en vuelo    -> impulso desde los pies (chorro de aire hacia abajo) + re-salto
-	Shift / Q en vuelo -> boost de velocidad / dash aéreo
+	Shift en vuelo    -> boost de velocidad
+	Q en vuelo        -> MEGA IMPULSO (reinterpreta el Mega Turbo de Fly): brazos atrás + empuje adelante,
+	                     agarre mini si hay objetivo cerca, se cancela si te quedas quieto
+	Space en vuelo (mantener) -> mega salto aéreo
 
 	La suspensión aérea (tecla C) vive ahora en Suspension.lua (menú con F8).
 	Los dos módulos se hablan por ENV.AFO_GRAVATTACK_API / ENV.AFO_SUSPENSION_API.
@@ -15,8 +18,9 @@
 	  3) Ctrl = caída épica copiada de Fly.lua: mide la altura al suelo y, desde 45 studs, cae de golpe con
 	     ondas, polvo, cráter, sonido, sacudida de cámara y animación; escala con la altura.
 	  4) Movilidad en vuelo: mirar arriba/abajo con W sube/pica, Shift = boost, Q = dash aéreo.
-	  5) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
-	  6) La suspensión aérea vive en Suspension.lua.
+	  5) Gravedad aún más baja en vuelo; saltos aéreos más fuertes y mega salto aéreo (mantener Space).
+	  6) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
+	  7) La suspensión aérea vive en Suspension.lua.
 ]]
 
 local M = {}
@@ -39,18 +43,24 @@ local ENV = (typeof(getgenv) == "function" and getgenv()) or _G
 local IMPULSO_EXPLOSIVO_Y = 60
 local IMPULSO_EXPLOSIVO_XZ = 120
 
+-- Saltos en el aire (Space estando en vuelo)
+local IMPULSO_SALTO_AEREO_Y = 135       -- impulso hacia arriba de cada salto aéreo (antes 90)
+local IMPULSO_MEGA_AEREO_Y = 230        -- mega salto aéreo (antes 140)
+local TIEMPO_MEGA_AEREO = 0.4           -- s que hay que mantener Space para que sea mega salto
+local MEGA_AEREO_REPETIBLE = true       -- true: seguir manteniendo Space encadena OTRO mega salto cada TIEMPO_MEGA_AEREO
+
 -- Planeo (estilo planeador de Genshin)
 local VELOCIDAD_VUELO = 85          -- velocidad horizontal cuando hay input
-local VELOCIDAD_CAIDA_PLANEO = -15  -- descenso constante al planear (soltando Space)
-local VELOCIDAD_SUSTENTACION = -2   -- descenso casi nulo mientras mantienes Space
+local VELOCIDAD_CAIDA_PLANEO = -3   -- descenso constante al planear (soltando Space) (antes -7)
+local VELOCIDAD_SUSTENTACION = -0.15 -- descenso casi nulo mientras mantienes Space
 local DESCENSO_AL_AVANZAR = 1       -- multiplicador del descenso cuando avanzas (0 = vuelo nivelado)
 
 -- Aceleraciones máximas en studs/s². La fuerza real es masa * aceleración.
 local ACEL_HORIZONTAL = 240                 -- al empezar a avanzar
 local ACEL_FRENADO = 280                    -- al soltar el input: quieto de inmediato
 local ACEL_VERTICAL_EMPUJAR = 60            -- cuando hay que subir la velocidad vertical
-local ACEL_VERTICAL_FRENAR_SOSTENIENDO = 25 -- frena la subida con Space mantenido (salto grande)
-local ACEL_VERTICAL_FRENAR_SUELTO = 45      -- frena la subida al soltar Space
+local ACEL_VERTICAL_FRENAR_SOSTENIENDO = 5  -- frena la subida con Space mantenido (menos = menos gravedad)
+local ACEL_VERTICAL_FRENAR_SUELTO = 12      -- frena la subida al soltar Space
 
 -- Slam
 local DISTANCIA_OBJETIVO_SLAM = 30
@@ -69,10 +79,17 @@ local MARGEN_SEGURO_SUELO_SLAM = 0.75
 -- Efectos visuales (estilo All For One: energía negro-violeta, aire comprimido, chispas oscuras).
 -- UNA SOLA paleta para TODO (carga, despegue, salto en el aire, caída e impacto): las tres
 -- tonalidades salen del mismo violeta base. Si quieres otro color, cambia solo COLOR_AFO.
-local COLOR_AFO = Color3.fromRGB(125, 40, 190)
-local COLOR_AFO_CLARO = COLOR_AFO:Lerp(Color3.new(1, 1, 1), 0.55)   -- núcleo de anillos y chispas
-local COLOR_AFO_OSCURO = COLOR_AFO:Lerp(Color3.new(0, 0, 0), 0.7)   -- humo y rayas de aire
-local ALFA_MAX = 0.4                -- opacidad máxima de todo el efecto (menor = más transparente)
+-- ACTUALIZADO: ahora usa la paleta blanco/azul-hielo de Fly (aura de aire, anillos y rayas blancas),
+-- en versión mini y suave. Los nombres de las constantes se mantienen para no tocar el resto del código.
+local COLOR_AFO = Color3.fromRGB(210, 240, 255)                     -- tono de aire (igual que airShockAura de Fly)
+local COLOR_AFO_CLARO = Color3.fromRGB(255, 255, 255)               -- núcleo de anillos y rayas
+local COLOR_AFO_OSCURO = COLOR_AFO:Lerp(Color3.new(0.4, 0.5, 0.6), 0.5) -- humo suave
+local ALFA_MAX = 0.3                -- opacidad máxima de todo el efecto (menor = más transparente)
+
+-- Texturas de Fly.lua (mismos assets)
+local FLY_RING = "rbxassetid://12914395250"            -- anillo de onda sónica
+local FLY_AIRSHOCK = "rbxassetid://112096280571499"    -- aura de aire
+local FLY_STREAK = "rbxassetid://106822944701902"      -- raya de partículas del turbo
 
 local INICIO_VISUAL_FRACCION = 0.45 -- el efecto de carga empieza tras esta fracción del retardo...
 local INICIO_VISUAL_MIN = 0.1       -- ...y nunca antes de estos segundos (un salto normal no lo dispara)
@@ -117,11 +134,36 @@ local REDUCCION_H_ASCENSO = 0.3          -- cuánto se frena el avance horizonta
 local ACEL_ASCENSO = 110
 local ACEL_PICADA = 140
 local VELOCIDAD_BOOST = 1.7              -- multiplicador de velocidad mientras mantienes Shift
-local TECLA_DASH = Enum.KeyCode.Q        -- dash aéreo (cambia la tecla aquí)
-local VELOCIDAD_DASH = 150
-local DURACION_DASH = 0.2
+local TECLA_DASH = Enum.KeyCode.Q        -- MEGA IMPULSO (reinterpretación del Mega Turbo de Fly; cambia la tecla aquí)
+local VELOCIDAD_DASH = 260               -- velocidad del mega impulso (antes 150)
+local DURACION_DASH = 0.34               -- duración máxima del mega impulso
 local ENFRIAMIENTO_DASH = 0.9
-local ACEL_DASH = 700
+local ACEL_DASH = 1400
+
+-- Mega impulso: brazos hacia atrás (inyección de animación estilo Fly: pista Action4 con frame congelado)
+local ANIM_BRAZOS_ATRAS = "rbxassetid://282574440"   -- mega_pose de Fly
+local ANIM_BRAZOS_VOLADO = "rbxassetid://313762630"  -- mega_volado de Fly
+local FRAME_BRAZOS_ATRAS = 0.1                       -- FRAME_POSE_CONGELADO de Fly
+local FRAME_BRAZOS_VOLADO = 0.35                     -- FRAME_VOLADO_CONGELADO de Fly
+local DURACION_BRAZOS_ATRAS = 0.34                   -- cuánto se mantiene la pose (s)
+local FADE_BRAZOS = 0.18                             -- salida suave de la pose
+
+-- Mega impulso: agarre al objetivo (mini versión del GrabSystem de Fly, con la misma lógica de "espalda + resorte")
+local AGARRE_ACTIVO = true
+local AGARRE_ALCANCE_BUSQUEDA = 140     -- distancia máx. a la que se considera "tengo objetivo" en el impulso
+local AGARRE_DISTANCIA_ENGANCHE = 14    -- si el impulso te deja a esta distancia, se activa el agarre
+local AGARRE_DURACION = 0.7             -- s que dura el agarre tras enganchar
+local AGARRE_RADIO = 3.4                -- distancia a la espalda del objetivo (LATCH_RADIUS de Fly)
+local AGARRE_RIGIDEZ = 60               -- fuerza del resorte hacia la espalda
+local AGARRE_MARGEN_VACIO = 80          -- como Fly: sobre FallenPartsDestroyHeight se considera vacío
+
+-- Mega impulso: si te quedas quieto se cancela (con su set de partículas de frenado)
+local CANCELAR_SI_QUIETO = true
+local GRACIA_QUIETO = 0.12              -- s de gracia desde que empieza antes de poder cancelar
+
+-- TPs forzados solo en Y (el juego detecta mal tras movimientos bruscos): X/Z no se tocan
+local TP_Y_REPETICIONES = 4             -- cuántas veces se re-fija la Y
+local TP_Y_ALTURAS = { 0.6, 0, 0.3, 0 } -- desfase sobre el suelo en cada TP (alterna para que el cliente "asiente" la caída)
 
 -- ==========================================
 -- ESTADO
@@ -142,9 +184,62 @@ local tSuelo = 0
 
 local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar
+local animBrazos, animBrazosVolado -- pose "brazos hacia atrás" del mega impulso (inyección estilo Fly)
 
 local fuerzaAttach, fuerzaVel, antiGravedad = nil, nil, nil
 local dash = { fin = 0, listo = 0, dir = Vector3.zero }
+
+-- Estado del mega impulso (reinterpretación del Mega Turbo de Fly)
+local mega = {
+	activo = false,
+	t0 = 0,
+	dir = Vector3.zero,
+	jugador = nil,     -- objetivo (Player) si lo hay
+	agarre = nil,      -- { t0, jugador, ultPos, vel } mientras el agarre está corriendo
+}
+
+-- Ajustes expuestos para el menú (ENV.AFO_GRAVATTACK_API.GetSettings / SetSetting)
+local AJUSTES = {
+	{ id = "IMPULSO_SALTO_AEREO_Y", nombre = "Impulso salto aéreo", tipo = "number", min = 20, max = 800,
+		get = function() return IMPULSO_SALTO_AEREO_Y end, set = function(v) IMPULSO_SALTO_AEREO_Y = v end },
+	{ id = "IMPULSO_MEGA_AEREO_Y", nombre = "Impulso mega salto aéreo", tipo = "number", min = 20, max = 1500,
+		get = function() return IMPULSO_MEGA_AEREO_Y end, set = function(v) IMPULSO_MEGA_AEREO_Y = v end },
+	{ id = "TIEMPO_MEGA_AEREO", nombre = "Mantener Space para mega salto (s)", tipo = "number", min = 0.1, max = 2,
+		get = function() return TIEMPO_MEGA_AEREO end, set = function(v) TIEMPO_MEGA_AEREO = v end },
+	{ id = "MEGA_AEREO_REPETIBLE", nombre = "Encadenar mega saltos al mantener", tipo = "bool",
+		get = function() return MEGA_AEREO_REPETIBLE end, set = function(v) MEGA_AEREO_REPETIBLE = v end },
+	{ id = "VELOCIDAD_CAIDA_PLANEO", nombre = "Descenso al planear (negativo = baja)", tipo = "number", min = -60, max = 0,
+		get = function() return VELOCIDAD_CAIDA_PLANEO end, set = function(v) VELOCIDAD_CAIDA_PLANEO = v end },
+	{ id = "VELOCIDAD_SUSTENTACION", nombre = "Descenso con Space mantenido", tipo = "number", min = -20, max = 5,
+		get = function() return VELOCIDAD_SUSTENTACION end, set = function(v) VELOCIDAD_SUSTENTACION = v end },
+	{ id = "ACEL_VERTICAL_FRENAR_SOSTENIENDO", nombre = "Freno de subida (Space mantenido)", tipo = "number", min = 0.5, max = 100,
+		get = function() return ACEL_VERTICAL_FRENAR_SOSTENIENDO end, set = function(v) ACEL_VERTICAL_FRENAR_SOSTENIENDO = v end },
+	{ id = "ACEL_VERTICAL_FRENAR_SUELTO", nombre = "Freno de subida (Space suelto)", tipo = "number", min = 0.5, max = 100,
+		get = function() return ACEL_VERTICAL_FRENAR_SUELTO end, set = function(v) ACEL_VERTICAL_FRENAR_SUELTO = v end },
+	{ id = "VELOCIDAD_DASH", nombre = "Velocidad mega impulso", tipo = "number", min = 50, max = 1200,
+		get = function() return VELOCIDAD_DASH end, set = function(v) VELOCIDAD_DASH = v end },
+	{ id = "DURACION_DASH", nombre = "Duración mega impulso (s)", tipo = "number", min = 0.1, max = 1.5,
+		get = function() return DURACION_DASH end, set = function(v) DURACION_DASH = v end },
+	{ id = "ENFRIAMIENTO_DASH", nombre = "Enfriamiento mega impulso (s)", tipo = "number", min = 0, max = 5,
+		get = function() return ENFRIAMIENTO_DASH end, set = function(v) ENFRIAMIENTO_DASH = v end },
+	{ id = "DURACION_BRAZOS_ATRAS", nombre = "Pose brazos atrás (s)", tipo = "number", min = 0.05, max = 1,
+		get = function() return DURACION_BRAZOS_ATRAS end, set = function(v) DURACION_BRAZOS_ATRAS = v end },
+	{ id = "FRAME_BRAZOS_ATRAS", nombre = "Frame de la pose de brazos", tipo = "number", min = 0, max = 2,
+		get = function() return FRAME_BRAZOS_ATRAS end, set = function(v) FRAME_BRAZOS_ATRAS = v end },
+	{ id = "AGARRE_ACTIVO", nombre = "Agarre al objetivo en el impulso", tipo = "bool",
+		get = function() return AGARRE_ACTIVO end, set = function(v) AGARRE_ACTIVO = v end },
+	{ id = "AGARRE_DISTANCIA_ENGANCHE", nombre = "Distancia para enganchar (studs)", tipo = "number", min = 4, max = 60,
+		get = function() return AGARRE_DISTANCIA_ENGANCHE end, set = function(v) AGARRE_DISTANCIA_ENGANCHE = v end },
+	{ id = "AGARRE_DURACION", nombre = "Duración del agarre (s)", tipo = "number", min = 0.1, max = 5,
+		get = function() return AGARRE_DURACION end, set = function(v) AGARRE_DURACION = v end },
+	{ id = "CANCELAR_SI_QUIETO", nombre = "Cancelar impulso si me quedo quieto", tipo = "bool",
+		get = function() return CANCELAR_SI_QUIETO end, set = function(v) CANCELAR_SI_QUIETO = v end },
+	{ id = "GRACIA_QUIETO", nombre = "Gracia antes de cancelar (s)", tipo = "number", min = 0, max = 1,
+		get = function() return GRACIA_QUIETO end, set = function(v) GRACIA_QUIETO = v end },
+	{ id = "ALFA_MAX", nombre = "Opacidad de efectos", tipo = "number", min = 0.05, max = 1,
+		get = function() return ALFA_MAX end, set = function(v) ALFA_MAX = v end },
+}
+local holdAereo = { activo = false, t = 0, hecho = false } -- Space mantenido tras un salto aéreo
 
 -- ==========================================
 -- ANIMACIONES
@@ -169,6 +264,8 @@ local function DetenerAnimacionesCustom(fadeTime)
 	if animReSalto and animReSalto.IsPlaying then animReSalto:Stop(fadeTime) end
 	if animImpacto and animImpacto.IsPlaying then animImpacto:Stop(fadeTime) end
 	if animDespertar and animDespertar.IsPlaying then animDespertar:Stop(fadeTime) end
+	if animBrazos and animBrazos.IsPlaying then animBrazos:Stop(fadeTime) end
+	if animBrazosVolado and animBrazosVolado.IsPlaying then animBrazosVolado:Stop(fadeTime) end
 end
 
 -- ==========================================
@@ -261,6 +358,13 @@ local function ActualizarFuerzas()
 	local moveDir = humanoid.MoveDirection
 	local conInput = moveDir.Magnitude > 0.05
 	local velActual = rootPart.AssemblyLinearVelocity
+
+	-- Agarre del mega impulso: el personaje sigue la velocidad del objetivo (la posición la fija MegaPaso).
+	if mega.agarre then
+		fuerzaVel.VectorVelocity = mega.agarre.vel or Vector3.zero
+		fuerzaVel.MaxAxesForce = Vector3.new(masa * ACEL_DASH, masa * ACEL_DASH, masa * ACEL_DASH)
+		return
+	end
 
 	-- Dash aéreo: durante unos instantes manda sobre todo lo demás.
 	if tick() < dash.fin then
@@ -428,33 +532,26 @@ do
 			end)
 			gui.Parent = a.parte
 
-			local function NuevoMarco(grosor, color, zindex)
-				local f = Instance.new("Frame")
-				f.AnchorPoint = Vector2.new(0.5, 0.5)
-				f.Position = UDim2.fromScale(0.5, 0.5)
-				f.Size = UDim2.fromScale(0.84, 0.84)
-				f.BackgroundTransparency = 1
-				f.BorderSizePixel = 0
-				f.ZIndex = zindex
-				f.Parent = gui
+			-- Igual que sonicBoomEffect de Fly: dos ImageLabel con el anillo RING_ID (uno exterior y uno interior)
+			local function NuevaImagen(escala, textura, color, zindex)
+				local img = Instance.new("ImageLabel")
+				img.AnchorPoint = Vector2.new(0.5, 0.5)
+				img.Position = UDim2.fromScale(0.5, 0.5)
+				img.Size = UDim2.fromScale(escala, escala)
+				img.BackgroundTransparency = 1
+				img.Image = textura
+				img.ImageColor3 = color
+				img.ImageTransparency = 1
+				img.ScaleType = Enum.ScaleType.Fit
+				img.ZIndex = zindex
+				img.Parent = gui
 
-				local c = Instance.new("UICorner")
-				c.CornerRadius = UDim.new(0.5, 0)
-				c.Parent = f
-
-				local s = Instance.new("UIStroke")
-				s.Thickness = grosor
-				s.Color = color
-				s.Transparency = 1
-				s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-				s.Parent = f
-
-				return s
+				return img
 			end
 
 			a.guis[i] = gui
-			a.halos[i] = NuevoMarco(14, COLOR_AFO, 1)
-			a.nucleos[i] = NuevoMarco(4, COLOR_AFO_CLARO, 2)
+			a.halos[i] = NuevaImagen(1, FLY_RING, COLOR_AFO, 1)
+			a.nucleos[i] = NuevaImagen(0.72, FLY_RING, COLOR_AFO_CLARO, 2)
 		end
 
 		return a
@@ -485,8 +582,8 @@ do
 		a.parte.CFrame = cf
 
 		for i = 1, #a.guis do
-			a.nucleos[i].Transparency = 1 - alfa
-			a.halos[i].Transparency = 1 - alfa * 0.5
+			a.nucleos[i].ImageTransparency = 1 - alfa
+			a.halos[i].ImageTransparency = 1 - alfa * 0.6
 		end
 	end
 
@@ -499,16 +596,16 @@ do
 	-- Humo oscuro (sin brillo propio: se ve negro-violeta, como la energía de All For One).
 	local function CrearHumo(padre, direccion, velMin, velMax, apertura)
 		local e = Instance.new("ParticleEmitter")
-		e.Texture = "rbxasset://textures/particles/smoke_main.dds"
-		e.Color = ColorSequence.new(COLOR_AFO_OSCURO, COLOR_AFO)
-		e.LightEmission = 0
+		e.Texture = FLY_AIRSHOCK
+		e.Color = ColorSequence.new(COLOR_AFO, COLOR_AFO_OSCURO)
+		e.LightEmission = 0.25
 		e.LightInfluence = 0
 		e.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.8),
-			NumberSequenceKeypoint.new(1, 3.2),
+			NumberSequenceKeypoint.new(0, 0.6),
+			NumberSequenceKeypoint.new(1, 2.6),
 		})
 		e.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.7),
+			NumberSequenceKeypoint.new(0, 0.78),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		e.Lifetime = NumberRange.new(0.3, 0.55)
@@ -526,17 +623,17 @@ do
 	-- Chispas finas de energía (como el chisporroteo de sus poderes), alargadas según su velocidad.
 	local function CrearChispas(padre, direccion, velMin, velMax, apertura)
 		local e = Instance.new("ParticleEmitter")
-		e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		e.Texture = FLY_STREAK
 		e.Color = ColorSequence.new(COLOR_AFO_CLARO, COLOR_AFO)
-		e.LightEmission = 0.7
+		e.LightEmission = 0.5
 		e.LightInfluence = 0
 		e.Orientation = Enum.ParticleOrientation.VelocityParallel
 		e.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.45),
+			NumberSequenceKeypoint.new(0, 0.9),
 			NumberSequenceKeypoint.new(1, 0),
 		})
 		e.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.5),
+			NumberSequenceKeypoint.new(0, 0.6),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		e.Lifetime = NumberRange.new(0.18, 0.34)
@@ -896,6 +993,111 @@ do
 		end
 	end
 
+	-- ---------- mega impulso: anillos de onda sónica MINI (como sonicBoomEffect de Fly) + frenado ----------
+	local extra = { pool = {} }
+	local megaFx = { activo = false, t = 0, pos = Vector3.zero, dir = Vector3.zAxis, defs = {} }
+
+	-- El anillo queda perpendicular a la dirección del impulso (su cara Top mira hacia dir).
+	local function CFrameAnillo(pos, dir)
+		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
+		return CFrame.lookAt(pos, pos + dir, arriba) * CFrame.Angles(math.rad(-90), 0, 0)
+	end
+
+	local function PoolAnillos()
+		if #extra.pool == 0 or not extra.pool[1].parte.Parent then
+			extra.pool = {}
+
+			for i = 1, 3 do
+				extra.pool[i] = CrearAnillo()
+			end
+		end
+
+		return extra.pool
+	end
+
+	local function IniciarAnillos(defs, pos, dir)
+		local pool = PoolAnillos()
+
+		megaFx.activo = true
+		megaFx.t = 0
+		megaFx.pos = pos
+		megaFx.dir = dir
+		megaFx.defs = {}
+
+		for i, d in ipairs(defs) do
+			d.a = pool[i]
+			megaFx.defs[i] = d
+		end
+
+		for i = #defs + 1, #pool do
+			PonerAnillo(pool[i], CFrame.identity, 1, 0)
+		end
+	end
+
+	local function RenderMega(dt)
+		if not megaFx.activo then return end
+
+		megaFx.t += dt
+
+		local vivo = false
+
+		for _, d in ipairs(megaFx.defs) do
+			local edad = megaFx.t - d.delay
+
+			if edad < 0 then
+				vivo = true
+			elseif edad >= d.dur then
+				PonerAnillo(d.a, CFrame.identity, 1, 0)
+			else
+				vivo = true
+
+				local k = edad / d.dur
+				local e = 1 - (1 - k) ^ 4
+				local radio = d.r0 + (d.r1 - d.r0) * e
+				local alfa = (d.entra and math.sin(k * math.pi) or (1 - k) ^ 1.2) * ALFA_MAX * d.fuerza
+
+				PonerAnillo(d.a, CFrameAnillo(megaFx.pos, megaFx.dir), radio, alfa)
+			end
+		end
+
+		if not vivo then
+			megaFx.activo = false
+		end
+	end
+
+	-- Aura de aire (BillboardGui con AIR_SHOCK de Fly) que se agranda y se desvanece, en pequeño.
+	local function AuraAire(px0, px1, dur, alfa)
+		if not rootPart or not rootPart.Parent then return end
+
+		local bb = Instance.new("BillboardGui")
+		bb.Adornee = rootPart
+		bb.AlwaysOnTop = false
+		bb.LightInfluence = 0
+		bb.Size = UDim2.fromOffset(px0, px0)
+		bb.ResetOnSpawn = false
+		bb.Parent = carpeta
+
+		local img = Instance.new("ImageLabel")
+		img.Image = FLY_AIRSHOCK
+		img.Size = UDim2.fromScale(1, 1)
+		img.BackgroundTransparency = 1
+		img.ImageColor3 = COLOR_AFO
+		img.ImageTransparency = 1 - alfa
+		img.ScaleType = Enum.ScaleType.Fit
+		img.Parent = bb
+
+		TweenService:Create(bb, TweenInfo.new(dur, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+			{ Size = UDim2.fromOffset(px1, px1) }):Play()
+		TweenService:Create(img, TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+			{ ImageTransparency = 1 }):Play()
+
+		task.delay(dur + 0.05, function()
+			pcall(function()
+				bb:Destroy()
+			end)
+		end)
+	end
+
 	-- ---------- API ----------
 	function FX.Iniciar()
 		Preparar()
@@ -904,6 +1106,7 @@ do
 	function FX.Render(dt)
 		if not carpeta then return end
 
+		RenderMega(dt)
 		RenderCarga(dt)
 		RenderOnda(dt)
 		RenderCono(dt)
@@ -945,15 +1148,43 @@ do
 	end
 
 	-- Dash aéreo: humo y chispas hacia atrás respecto a la dirección del dash.
+	-- Mega impulso (reinterpretación del Mega Turbo): 3 anillos sónicos mini + aura de aire + rayas hacia atrás.
 	function FX.Dash(dir)
 		if not Preparar() or not rootPart or not dir then return end
 
 		local pos = rootPart.Position
 		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
 
+		IniciarAnillos({
+			{ delay = 0,    dur = 0.22, r0 = 1.0, r1 = 9.0, fuerza = 1.0 },
+			{ delay = 0.02, dur = 0.16, r0 = 0.8, r1 = 6.5, fuerza = 0.8 },
+			{ delay = 0.04, dur = 0.11, r0 = 0.6, r1 = 4.0, fuerza = 0.6 },
+		}, pos, dir)
+
+		AuraAire(30, 95, 0.24, 0.45)
+
 		parteDash.CFrame = CFrame.lookAt(pos, pos - dir, arriba)
-		emisorHumoDash:Emit(7)
-		emisorChispasDash:Emit(10)
+		emisorHumoDash:Emit(6)
+		emisorChispasDash:Emit(12)
+	end
+
+	-- Cancelación por quedarte quieto: anillos que se CIERRAN hacia ti + rayas que salen hacia adelante (inercia).
+	function FX.Frenar(dir)
+		if not Preparar() or not rootPart or not dir then return end
+
+		local pos = rootPart.Position
+		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
+
+		IniciarAnillos({
+			{ delay = 0,    dur = 0.24, r0 = 7.0, r1 = 1.2, fuerza = 0.9, entra = true },
+			{ delay = 0.05, dur = 0.20, r0 = 4.5, r1 = 0.8, fuerza = 0.7, entra = true },
+		}, pos, dir)
+
+		AuraAire(70, 24, 0.22, 0.3)
+
+		parteDash.CFrame = CFrame.lookAt(pos, pos + dir, arriba)
+		emisorHumoDash:Emit(5)
+		emisorChispasDash:Emit(9)
 	end
 
 	function FX.Destruir()
@@ -963,6 +1194,8 @@ do
 
 		carpeta = nil
 		anillosCono, anillosCarga, rayas = {}, {}, {}
+		extra.pool = {}
+		megaFx.activo = false
 		carga.objetivo, carga.alfa = 0, 0
 		onda.activa = false
 		impacto.activo = false
@@ -1917,6 +2150,40 @@ local function AterrizajeEpico(char, altura, conAnimacion)
 	end
 end
 
+-- TPs forzados SOLO en Y: el juego a veces detecta mal tras movimientos bruscos, así que se re-fija la Y
+-- varias veces (alternando un pequeño desfase) sin tocar X/Z. El último TP siempre queda a ras de suelo.
+-- El primero es inmediato; los demás ocurren en los siguientes Heartbeat.
+local function ForzarTPsY(yFinal)
+	local n = math.max(TP_Y_REPETICIONES, 1)
+	local char = character
+
+	local function Aplicar(i)
+		if not (rootPart and rootPart.Parent and character == char) then return false end
+
+		local p = rootPart.Position
+		local desfase = (i < n) and (TP_Y_ALTURAS[(i - 1) % #TP_Y_ALTURAS + 1] or 0) or 0
+
+		-- X y Z se leen de la posición ACTUAL: no se modifican.
+		rootPart.CFrame = CFrame.new(p.X, yFinal + desfase, p.Z) * rootPart.CFrame.Rotation
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.AssemblyAngularVelocity = Vector3.zero
+
+		return true
+	end
+
+	Aplicar(1)
+
+	if n > 1 then
+		task.spawn(function()
+			for i = 2, n do
+				RunService.Heartbeat:Wait()
+
+				if not Aplicar(i) then return end
+			end
+		end)
+	end
+end
+
 -- Ctrl: cae de golpe al suelo y dispara el aterrizaje según la altura medida.
 local function CaidaEpica(altura)
 	local suelo = BuscarSueloSeguro(rootPart, character)
@@ -1924,15 +2191,8 @@ local function CaidaEpica(altura)
 	if not suelo then return false end
 
 	local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
-	local _, ry, _ = rootPart.CFrame:ToOrientation()
 
-	if ry ~= ry then
-		ry = 0
-	end
-
-	rootPart.CFrame = CFrame.new(suelo.X, suelo.Y + alturaPiernas, suelo.Z) * CFrame.Angles(0, ry, 0)
-	rootPart.AssemblyLinearVelocity = Vector3.zero
-	rootPart.AssemblyAngularVelocity = Vector3.zero
+	ForzarTPsY(suelo.Y + alturaPiernas)
 
 	humanoid.PlatformStand = false
 	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
@@ -2000,6 +2260,283 @@ end
 -- ==========================================
 -- DASH AÉREO
 -- ==========================================
+-- Reinterpretación del Mega Turbo de Fly (Q):
+--   Fly: Q en turbo -> pre-mega (agachado) -> onda sónica + aura + flash + dash hacia adelante a x1.5;
+--        el modo se cancela solo (idleWatcher) cuando sueltas todas las teclas; el GrabSystem se activa
+--        cuando la trayectoria te lleva hacia un enemigo.
+--   Aquí: Q en vuelo -> pose de brazos atrás (frame congelado, Action4) + onda sónica mini + impulso fuerte;
+--        si hay objetivo y el impulso te deja cerca, se engancha a su espalda un instante (agarre);
+--        si te quedas quieto el impulso se cancela con su set de partículas de frenado.
+local function ObtenerObjetivoMega(dir)
+	if not rootPart then return nil, nil end
+
+	local function Valido(jug)
+		if not jug or jug == player then return nil end
+
+		local ch = jug.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		local r = ch and ch:FindFirstChild("HumanoidRootPart")
+
+		if hum and r and hum.Health > 0 then
+			return r
+		end
+
+		return nil
+	end
+
+	-- 1) Objetivo del Lock de Fly (lo publica en el Character)
+	if character then
+		local act = character:FindFirstChild("AFO_LockActive")
+		local tgt = character:FindFirstChild("AFO_LockedTarget")
+
+		if act and tgt and act.Value == true and typeof(tgt.Value) == "Instance" then
+			local r = Valido(tgt.Value)
+
+			if r then return tgt.Value, r end
+		end
+	end
+
+	-- 2) Si no hay Lock: el jugador más cercano que esté delante de la dirección del impulso
+	local mejor, mejorRoot, mejorScore = nil, nil, math.huge
+
+	for _, jug in ipairs(Players:GetPlayers()) do
+		local r = Valido(jug)
+
+		if r then
+			local hacia = r.Position - rootPart.Position
+			local d = hacia.Magnitude
+
+			if d > 1 and d <= AGARRE_ALCANCE_BUSQUEDA and hacia.Unit:Dot(dir) > 0.8 then
+				local score = d * (2 - hacia.Unit:Dot(dir))
+
+				if score < mejorScore then
+					mejor, mejorRoot, mejorScore = jug, r, score
+				end
+			end
+		end
+	end
+
+	return mejor, mejorRoot
+end
+
+-- Pose de brazos hacia atrás: mismo método que Fly (pista Action4, velocidad 0 y TimePosition fijo).
+local function PonerPoseBrazos(activa)
+	local pistas = {
+		{ animBrazos, FRAME_BRAZOS_ATRAS },
+		{ animBrazosVolado, FRAME_BRAZOS_VOLADO },
+	}
+
+	for _, par in ipairs(pistas) do
+		local pista, frame = par[1], par[2]
+
+		if pista then
+			if activa then
+				if not pista.IsPlaying then
+					pcall(function()
+						pista:Play(0.05)
+					end)
+				end
+
+				pcall(function()
+					pista:AdjustSpeed(0)
+					pista.TimePosition = frame
+				end)
+			elseif pista.IsPlaying then
+				pcall(function()
+					pista:Stop(FADE_BRAZOS)
+				end)
+			end
+		end
+	end
+end
+
+local function SoltarAgarre()
+	local ag = mega.agarre
+
+	if not ag then return end
+
+	mega.agarre = nil
+
+	if rootPart and rootPart.Parent then
+		pcall(function()
+			rootPart.AssemblyLinearVelocity = ag.vel or Vector3.zero
+		end)
+	end
+end
+
+local function TerminarMega(motivo)
+	if not mega.activo and not mega.agarre then return end
+
+	local dir = mega.dir
+
+	mega.activo = false
+	mega.jugador = nil
+	dash.fin = 0
+
+	PonerPoseBrazos(false)
+	SoltarAgarre()
+
+	if motivo == "quieto" and rootPart and rootPart.Parent then
+		-- Frenado: se mata el impulso (queda la inercia mínima) y se dispara el set de partículas.
+		local v = rootPart.AssemblyLinearVelocity
+
+		rootPart.AssemblyLinearVelocity = Vector3.new(v.X * 0.1, v.Y * 0.3, v.Z * 0.1)
+
+		FX.Frenar(dir)
+	end
+end
+
+local function PosicionEnVacio(pos, vel)
+	local limite = workspace.FallenPartsDestroyHeight
+
+	if type(limite) ~= "number" or limite ~= limite or limite < -1e6 then
+		limite = -500
+	end
+
+	limite += AGARRE_MARGEN_VACIO
+
+	if pos.Y <= limite then return true end
+
+	return vel ~= nil and vel.Y < -80 and (pos.Y + vel.Y * 1.0) <= limite
+end
+
+-- Se llama cada cuadro desde el bucle principal.
+local function MegaPaso(dt)
+	if not (rootPart and humanoid) or humanoid.Health <= 0 then
+		if mega.activo or mega.agarre then TerminarMega() end
+		return
+	end
+
+	local ahora = tick()
+
+	-- Pose de brazos: se re-fija el frame cada cuadro mientras dura.
+	if mega.activo and ahora - mega.t0 < DURACION_BRAZOS_ATRAS then
+		PonerPoseBrazos(true)
+	elseif animBrazos and animBrazos.IsPlaying then
+		PonerPoseBrazos(false)
+	end
+
+	-- ---------- agarre en curso (versión mini del GrabSystem de Fly: espalda del objetivo + resorte) ----------
+	local ag = mega.agarre
+
+	if ag then
+		local ch = ag.jugador and ag.jugador.Character
+		local thum = ch and ch:FindFirstChildOfClass("Humanoid")
+		local troot = ch and ch:FindFirstChild("HumanoidRootPart")
+
+		if not (thum and troot and thum.Health > 0) or ahora - ag.t0 >= AGARRE_DURACION then
+			TerminarMega()
+			return
+		end
+
+		local tpos = troot.Position
+		local delta = ag.ultPos and (tpos - ag.ultPos) or Vector3.zero
+
+		ag.vel = (dt > 0) and (delta / math.max(dt, 1e-3)) or Vector3.zero
+
+		if ag.vel.Magnitude > 3000 or ag.vel ~= ag.vel then
+			ag.vel = Vector3.zero
+		end
+
+		ag.ultPos = tpos
+
+		-- Como Fly: si el objetivo cae/va al vacío, te suelta ANTES de arrastrarte.
+		if PosicionEnVacio(tpos, troot.AssemblyLinearVelocity) then
+			TerminarMega()
+			return
+		end
+
+		-- Alejarte (S) tras una breve gracia suelta el agarre, igual que en Fly.
+		if ahora - ag.t0 > 0.25 and UserInputService:GetFocusedTextBox() == nil
+			and UserInputService:IsKeyDown(Enum.KeyCode.S) then
+			TerminarMega()
+			return
+		end
+
+		local lv = troot.CFrame.LookVector
+		local plano = Vector3.new(lv.X, 0, lv.Z)
+		local espalda = plano.Magnitude > 0.2 and -plano.Unit or Vector3.new(0, 0, 1)
+		local deseada = tpos + espalda * AGARRE_RADIO
+
+		local base = rootPart.Position + delta
+		local final = base:Lerp(deseada, 1 - math.exp(-AGARRE_RIGIDEZ * dt))
+
+		if final.X ~= final.X or final.Y ~= final.Y or final.Z ~= final.Z then
+			TerminarMega()
+			return
+		end
+
+		local minY = workspace.FallenPartsDestroyHeight
+		if type(minY) == "number" and minY == minY and minY > -1e6 then
+			final = Vector3.new(final.X, math.max(final.Y, minY + AGARRE_MARGEN_VACIO + 20), final.Z)
+		end
+
+		local mira = Vector3.new(tpos.X - final.X, 0, tpos.Z - final.Z)
+
+		if mira.Magnitude > 0.3 then
+			rootPart.CFrame = CFrame.lookAt(final, final + mira)
+		else
+			rootPart.CFrame = CFrame.new(final) * rootPart.CFrame.Rotation
+		end
+
+		rootPart.AssemblyLinearVelocity = ag.vel
+		rootPart.AssemblyAngularVelocity = Vector3.zero
+
+		return
+	end
+
+	if not mega.activo then return end
+
+	-- ---------- fin natural del impulso ----------
+	if ahora >= dash.fin then
+		TerminarMega()
+		return
+	end
+
+	-- ---------- cancelar si te quedas quieto ----------
+	if CANCELAR_SI_QUIETO and ahora - mega.t0 > GRACIA_QUIETO then
+		local conTeclas = humanoid.MoveDirection.Magnitude > 0.05
+		local conObjetivo = mega.jugador ~= nil
+
+		if not conTeclas and not conObjetivo then
+			TerminarMega("quieto")
+			return
+		end
+	end
+
+	-- ---------- engancharse al objetivo si el impulso te acerca demasiado ----------
+	if AGARRE_ACTIVO and mega.jugador then
+		local ch = mega.jugador.Character
+		local thum = ch and ch:FindFirstChildOfClass("Humanoid")
+		local troot = ch and ch:FindFirstChild("HumanoidRootPart")
+
+		if thum and troot and thum.Health > 0 then
+			local dist = (troot.Position - rootPart.Position).Magnitude
+
+			-- Si el Grab de Fly ya está agarrando, no se duplica.
+			local flyGrab = character and character:FindFirstChild("AFO_GrabActive")
+			local flyAgarrando = flyGrab and flyGrab.Value == true
+
+			if dist <= AGARRE_DISTANCIA_ENGANCHE and not flyAgarrando
+				and not PosicionEnVacio(troot.Position, troot.AssemblyLinearVelocity) then
+
+				mega.activo = false
+				dash.fin = 0
+				PonerPoseBrazos(false)
+
+				mega.agarre = {
+					t0 = ahora,
+					jugador = mega.jugador,
+					ultPos = troot.Position,
+					vel = troot.AssemblyLinearVelocity,
+				}
+			end
+		else
+			mega.jugador = nil
+		end
+	end
+end
+
 local function IniciarDash()
 	if not (rootPart and humanoid and isFloating) then return end
 
@@ -2029,13 +2566,34 @@ local function IniciarDash()
 		return
 	end
 
+	-- Si ya hay un agarre o impulso en curso no se apila otro.
+	if mega.agarre then return end
+
+	-- Objetivo (Lock de Fly o jugador delante): si el impulso va más o menos hacia él, se apunta a su centro.
+	local jugador, objRoot = ObtenerObjetivoMega(dir)
+
+	if objRoot then
+		local hacia = objRoot.Position - rootPart.Position
+
+		if hacia.Magnitude > 1 and hacia.Unit:Dot(dir) > 0.5 then
+			dir = hacia.Unit
+		end
+	end
+
 	dash.dir = dir
 	dash.fin = ahora + DURACION_DASH
 	dash.listo = ahora + ENFRIAMIENTO_DASH
 
+	mega.activo = true
+	mega.t0 = ahora
+	mega.dir = dir
+	mega.jugador = jugador
+
 	rootPart.AssemblyLinearVelocity = dir * VELOCIDAD_DASH
 
+	PonerPoseBrazos(true)
 	FX.Dash(dir)
+	SacudirCamara(0.9, 0.14)
 end
 
 -- ==========================================
@@ -2189,11 +2747,9 @@ local function AplastarContraElSuelo()
 
 	local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
 
-	rootPart.CFrame = CFrame.new(
-		rayResult.Position + Vector3.new(0, alturaPiernas, 0)
-	)
+	-- Antes: un solo CFrame con la X/Z del raycast. Ahora varios TPs solo en Y (X/Z intactas).
+	ForzarTPsY(rayResult.Position.Y + alturaPiernas)
 
-	rootPart.AssemblyLinearVelocity = Vector3.zero
 	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
 	MarcarAterrizaje()
 
@@ -2241,7 +2797,12 @@ local function SetupCharacter(newCharacter)
 		animReSalto = LoadAnim("rbxassetid://75312251819975", Enum.AnimationPriority.Action3, false)
 		animImpacto = LoadAnim("rbxassetid://127236244922151", Enum.AnimationPriority.Action4, false)
 		animDespertar = LoadAnim("rbxassetid://83644153292302", Enum.AnimationPriority.Action4, false)
+		-- Pose de brazos atrás del mega impulso (mismas animaciones y prioridad que el Mega Turbo de Fly)
+		animBrazos = LoadAnim(ANIM_BRAZOS_ATRAS, Enum.AnimationPriority.Action4, true)
+		animBrazosVolado = LoadAnim(ANIM_BRAZOS_VOLADO, Enum.AnimationPriority.Action4, true)
 	end
+
+	mega.activo, mega.agarre, mega.jugador = false, nil, nil
 
 	CrearFuerzas()
 
@@ -2254,6 +2815,7 @@ local function SetupCharacter(newCharacter)
 	tokenAterrizaje += 1
 	seguimiento.enAire = false
 	dash.fin = 0
+	holdAereo.activo = false
 
 	local lastHealth = humanoid.Health
 
@@ -2314,6 +2876,7 @@ end
 local function ActivarAntigravedad()
 	isFloating = true
 	tSuelo = 0
+	holdAereo.activo = false -- seguir mantenido el Space del despegue NO cuenta como mega salto aéreo
 
 	local herido = tick() - lastDamageTime <= 3
 
@@ -2357,6 +2920,42 @@ local function ActivarAntigravedad()
 	)
 end
 
+-- Mega salto aéreo: Space mantenido tras un salto en el aire. Mismo impulso desde los pies,
+-- al máximo, con empuje horizontal como el del despegue si te estás moviendo.
+local function MegaSaltoAereo()
+	if not (rootPart and humanoid and isFloating) then return end
+
+	holdAereo.hecho = true
+
+	local moveDir = humanoid.MoveDirection
+	local velActual = rootPart.AssemblyLinearVelocity
+	local deltaV = IMPULSO_MEGA_AEREO_Y - velActual.Y
+
+	if animReSalto then
+		animReSalto:Play(0.1)
+		animReSalto:AdjustSpeed(2.5)
+	end
+
+	EncenderFuerzas()
+
+	local xz = Vector3.new(velActual.X, 0, velActual.Z)
+
+	if moveDir.Magnitude > 0.05 then
+		xz = moveDir * IMPULSO_EXPLOSIVO_XZ
+	end
+
+	rootPart.AssemblyLinearVelocity = Vector3.new(xz.X, IMPULSO_MEGA_AEREO_Y, xz.Z)
+
+	FX.RafagaAbajo(deltaV)
+	SacudirCamara(1.2, 0.2)
+
+	-- Seguir manteniendo Space encadena OTRO mega salto tras TIEMPO_MEGA_AEREO.
+	if MEGA_AEREO_REPETIBLE then
+		holdAereo.t = 0
+		holdAereo.hecho = false
+	end
+end
+
 -- ==========================================
 -- API
 -- ==========================================
@@ -2383,6 +2982,33 @@ function M.Start(Keys)
 		end,
 		IsFloating = function()
 			return isFloating
+		end,
+		IsMegaImpulse = function()
+			return mega.activo or mega.agarre ~= nil
+		end,
+		GetSettings = function()
+			return AJUSTES
+		end,
+		GetSetting = function(id)
+			for _, a in ipairs(AJUSTES) do
+				if a.id == id then return a.get() end
+			end
+			return nil
+		end,
+		SetSetting = function(id, valor)
+			for _, a in ipairs(AJUSTES) do
+				if a.id == id then
+					if a.tipo == "bool" then
+						a.set(valor == true)
+					else
+						local n = tonumber(valor)
+						if not n then return false end
+						a.set(math.clamp(n, a.min or n, a.max or n))
+					end
+					return true
+				end
+			end
+			return false
 		end,
 	}
 
@@ -2418,14 +3044,19 @@ function M.Start(Keys)
 				end
 
 				local velActual = rootPart.AssemblyLinearVelocity
-				local deltaV = IMPULSO_EXPLOSIVO_Y - velActual.Y
+				local deltaV = IMPULSO_SALTO_AEREO_Y - velActual.Y
+
+				-- Si mantienes Space después de este salto, se convierte en mega salto.
+				holdAereo.activo = true
+				holdAereo.t = 0
+				holdAereo.hecho = false
 
 				isFloating = true
 				EncenderFuerzas()
 
 				rootPart.AssemblyLinearVelocity = Vector3.new(
 					velActual.X,
-					IMPULSO_EXPLOSIVO_Y,
+					IMPULSO_SALTO_AEREO_Y,
 					velActual.Z
 				)
 
@@ -2450,6 +3081,7 @@ function M.Start(Keys)
 	local inputEndedConn = UserInputService.InputEnded:Connect(function(input)
 		if input.KeyCode == Enum.KeyCode.Space then
 			isHoldingSpace = false
+			holdAereo.activo = false
 		end
 	end)
 
@@ -2464,6 +3096,7 @@ function M.Start(Keys)
 
 		if _isActive then
 			RastrearAterrizaje()
+			MegaPaso(dt)
 		end
 
 		if not _isActive
@@ -2548,6 +3181,26 @@ function M.Start(Keys)
 			FX.Cancelar()
 		end
 
+		-- Mega salto aéreo: mantener Space después de un salto en el aire.
+		if isFloating and holdAereo.activo and isHoldingSpace and not holdAereo.hecho then
+			holdAereo.t += dt
+
+			if holdAereo.t >= TIEMPO_MEGA_AEREO then
+				MegaSaltoAereo()
+			else
+				local inicioAereo = math.min(
+					math.max(TIEMPO_MEGA_AEREO * INICIO_VISUAL_FRACCION, INICIO_VISUAL_MIN),
+					TIEMPO_MEGA_AEREO * 0.8
+				)
+
+				if holdAereo.t > inicioAereo then
+					FX.Cargar(((holdAereo.t - inicioAereo) / (TIEMPO_MEGA_AEREO - inicioAereo)) ^ 1.6)
+				end
+			end
+		elseif isFloating then
+			FX.Cancelar()
+		end
+
 		if isFloating then
 			ActualizarFuerzas()
 		end
@@ -2570,6 +3223,8 @@ function M.Stop()
 	LimpiarConexionesPersonaje()
 
 	ENV.AFO_GRAVATTACK_API = nil
+	mega.activo, mega.agarre, mega.jugador = false, nil, nil
+	dash.fin = 0
 
 	DetenerAnimacionesCustom(0)
 	DestruirFuerzas()
