@@ -9,11 +9,12 @@
 	Los dos módulos se hablan por ENV.AFO_GRAVATTACK_API / ENV.AFO_SUSPENSION_API.
 
 	Cambios de esta versión:
-	  1) El efecto visual ahora es un impulso que sale de tus pies (onda + chorro de aire hacia abajo).
-	  2) Despegue y salto en el aire usan exactamente el mismo efecto y la misma paleta de color.
-	  3) Todo es más transparente (ALFA_MAX) y NO queda nada pegado al cuerpo en modo antigravedad.
-	  4) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
-	  5) La suspensión aérea vive en Suspension.lua.
+	  1) Efectos con estética All For One: aire comprimido, humo negro-violeta y chispas oscuras.
+	  2) Despegue y salto en el aire: onda + chorro desde los pies, misma paleta (COLOR_AFO).
+	  3) Caída rápida (slam o caída libre fuera de la antigravedad): rayas de aire leves + impacto al aterrizar.
+	  4) Todo es transparente (ALFA_MAX) y NO queda nada pegado al cuerpo en modo antigravedad.
+	  5) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
+	  6) La suspensión aérea vive en Suspension.lua.
 ]]
 
 local M = {}
@@ -62,20 +63,21 @@ local DISTANCIA_MAX_CORRECCION_SLAM = 24
 local ALCANCE_VERTICAL_HITBOX_SLAM = 3
 local MARGEN_SEGURO_SUELO_SLAM = 0.75
 
--- Impulso de los pies (visual).
--- UNA SOLA paleta para todo: la carga, el despegue y el salto en el aire usan exactamente
--- los mismos colores (un azul y su versión aclarada). Si quieres otro color, cámbialo aquí.
-local COLOR_IMPULSO = Color3.fromRGB(120, 195, 255)
-local COLOR_IMPULSO_CLARO = COLOR_IMPULSO:Lerp(Color3.new(1, 1, 1), 0.5)
+-- Efectos visuales (estilo All For One: energía negro-violeta, aire comprimido, chispas oscuras).
+-- UNA SOLA paleta para TODO (carga, despegue, salto en el aire, caída e impacto): las tres
+-- tonalidades salen del mismo violeta base. Si quieres otro color, cambia solo COLOR_AFO.
+local COLOR_AFO = Color3.fromRGB(125, 40, 190)
+local COLOR_AFO_CLARO = COLOR_AFO:Lerp(Color3.new(1, 1, 1), 0.55)   -- núcleo de anillos y chispas
+local COLOR_AFO_OSCURO = COLOR_AFO:Lerp(Color3.new(0, 0, 0), 0.7)   -- humo y rayas de aire
 local ALFA_MAX = 0.4                -- opacidad máxima de todo el efecto (menor = más transparente)
 
 local INICIO_VISUAL_FRACCION = 0.45 -- el efecto de carga empieza tras esta fracción del retardo...
 local INICIO_VISUAL_MIN = 0.1       -- ...y nunca antes de estos segundos (un salto normal no lo dispara)
-local ANILLOS_CARGA = 2             -- anillos de aire que se pegan a tus pies mientras cargas
+local ANILLOS_CARGA = 2             -- anillos de aire que se cierran sobre tus pies mientras cargas
 local RADIO_CARGA = 4.5
 local PERIODO_CARGA = 0.45          -- s que tarda cada anillo en cerrarse sobre los pies
 
--- Impulso (despegue y salto en el aire): onda en los pies + chorro de aire hacia abajo
+-- Impulso (despegue y salto en el aire): onda en los pies + chorro de aire comprimido hacia abajo
 local DURACION_ONDA_PIES = 0.32
 local RADIO_ONDA_PIES = 8
 local VELOCIDAD_CHORRO = 85          -- velocidad de salida del aire (studs/s)
@@ -87,6 +89,15 @@ local SEPARACION_PARCELAS = 0.028    -- s entre anillos de aire consecutivos
 local VIDA_PARCELA = 0.4
 local DURACION_SALPICADURA = 0.28
 local DELTA_V_REF = IMPULSO_EXPLOSIVO_Y - VELOCIDAD_CAIDA_PLANEO
+
+-- Caída (leve): rayas de aire oscuro al caer rápido FUERA de la antigravedad + impacto al aterrizar.
+-- Una caída normal de salto (~50 studs/s) no lo activa.
+local VELOCIDAD_MIN_CAIDA = 65       -- por debajo de esto no hay efecto
+local VELOCIDAD_MAX_CAIDA = 140      -- a esta velocidad (slam) el efecto llega a su máximo
+local RAYAS_CAIDA = 4
+local VIDA_RAYA = 0.22
+local DURACION_IMPACTO = 0.3
+local RADIO_IMPACTO = 6
 
 -- ==========================================
 -- ESTADO
@@ -263,14 +274,23 @@ do
 	local carpeta
 	local anillosCono = {}
 	local anillosCarga = {}
-	local salpicadura, ondaPies
-	local parteAire, emisorAire
+	local rayas = {}
+	local salpicadura, ondaPies, ondaImpacto
+	local parteAire, emisorAire, emisorChispasAire
+	local parteCarga, emisorChispasCarga
+	local parteImpacto, emisorHumoImpacto, emisorChispasImpacto
 
 	-- Carga: anillos de aire que se cierran sobre tus pies mientras mantienes Space.
 	local carga = { objetivo = 0, alfa = 0, t = 0 }
 
 	-- Onda que sale de los pies al impulsarte.
 	local onda = { activa = false, t = 0, s = 1, pos = Vector3.zero }
+
+	-- Impacto al aterrizar de una caída rápida (o del slam).
+	local impacto = { activo = false, t = 0, s = 1, pos = Vector3.zero }
+
+	-- Caída rápida: rayas de aire + detección del aterrizaje.
+	local caida = { rapida = false, vMax = 0, espera = 0 }
 
 	local cono = {
 		activo = false,
@@ -361,8 +381,8 @@ do
 			end
 
 			a.guis[i] = gui
-			a.halos[i] = NuevoMarco(14, COLOR_IMPULSO, 1)
-			a.nucleos[i] = NuevoMarco(4, COLOR_IMPULSO_CLARO, 2)
+			a.halos[i] = NuevoMarco(14, COLOR_AFO, 1)
+			a.nucleos[i] = NuevoMarco(4, COLOR_AFO_CLARO, 2)
 		end
 
 		return a
@@ -404,6 +424,106 @@ do
 		end
 	end
 
+	-- Humo oscuro (sin brillo propio: se ve negro-violeta, como la energía de All For One).
+	local function CrearHumo(padre, direccion, velMin, velMax, apertura)
+		local e = Instance.new("ParticleEmitter")
+		e.Texture = "rbxasset://textures/particles/smoke_main.dds"
+		e.Color = ColorSequence.new(COLOR_AFO_OSCURO, COLOR_AFO)
+		e.LightEmission = 0
+		e.LightInfluence = 0
+		e.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.8),
+			NumberSequenceKeypoint.new(1, 3.2),
+		})
+		e.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.7),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		e.Lifetime = NumberRange.new(0.3, 0.55)
+		e.Speed = NumberRange.new(velMin, velMax)
+		e.Drag = 3
+		e.SpreadAngle = Vector2.new(apertura, apertura)
+		e.EmissionDirection = direccion
+		e.Rotation = NumberRange.new(0, 360)
+		e.RotSpeed = NumberRange.new(-60, 60)
+		e.Rate = 0
+		e.Parent = padre
+		return e
+	end
+
+	-- Chispas finas de energía (como el chisporroteo de sus poderes), alargadas según su velocidad.
+	local function CrearChispas(padre, direccion, velMin, velMax, apertura)
+		local e = Instance.new("ParticleEmitter")
+		e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		e.Color = ColorSequence.new(COLOR_AFO_CLARO, COLOR_AFO)
+		e.LightEmission = 0.7
+		e.LightInfluence = 0
+		e.Orientation = Enum.ParticleOrientation.VelocityParallel
+		e.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.45),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		e.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.5),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		e.Lifetime = NumberRange.new(0.18, 0.34)
+		e.Speed = NumberRange.new(velMin, velMax)
+		e.Drag = 2
+		e.SpreadAngle = Vector2.new(apertura, apertura)
+		e.EmissionDirection = direccion
+		e.Rate = 0
+		e.Parent = padre
+		return e
+	end
+
+	-- Raya de aire que queda tras tu cuerpo al caer rápido: una Trail en un punto fijo del cuerpo.
+	local ALTURAS_RAYAS = { 0.9, -0.5, 1.4, -1.1 }
+
+	local function CrearRaya(i)
+		local parte = NuevaParte("RayaCaida")
+		parte.Size = Vector3.new(0.2, 0.2, 0.2)
+
+		local a0 = Instance.new("Attachment")
+		a0.Position = Vector3.new(0, 0.22, 0)
+		a0.Parent = parte
+
+		local a1 = Instance.new("Attachment")
+		a1.Position = Vector3.new(0, -0.22, 0)
+		a1.Parent = parte
+
+		local estela = Instance.new("Trail")
+		estela.Attachment0 = a0
+		estela.Attachment1 = a1
+		estela.Lifetime = VIDA_RAYA
+		estela.MinLength = 0.05
+		estela.FaceCamera = true
+		estela.LightEmission = 0.2
+		estela.LightInfluence = 0
+		estela.Color = ColorSequence.new(COLOR_AFO_CLARO, COLOR_AFO_OSCURO)
+		estela.WidthScale = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		estela.Transparency = NumberSequence.new(0.85, 1)
+		estela.Enabled = false
+		estela.Parent = parte
+
+		local ang = (i - 0.5) / RAYAS_CAIDA * math.pi * 2
+
+		return {
+			parte = parte,
+			estela = estela,
+			offset = Vector3.new(
+				math.cos(ang) * 1.7,
+				ALTURAS_RAYAS[(i - 1) % #ALTURAS_RAYAS + 1],
+				math.sin(ang) * 1.7
+			),
+			activo = false,
+			opacidad = -1,
+		}
+	end
+
 	-- ---------- construcción ----------
 	local function Preparar()
 		if carpeta and carpeta.Parent then return true end
@@ -412,7 +532,7 @@ do
 		carpeta.Name = "AFO_GravattackFX"
 		carpeta.Parent = workspace
 
-		anillosCono, anillosCarga = {}, {}
+		anillosCono, anillosCarga, rayas = {}, {}, {}
 
 		for i = 1, ANILLOS_CONO do
 			anillosCono[i] = CrearAnillo()
@@ -422,38 +542,34 @@ do
 			anillosCarga[i] = CrearAnillo()
 		end
 
+		for i = 1, RAYAS_CAIDA do
+			rayas[i] = CrearRaya(i)
+		end
+
 		salpicadura = CrearAnillo()
 		ondaPies = CrearAnillo()
+		ondaImpacto = CrearAnillo()
 
-		-- Corriente de aire que sale de los pies hacia abajo (misma paleta que los anillos)
+		-- Impulso: aire comprimido (humo oscuro) y chispas que salen de los pies hacia abajo
 		parteAire = NuevaParte("ChorroAire")
-		emisorAire = Instance.new("ParticleEmitter")
-		emisorAire.Texture = "rbxasset://textures/particles/smoke_main.dds"
-		emisorAire.Color = ColorSequence.new(COLOR_IMPULSO_CLARO, COLOR_IMPULSO)
-		emisorAire.LightEmission = 0.5
-		emisorAire.LightInfluence = 0
-		emisorAire.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.6),
-			NumberSequenceKeypoint.new(1, 2.4),
-		})
-		emisorAire.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.65),
-			NumberSequenceKeypoint.new(1, 1),
-		})
+		emisorAire = CrearHumo(parteAire, Enum.NormalId.Bottom, VELOCIDAD_CHORRO * 0.65, VELOCIDAD_CHORRO, ANGULO_CONO_GRADOS)
 		emisorAire.Lifetime = NumberRange.new(0.25, 0.38)
-		emisorAire.Speed = NumberRange.new(VELOCIDAD_CHORRO * 0.65, VELOCIDAD_CHORRO)
 		emisorAire.Drag = ARRASTRE_AIRE
-		emisorAire.SpreadAngle = Vector2.new(ANGULO_CONO_GRADOS, ANGULO_CONO_GRADOS)
-		emisorAire.EmissionDirection = Enum.NormalId.Bottom
-		emisorAire.Rotation = NumberRange.new(0, 360)
-		emisorAire.RotSpeed = NumberRange.new(-60, 60)
-		emisorAire.Rate = 0
-		emisorAire.Parent = parteAire
+		emisorChispasAire = CrearChispas(parteAire, Enum.NormalId.Bottom, VELOCIDAD_CHORRO * 0.5, VELOCIDAD_CHORRO * 0.9, ANGULO_CONO_GRADOS + 10)
+
+		-- Carga: chisporroteo muy leve que sube de tus pies
+		parteCarga = NuevaParte("CargaPies")
+		emisorChispasCarga = CrearChispas(parteCarga, Enum.NormalId.Top, 5, 11, 40)
+
+		-- Impacto: humo oscuro que se abre por el suelo y chispas
+		parteImpacto = NuevaParte("Impacto")
+		emisorHumoImpacto = CrearHumo(parteImpacto, Enum.NormalId.Top, 8, 16, 75)
+		emisorChispasImpacto = CrearChispas(parteImpacto, Enum.NormalId.Top, 14, 28, 65)
 
 		return true
 	end
 
-	-- ---------- carga (aire que se junta en tus pies) ----------
+	-- ---------- carga (aire y energía que se juntan en tus pies) ----------
 	local function RenderCarga(dt)
 		-- Sube con suavidad y se apaga rápido.
 		local vel = carga.objetivo > carga.alfa and 6 or 16
@@ -464,10 +580,14 @@ do
 		if carga.alfa < 0.01 or not pies then
 			if carga.objetivo == 0 then carga.alfa = 0 end
 			OcultarAnillos(anillosCarga)
+			emisorChispasCarga.Rate = 0
 			return
 		end
 
 		carga.t += dt
+
+		parteCarga.CFrame = CFrame.new(pies + Vector3.new(0, 0.2, 0))
+		emisorChispasCarga.Rate = 16 * carga.alfa
 
 		for i, a in ipairs(anillosCarga) do
 			local fase = (carga.t / PERIODO_CARGA + (i - 1) / #anillosCarga) % 1
@@ -571,6 +691,106 @@ do
 		end
 	end
 
+	-- ---------- impacto de aterrizaje ----------
+	local function Aterrizar(pos, s)
+		impacto.activo = true
+		impacto.t = 0
+		impacto.s = s
+		impacto.pos = pos
+
+		parteImpacto.CFrame = CFrame.new(pos + Vector3.new(0, 0.15, 0))
+		emisorHumoImpacto:Emit(math.floor(8 * s + 0.5))
+		emisorChispasImpacto:Emit(math.floor(10 * s + 0.5))
+	end
+
+	local function RenderImpacto(dt)
+		if not impacto.activo then return end
+
+		impacto.t += dt
+
+		local k = impacto.t / DURACION_IMPACTO
+
+		if k >= 1 then
+			impacto.activo = false
+			PonerAnillo(ondaImpacto, CFrame.identity, 1, 0)
+			return
+		end
+
+		local e = 1 - (1 - k) ^ 3
+
+		PonerAnillo(
+			ondaImpacto,
+			CFrame.new(impacto.pos + Vector3.new(0, 0.12, 0)),
+			1 + RADIO_IMPACTO * e * impacto.s,
+			impacto.s * (1 - k) ^ 1.3 * ALFA_MAX
+		)
+	end
+
+	-- ---------- caída rápida (solo fuera de la antigravedad) ----------
+	local function ApagarRayas()
+		for _, r in ipairs(rayas) do
+			if r.activo then
+				r.estela.Enabled = false
+				r.activo = false
+			end
+		end
+	end
+
+	local function RenderCaida(dt)
+		local vy = 0
+		local viva = rootPart and rootPart.Parent and humanoid and humanoid.Parent
+
+		if viva then
+			vy = rootPart.AssemblyLinearVelocity.Y
+		end
+
+		local cae = viva and not isFloating and vy < -VELOCIDAD_MIN_CAIDA
+
+		if cae then
+			local k = math.clamp((-vy - VELOCIDAD_MIN_CAIDA) / (VELOCIDAD_MAX_CAIDA - VELOCIDAD_MIN_CAIDA), 0, 1)
+			local opacidad = 0.88 - 0.3 * k
+			local base = rootPart.Position
+
+			for _, r in ipairs(rayas) do
+				r.parte.CFrame = CFrame.new(base + r.offset)
+
+				if not r.activo then
+					r.estela.Enabled = true
+					r.activo = true
+				end
+
+				if math.abs(r.opacidad - opacidad) > 0.03 then
+					r.opacidad = opacidad
+					r.estela.Transparency = NumberSequence.new(opacidad, 1)
+				end
+			end
+
+			caida.rapida = true
+			caida.espera = 0
+			caida.vMax = math.min(caida.vMax, vy)
+		else
+			ApagarRayas()
+
+			-- Dejó de caer rápido: si toca suelo en un instante, hay impacto (el slam, un aterrizaje).
+			-- Si fue porque empezó a volar o murió, no hay impacto.
+			if caida.rapida then
+				caida.espera += dt
+
+				local pies = PiesActuales()
+				local enSuelo = viva and not isFloating and humanoid.FloorMaterial ~= Enum.Material.Air
+
+				if enSuelo and pies then
+					Aterrizar(pies, math.clamp(-caida.vMax / VELOCIDAD_MAX_CAIDA, 0.4, 1))
+					caida.rapida = false
+					caida.vMax = 0
+				elseif caida.espera > 0.25 or not viva or isFloating then
+					caida.rapida = false
+					caida.vMax = 0
+				end
+			end
+		end
+	end
+
 	-- ---------- impulso (despegue y salto en el aire comparten ESTE efecto) ----------
 	-- Conservación del momento: m * dV = m_aire * v_chorro. Con v_chorro fija, un dV
 	-- mayor mueve más aire: más densidad (opacidad y partículas). s = 1 es el despegue.
@@ -582,6 +802,7 @@ do
 		carga.objetivo = 0
 		carga.alfa = 0
 		OcultarAnillos(anillosCarga)
+		emisorChispasCarga.Rate = 0
 
 		-- Onda desde los pies
 		onda.activa = true
@@ -603,6 +824,7 @@ do
 
 		parteAire.CFrame = CFrame.new(pies)
 		emisorAire:Emit(math.floor(12 * s + 0.5))
+		emisorChispasAire:Emit(math.floor(10 * s + 0.5))
 
 		-- ¿Llega el chorro al suelo? Con arrastre exponencial el alcance máximo es v/c.
 		rayParams.FilterDescendantsInstances = { character, carpeta }
@@ -635,6 +857,8 @@ do
 		RenderCarga(dt)
 		RenderOnda(dt)
 		RenderCono(dt)
+		RenderCaida(dt)
+		RenderImpacto(dt)
 	end
 
 	-- Llamar cada cuadro mientras se mantiene el salto: p va de 0 a 1.
@@ -644,7 +868,7 @@ do
 		carga.objetivo = math.clamp(p, 0, 1)
 	end
 
-	-- Soltaste antes de tiempo (o algo lo interrumpió): los anillos se apagan rápido.
+	-- Soltaste antes de tiempo (o algo lo interrumpió): la carga se apaga rápido.
 	function FX.Cancelar()
 		carga.objetivo = 0
 	end
@@ -663,15 +887,26 @@ do
 		Impulsar(math.clamp((deltaV or DELTA_V_REF) / DELTA_V_REF, 0.35, 1.25))
 	end
 
+	-- Impacto explícito (el slam al suelo teletransporta y no pasa por la caída rápida).
+	function FX.Impacto(pos, s)
+		if not Preparar() or not pos then return end
+
+		caida.rapida = false
+		caida.vMax = 0
+		Aterrizar(pos, s or 1)
+	end
+
 	function FX.Destruir()
 		if carpeta then
 			carpeta:Destroy()
 		end
 
 		carpeta = nil
-		anillosCono, anillosCarga = {}, {}
+		anillosCono, anillosCarga, rayas = {}, {}, {}
 		carga.objetivo, carga.alfa = 0, 0
 		onda.activa = false
+		impacto.activo = false
+		caida.rapida, caida.vMax = false, 0
 		cono.activo = false
 		cono.impacto = nil
 	end
@@ -918,6 +1153,7 @@ local function AplastarContraElSuelo()
 
 	rootPart.AssemblyLinearVelocity = Vector3.zero
 	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+	FX.Impacto(rayResult.Position, 1)
 
 	task.delay(0.1, function()
 		if not _isActive then return end
