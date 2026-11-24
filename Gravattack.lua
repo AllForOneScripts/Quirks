@@ -66,7 +66,8 @@ local COLOR_VIENTO_CLARO = Color3.fromRGB(240, 250, 255)  -- cabeza de la estela
 local COLOR_VIENTO = Color3.fromRGB(110, 185, 255)        -- cola de la estela (azul MHA)
 local COLOR_ONDA = Color3.fromRGB(35, 140, 255)           -- halo del cono de aire
 local COLOR_AIRE = Color3.fromRGB(215, 240, 255)
-local UMBRAL_VISUAL_ONDA = 0.08      -- s manteniendo Space antes de que empiece a verse (un salto normal no lo dispara)
+local INICIO_VISUAL_FRACCION = 0.45 -- el viento empieza a verse tras esta fracción del retardo...
+local INICIO_VISUAL_MIN = 0.1       -- ...y nunca antes de estos segundos (un salto normal no lo dispara)
 local FILAMENTOS_VIENTO = 8          -- estelas de viento alrededor del cuerpo
 local VIDA_ESTELA = 0.3              -- s que dura cada estela (también el tiempo de desvanecido)
 local RADIO_VIENTO_INICIO = 2.6      -- el viento arranca algo separado...
@@ -102,6 +103,7 @@ local holdTimer = 0
 local lastDamageTime = 0
 local lastSlamEndTime = 0
 local estabaSuspendido = false
+local tSuelo = 0
 
 local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar
@@ -195,7 +197,27 @@ local function EncenderFuerzas()
 end
 
 local function ActualizarFuerzas()
-	if not (rootPart and humanoid and fuerzaVel and antiGravedad) then return end
+	if not (rootPart and humanoid) then return end
+
+	-- Otros módulos (SpeedForce, etc.) pueden borrar o apagar constraints del personaje.
+	-- Si faltan o están apagadas, se recrean / se encienden aquí mismo.
+	if not (fuerzaVel and antiGravedad and fuerzaAttach)
+		or fuerzaAttach.Parent ~= rootPart
+		or fuerzaVel.Parent ~= rootPart
+		or antiGravedad.Parent ~= rootPart
+		or fuerzaVel.Attachment0 ~= fuerzaAttach
+		or antiGravedad.Attachment0 ~= fuerzaAttach then
+
+		CrearFuerzas()
+	end
+
+	if not fuerzaVel.Enabled then
+		fuerzaVel.Enabled = true
+	end
+
+	if not antiGravedad.Enabled then
+		antiGravedad.Enabled = true
+	end
 
 	local masa = rootPart.AssemblyMass
 	antiGravedad.Force = Vector3.new(0, masa * workspace.Gravity, 0)
@@ -492,10 +514,10 @@ do
 		if estado.modo == "carga" then
 			-- El aire se junta: más estelas, más rápidas y cada vez más pegadas al cuerpo.
 			local p = estado.carga
-			local cuantos = math.floor(2 + (FILAMENTOS_VIENTO - 2) * p + 0.5)
+			local cuantos = math.floor(1 + (FILAMENTOS_VIENTO - 1) * p + 0.5)
 			local radio = RADIO_VIENTO_INICIO + (RADIO_VIENTO_CUERPO - RADIO_VIENTO_INICIO) * p
 
-			MoverFilamentos(cuantos, 0.9 + 2.2 * p, 4 + 8 * p, radio, 0.65 - 0.5 * p)
+			MoverFilamentos(cuantos, 0.9 + 2.2 * p, 4 + 8 * p, radio, 0.92 - 0.77 * p)
 
 			local pies = PiesActuales()
 
@@ -503,7 +525,7 @@ do
 				parteSuelo.CFrame = CFrame.new(pies)
 			end
 
-			emisorSuelo.Rate = 8 + 50 * p
+			emisorSuelo.Rate = 55 * p
 
 		elseif estado.modo == "impulso" then
 			-- Salida disparada: todas las estelas suben por el cuerpo mientras vas rápido.
@@ -1069,6 +1091,7 @@ local function SetupCharacter(newCharacter)
 	isSlamming = false
 	isHoldingSpace = false
 	holdTimer = 0
+	tSuelo = 0
 	estabaSuspendido = false
 
 	local lastHealth = humanoid.Health
@@ -1091,6 +1114,30 @@ end
 -- ==========================================
 -- ANTIGRAVEDAD
 -- ==========================================
+local paramsSuelo = RaycastParams.new()
+paramsSuelo.FilterType = Enum.RaycastFilterType.Exclude
+paramsSuelo.RespectCanCollide = true
+
+-- Se detecta con un raycast y no con humanoid:GetState(): otros módulos pueden dejar
+-- al Humanoid en otro estado (PlatformStand, Running, estados desactivados...) y eso
+-- cortaba el vuelo a los pocos cuadros.
+local function EstaEnElSuelo()
+	if not humanoid or not rootPart then return false end
+
+	-- Subiendo rápido nunca cuenta como suelo (cubre el instante del impulso).
+	if rootPart.AssemblyLinearVelocity.Y > 6 then return false end
+
+	paramsSuelo.FilterDescendantsInstances = { character }
+
+	local alcance = math.max(humanoid.HipHeight + rootPart.Size.Y / 2, 3) + 0.6
+
+	return workspace:Raycast(
+		rootPart.Position,
+		Vector3.new(0, -alcance, 0),
+		paramsSuelo
+	) ~= nil
+end
+
 local function ObtenerTiempoRequerido()
 	local ahora = tick()
 
@@ -1105,6 +1152,7 @@ end
 
 local function ActivarAntigravedad()
 	isFloating = true
+	tSuelo = 0
 
 	local herido = tick() - lastDamageTime <= 3
 
@@ -1287,23 +1335,19 @@ function M.Start(Keys)
 			return
 		end
 
-		local state = humanoid:GetState()
+		-- El suelo SÍ desactiva el vuelo (con un pequeño margen para no cortarlo por un cuadro).
+		if isFloating then
+			if EstaEnElSuelo() then
+				tSuelo += dt
 
-		local inAir = (
-			state == Enum.HumanoidStateType.Jumping
-			or state == Enum.HumanoidStateType.Freefall
-		)
-
-		-- El suelo SÍ desactiva el vuelo.
-		if not inAir then
-			if isFloating then
-				isFloating = false
-				ApagarFuerzas()
-				DetenerAnimacionesCustom(0.3)
-			end
-
-			if not isHoldingSpace then
-				holdTimer = 0
+				if tSuelo > 0.08 then
+					tSuelo = 0
+					isFloating = false
+					ApagarFuerzas()
+					DetenerAnimacionesCustom(0.3)
+				end
+			else
+				tSuelo = 0
 			end
 		end
 
@@ -1316,12 +1360,16 @@ function M.Start(Keys)
 				if holdTimer > requerido then
 					ActivarAntigravedad()
 				else
-					-- La onda se va formando al ritmo exacto del retardo (dinámico):
-					-- empieza tras el umbral y llega a 1 justo cuando se pierde la gravedad.
-					local inicio = math.min(UMBRAL_VISUAL_ONDA, requerido * 0.5)
+					-- El viento se va formando al ritmo del retardo (dinámico): no aparece al
+					-- tocar Space, empieza tras una fracción del retardo y llega a 1 justo
+					-- cuando se pierde la gravedad (con curva suave para que arranque flojito).
+					local inicio = math.min(
+						math.max(requerido * INICIO_VISUAL_FRACCION, INICIO_VISUAL_MIN),
+						requerido * 0.8
+					)
 
 					if holdTimer > inicio then
-						FX.Cargar((holdTimer - inicio) / (requerido - inicio))
+						FX.Cargar(((holdTimer - inicio) / (requerido - inicio)) ^ 1.6)
 					end
 				end
 			end
