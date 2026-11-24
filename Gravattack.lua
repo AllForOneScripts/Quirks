@@ -3,16 +3,17 @@
 
 	Space (mantener)  -> la gravedad pierde: salto enorme + planeo antigravitacional
 	Ctrl              -> slam (ZAAASH) contra el suelo / la cabeza de un objetivo
-	Space en vuelo    -> ráfaga de aire hacia abajo (cono de aire presionado) + re-salto
+	Space en vuelo    -> impulso desde los pies (chorro de aire hacia abajo) + re-salto
 
 	La suspensión aérea (tecla C) vive ahora en Suspension.lua (menú con F8).
 	Los dos módulos se hablan por ENV.AFO_GRAVATTACK_API / ENV.AFO_SUSPENSION_API.
 
 	Cambios de esta versión:
-	  1) Viento que se enrosca por tu cuerpo mientras mantienes Space y sale disparado al perder la gravedad.
-	  2) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
-	  3) Ráfaga de aire hacia abajo al saltar en pleno vuelo.
-	  4) Todo lo de la plataforma se movió a Suspension.lua.
+	  1) El efecto visual ahora es un impulso que sale de tus pies (onda + chorro de aire hacia abajo).
+	  2) Despegue y salto en el aire usan exactamente el mismo efecto y la misma paleta de color.
+	  3) Todo es más transparente (ALFA_MAX) y NO queda nada pegado al cuerpo en modo antigravedad.
+	  4) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
+	  5) La suspensión aérea vive en Suspension.lua.
 ]]
 
 local M = {}
@@ -61,25 +62,24 @@ local DISTANCIA_MAX_CORRECCION_SLAM = 24
 local ALCANCE_VERTICAL_HITBOX_SLAM = 3
 local MARGEN_SEGURO_SUELO_SLAM = 0.75
 
--- Viento (visual al cargar y al salir disparado)
-local COLOR_VIENTO_CLARO = Color3.fromRGB(240, 250, 255)  -- cabeza de la estela
-local COLOR_VIENTO = Color3.fromRGB(110, 185, 255)        -- cola de la estela (azul MHA)
-local COLOR_ONDA = Color3.fromRGB(35, 140, 255)           -- halo del cono de aire
-local COLOR_AIRE = Color3.fromRGB(215, 240, 255)
-local INICIO_VISUAL_FRACCION = 0.45 -- el viento empieza a verse tras esta fracción del retardo...
-local INICIO_VISUAL_MIN = 0.1       -- ...y nunca antes de estos segundos (un salto normal no lo dispara)
-local FILAMENTOS_VIENTO = 8          -- estelas de viento alrededor del cuerpo
-local VIDA_ESTELA = 0.3              -- s que dura cada estela (también el tiempo de desvanecido)
-local RADIO_VIENTO_INICIO = 2.6      -- el viento arranca algo separado...
-local RADIO_VIENTO_CUERPO = 1.5      -- ...y se va pegando al cuerpo al cargar
-local ALTO_CUERPO_VIENTO = 6.4       -- de los pies a un poco por encima de la cabeza
-local TORSION_VIENTO = 2.4           -- radianes que se enrosca la espiral de pies a cabeza
-local VELOCIDAD_MIN_VIENTO = 28      -- tras salir disparado, el viento sigue mientras te muevas más rápido que esto
-local DURACION_MAX_VIENTO = 2        -- tope en segundos
+-- Impulso de los pies (visual).
+-- UNA SOLA paleta para todo: la carga, el despegue y el salto en el aire usan exactamente
+-- los mismos colores (un azul y su versión aclarada). Si quieres otro color, cámbialo aquí.
+local COLOR_IMPULSO = Color3.fromRGB(120, 195, 255)
+local COLOR_IMPULSO_CLARO = COLOR_IMPULSO:Lerp(Color3.new(1, 1, 1), 0.5)
+local ALFA_MAX = 0.4                -- opacidad máxima de todo el efecto (menor = más transparente)
 
--- Ráfaga de aire (física simple: arrastre exponencial)
+local INICIO_VISUAL_FRACCION = 0.45 -- el efecto de carga empieza tras esta fracción del retardo...
+local INICIO_VISUAL_MIN = 0.1       -- ...y nunca antes de estos segundos (un salto normal no lo dispara)
+local ANILLOS_CARGA = 2             -- anillos de aire que se pegan a tus pies mientras cargas
+local RADIO_CARGA = 4.5
+local PERIODO_CARGA = 0.45          -- s que tarda cada anillo en cerrarse sobre los pies
+
+-- Impulso (despegue y salto en el aire): onda en los pies + chorro de aire hacia abajo
+local DURACION_ONDA_PIES = 0.32
+local RADIO_ONDA_PIES = 8
 local VELOCIDAD_CHORRO = 85          -- velocidad de salida del aire (studs/s)
-local ARRASTRE_AIRE = 3.2            -- 1/s
+local ARRASTRE_AIRE = 3.2            -- 1/s (arrastre exponencial)
 local ANGULO_CONO_GRADOS = 20        -- semiángulo de apertura del cono
 local RADIO_BASE_CHORRO = 1.4
 local ANILLOS_CONO = 7
@@ -261,19 +261,16 @@ local FX = {}
 
 do
 	local carpeta
-	local filamentos = {}
 	local anillosCono = {}
-	local salpicadura
-	local parteSuelo, emisorSuelo
+	local anillosCarga = {}
+	local salpicadura, ondaPies
 	local parteAire, emisorAire
 
-	local estado = {
-		modo = "idle", -- "idle" | "carga" | "impulso" | "apagando"
-		carga = 0,
-		t = 0,
-		tImpulso = 0,
-		tApagando = 0,
-	}
+	-- Carga: anillos de aire que se cierran sobre tus pies mientras mantienes Space.
+	local carga = { objetivo = 0, alfa = 0, t = 0 }
+
+	-- Onda que sale de los pies al impulsarte.
+	local onda = { activa = false, t = 0, s = 1, pos = Vector3.zero }
 
 	local cono = {
 		activo = false,
@@ -313,8 +310,8 @@ do
 		return rootPart.Position - Vector3.new(0, alto, 0)
 	end
 
-	-- Anillo plano dibujado con SurfaceGui (círculo + UIStroke). Solo lo usa el cono de aire.
-	local function CrearAnillo(colorBorde)
+	-- Anillo plano dibujado con SurfaceGui (círculo + UIStroke). Siempre con la misma paleta.
+	local function CrearAnillo()
 		local a = {
 			parte = NuevaParte("AnilloFX"),
 			guis = {},
@@ -335,7 +332,7 @@ do
 			gui.AlwaysOnTop = false
 			gui.Enabled = false
 			pcall(function()
-				gui.Brightness = 1.6
+				gui.Brightness = 1.2
 			end)
 			gui.Parent = a.parte
 
@@ -364,8 +361,8 @@ do
 			end
 
 			a.guis[i] = gui
-			a.halos[i] = NuevoMarco(16, COLOR_ONDA, 1)
-			a.nucleos[i] = NuevoMarco(5, colorBorde, 2)
+			a.halos[i] = NuevoMarco(14, COLOR_IMPULSO, 1)
+			a.nucleos[i] = NuevoMarco(4, COLOR_IMPULSO_CLARO, 2)
 		end
 
 		return a
@@ -397,161 +394,13 @@ do
 
 		for i = 1, #a.guis do
 			a.nucleos[i].Transparency = 1 - alfa
-			a.halos[i].Transparency = 1 - alfa * 0.4
+			a.halos[i].Transparency = 1 - alfa * 0.5
 		end
 	end
 
-	-- ---------- viento por el cuerpo ----------
-	-- Cada filamento es una parte invisible con una Trail. Al moverla en espiral
-	-- alrededor del cuerpo la estela dibuja una línea de viento que sube de los pies
-	-- a la cabeza. Al salir disparado hacia arriba, el propio movimiento del cuerpo
-	-- alarga las estelas y se ve el aire pasando pegado a ti.
-	local function CrearFilamento(i)
-		local parte = NuevaParte("Viento")
-		parte.Size = Vector3.new(0.2, 0.2, 0.2)
-
-		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(0, 0.25, 0)
-		a0.Parent = parte
-
-		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(0, -0.25, 0)
-		a1.Parent = parte
-
-		local estela = Instance.new("Trail")
-		estela.Attachment0 = a0
-		estela.Attachment1 = a1
-		estela.Lifetime = VIDA_ESTELA
-		estela.MinLength = 0.02
-		estela.FaceCamera = true
-		estela.LightEmission = 0.55
-		estela.LightInfluence = 0
-		estela.Color = ColorSequence.new(COLOR_VIENTO_CLARO, COLOR_VIENTO)
-		estela.WidthScale = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(1, 0),
-		})
-		estela.Transparency = NumberSequence.new(0.5, 1)
-		estela.Enabled = false
-		estela.Parent = parte
-
-		return {
-			parte = parte,
-			estela = estela,
-			fase = ((i - 1) * 0.382) % 1,
-			angulo = (i - 1) / FILAMENTOS_VIENTO * math.pi * 2,
-			uPrev = 0,
-			activo = false,
-			reactivar = false,
-			opacidad = -1,
-		}
-	end
-
-	local function ApagarFilamentos()
-		for _, f in ipairs(filamentos) do
-			if f.activo then
-				f.estela.Enabled = false
-				f.activo = false
-				f.reactivar = false
-			end
-		end
-	end
-
-	-- cuantos: filamentos encendidos. subida: vueltas de pies a cabeza por segundo.
-	-- giro: rad/s alrededor del cuerpo. opacidad: transparencia de la cabeza de la estela.
-	local function MoverFilamentos(cuantos, subida, giro, radio, opacidad)
-		local base = rootPart.Position
-		local pies = -((humanoid and humanoid.HipHeight or 2) + rootPart.Size.Y / 2)
-
-		for i, f in ipairs(filamentos) do
-			if i <= cuantos then
-				local u = (estado.t * subida + f.fase) % 1
-				local h = pies - 0.2 + u * ALTO_CUERPO_VIENTO
-				local ang = f.angulo + estado.t * giro + u * TORSION_VIENTO
-
-				f.parte.CFrame = CFrame.new(base + Vector3.new(math.cos(ang) * radio, h, math.sin(ang) * radio))
-
-				if not f.activo then
-					f.uPrev = u
-					f.estela.Enabled = true
-					f.activo = true
-					f.reactivar = false
-				elseif u < f.uPrev then
-					-- Dio la vuelta (de la cabeza a los pies): corta la estela para que no una los dos extremos.
-					f.estela.Enabled = false
-					f.reactivar = true
-				elseif f.reactivar then
-					f.estela.Enabled = true
-					f.reactivar = false
-				end
-
-				f.uPrev = u
-
-				if math.abs(f.opacidad - opacidad) > 0.03 then
-					f.opacidad = opacidad
-					f.estela.Transparency = NumberSequence.new(opacidad, 1)
-				end
-			elseif f.activo then
-				f.estela.Enabled = false
-				f.activo = false
-				f.reactivar = false
-			end
-		end
-	end
-
-	local function RenderViento(dt)
-		if estado.modo == "idle" then return end
-
-		if not rootPart or not rootPart.Parent then
-			ApagarFilamentos()
-			emisorSuelo.Rate = 0
-			estado.modo = "idle"
-			return
-		end
-
-		estado.t += dt
-
-		if estado.modo == "carga" then
-			-- El aire se junta: más estelas, más rápidas y cada vez más pegadas al cuerpo.
-			local p = estado.carga
-			local cuantos = math.floor(1 + (FILAMENTOS_VIENTO - 1) * p + 0.5)
-			local radio = RADIO_VIENTO_INICIO + (RADIO_VIENTO_CUERPO - RADIO_VIENTO_INICIO) * p
-
-			MoverFilamentos(cuantos, 0.9 + 2.2 * p, 4 + 8 * p, radio, 0.92 - 0.77 * p)
-
-			local pies = PiesActuales()
-
-			if pies then
-				parteSuelo.CFrame = CFrame.new(pies)
-			end
-
-			emisorSuelo.Rate = 55 * p
-
-		elseif estado.modo == "impulso" then
-			-- Salida disparada: todas las estelas suben por el cuerpo mientras vas rápido.
-			estado.tImpulso += dt
-
-			local vel = rootPart.AssemblyLinearVelocity.Magnitude
-			local k = math.clamp(vel / 80, 0.3, 1)
-			local radio = RADIO_VIENTO_CUERPO + 0.8 * math.min(estado.tImpulso / 0.35, 1)
-
-			MoverFilamentos(FILAMENTOS_VIENTO, 3.2, 14, radio, 0.55 - 0.45 * k)
-
-			if (estado.tImpulso > 0.35 and vel < VELOCIDAD_MIN_VIENTO)
-				or estado.tImpulso > DURACION_MAX_VIENTO then
-
-				ApagarFilamentos()
-				estado.modo = "apagando"
-				estado.tApagando = 0
-			end
-
-		elseif estado.modo == "apagando" then
-			-- Las estelas ya no emiten: se desvanecen solas en VIDA_ESTELA.
-			estado.tApagando += dt
-
-			if estado.tApagando > VIDA_ESTELA + 0.05 then
-				estado.modo = "idle"
-			end
+	local function OcultarAnillos(lista)
+		for _, a in ipairs(lista) do
+			PonerAnillo(a, CFrame.identity, 1, 0)
 		end
 	end
 
@@ -563,63 +412,35 @@ do
 		carpeta.Name = "AFO_GravattackFX"
 		carpeta.Parent = workspace
 
-		filamentos, anillosCono = {}, {}
-
-		for i = 1, FILAMENTOS_VIENTO do
-			filamentos[i] = CrearFilamento(i)
-		end
+		anillosCono, anillosCarga = {}, {}
 
 		for i = 1, ANILLOS_CONO do
-			anillosCono[i] = CrearAnillo(COLOR_AIRE)
+			anillosCono[i] = CrearAnillo()
 		end
 
-		salpicadura = CrearAnillo(COLOR_AIRE)
+		for i = 1, ANILLOS_CARGA do
+			anillosCarga[i] = CrearAnillo()
+		end
 
-		-- Resoplido de viento a ras de suelo mientras cargas y al salir disparado
-		parteSuelo = NuevaParte("VientoSuelo")
-		parteSuelo.Size = Vector3.new(3.2, 0.2, 3.2)
+		salpicadura = CrearAnillo()
+		ondaPies = CrearAnillo()
 
-		emisorSuelo = Instance.new("ParticleEmitter")
-		emisorSuelo.Texture = "rbxasset://textures/particles/smoke_main.dds"
-		emisorSuelo.Color = ColorSequence.new(COLOR_VIENTO_CLARO, COLOR_VIENTO)
-		emisorSuelo.LightEmission = 0.5
-		emisorSuelo.LightInfluence = 0
-		emisorSuelo.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.7),
-			NumberSequenceKeypoint.new(1, 2.6),
-		})
-		emisorSuelo.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.55),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		emisorSuelo.Lifetime = NumberRange.new(0.4, 0.7)
-		emisorSuelo.Speed = NumberRange.new(5, 11)
-		emisorSuelo.Drag = 2
-		emisorSuelo.SpreadAngle = Vector2.new(80, 80)
-		emisorSuelo.EmissionDirection = Enum.NormalId.Top
-		emisorSuelo.Shape = Enum.ParticleEmitterShape.Disc
-		emisorSuelo.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-		emisorSuelo.Rotation = NumberRange.new(0, 360)
-		emisorSuelo.RotSpeed = NumberRange.new(-80, 80)
-		emisorSuelo.Rate = 0
-		emisorSuelo.Parent = parteSuelo
-
-		-- Corriente de aire de la ráfaga hacia abajo
+		-- Corriente de aire que sale de los pies hacia abajo (misma paleta que los anillos)
 		parteAire = NuevaParte("ChorroAire")
 		emisorAire = Instance.new("ParticleEmitter")
 		emisorAire.Texture = "rbxasset://textures/particles/smoke_main.dds"
-		emisorAire.Color = ColorSequence.new(COLOR_AIRE, COLOR_ONDA)
-		emisorAire.LightEmission = 0.6
+		emisorAire.Color = ColorSequence.new(COLOR_IMPULSO_CLARO, COLOR_IMPULSO)
+		emisorAire.LightEmission = 0.5
 		emisorAire.LightInfluence = 0
 		emisorAire.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.8),
-			NumberSequenceKeypoint.new(1, 3),
+			NumberSequenceKeypoint.new(0, 0.6),
+			NumberSequenceKeypoint.new(1, 2.4),
 		})
 		emisorAire.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.35),
+			NumberSequenceKeypoint.new(0, 0.65),
 			NumberSequenceKeypoint.new(1, 1),
 		})
-		emisorAire.Lifetime = NumberRange.new(0.28, 0.4)
+		emisorAire.Lifetime = NumberRange.new(0.25, 0.38)
 		emisorAire.Speed = NumberRange.new(VELOCIDAD_CHORRO * 0.65, VELOCIDAD_CHORRO)
 		emisorAire.Drag = ARRASTRE_AIRE
 		emisorAire.SpreadAngle = Vector2.new(ANGULO_CONO_GRADOS, ANGULO_CONO_GRADOS)
@@ -632,7 +453,61 @@ do
 		return true
 	end
 
-	-- ---------- ráfaga de aire ----------
+	-- ---------- carga (aire que se junta en tus pies) ----------
+	local function RenderCarga(dt)
+		-- Sube con suavidad y se apaga rápido.
+		local vel = carga.objetivo > carga.alfa and 6 or 16
+		carga.alfa += (carga.objetivo - carga.alfa) * math.min(dt * vel, 1)
+
+		local pies = PiesActuales()
+
+		if carga.alfa < 0.01 or not pies then
+			if carga.objetivo == 0 then carga.alfa = 0 end
+			OcultarAnillos(anillosCarga)
+			return
+		end
+
+		carga.t += dt
+
+		for i, a in ipairs(anillosCarga) do
+			local fase = (carga.t / PERIODO_CARGA + (i - 1) / #anillosCarga) % 1
+			local radio = 0.9 + RADIO_CARGA * (1 - fase)
+			local aparicion = math.sin(fase * math.pi) -- nace y muere suave, sin saltos
+
+			PonerAnillo(
+				a,
+				CFrame.new(pies + Vector3.new(0, 0.12, 0)),
+				radio,
+				carga.alfa * aparicion * ALFA_MAX * 0.8
+			)
+		end
+	end
+
+	-- ---------- onda de impulso en los pies ----------
+	local function RenderOnda(dt)
+		if not onda.activa then return end
+
+		onda.t += dt
+
+		local k = onda.t / DURACION_ONDA_PIES
+
+		if k >= 1 then
+			onda.activa = false
+			PonerAnillo(ondaPies, CFrame.identity, 1, 0)
+			return
+		end
+
+		local e = 1 - (1 - k) ^ 3
+
+		PonerAnillo(
+			ondaPies,
+			CFrame.new(onda.pos + Vector3.new(0, 0.12, 0)),
+			1.2 + RADIO_ONDA_PIES * e * onda.s,
+			onda.s * (1 - k) ^ 1.4 * ALFA_MAX
+		)
+	end
+
+	-- ---------- chorro de aire hacia abajo ----------
 	local function RenderCono(dt)
 		if not cono.activo then return end
 
@@ -661,7 +536,7 @@ do
 				local radio = RADIO_BASE_CHORRO + recorrido * TAN_CONO
 				local pos = pr.pos - Vector3.new(0, recorrido, 0)
 
-				PonerAnillo(a, CFrame.new(pos), radio, s * (1 - k) ^ 1.2 * 0.9)
+				PonerAnillo(a, CFrame.new(pos), radio, s * (1 - k) ^ 1.2 * ALFA_MAX)
 			end
 		end
 
@@ -683,7 +558,7 @@ do
 					salpicadura,
 					CFrame.new(sp.centro + Vector3.new(0, 0.12, 0)),
 					sp.radio0 + 9 * e * s,
-					s * (1 - k) ^ 1.3 * 0.85
+					s * (1 - k) ^ 1.3 * ALFA_MAX
 				)
 			else
 				PonerAnillo(salpicadura, CFrame.identity, 1, 0)
@@ -696,64 +571,25 @@ do
 		end
 	end
 
-	-- ---------- API ----------
-	function FX.Iniciar()
-		Preparar()
-	end
-
-	function FX.Render(dt)
-		if not carpeta then return end
-
-		RenderViento(dt)
-		RenderCono(dt)
-	end
-
-	-- Llamar cada cuadro mientras se mantiene el salto: p va de 0 a 1.
-	function FX.Cargar(p)
-		if not Preparar() then return end
-
-		estado.modo = "carga"
-		estado.carga = math.clamp(p, 0, 1)
-	end
-
-	-- Soltaste antes de tiempo (o algo lo interrumpió): el viento deja de emitir
-	-- y las estelas se acaban solas en una fracción de segundo.
-	function FX.Cancelar()
-		if estado.modo == "idle" or estado.modo == "apagando" then return end
-
-		ApagarFilamentos()
-		emisorSuelo.Rate = 0
-		estado.modo = "apagando"
-		estado.tApagando = 0
-	end
-
-	-- La gravedad perdió: el viento sale disparado por el cuerpo y el suelo resopla.
-	function FX.Liberar()
-		if not Preparar() then return end
-
-		estado.modo = "impulso"
-		estado.tImpulso = 0
-		emisorSuelo.Rate = 0
-
-		local pies = PiesActuales()
-
-		if pies then
-			parteSuelo.CFrame = CFrame.new(pies)
-			emisorSuelo:Emit(26)
-		end
-	end
-
-	-- Ráfaga de aire hacia abajo al saltar en pleno vuelo.
-	-- Conservación del momento: m * dV = m_aire * v_chorro. Con v_chorro fija, un
-	-- dV mayor mueve más aire: más densidad (opacidad y partículas) en el cono.
-	function FX.RafagaAbajo(deltaV)
-		if not Preparar() then return end
-
+	-- ---------- impulso (despegue y salto en el aire comparten ESTE efecto) ----------
+	-- Conservación del momento: m * dV = m_aire * v_chorro. Con v_chorro fija, un dV
+	-- mayor mueve más aire: más densidad (opacidad y partículas). s = 1 es el despegue.
+	local function Impulsar(s)
 		local pies = PiesActuales()
 		if not pies then return end
 
-		local s = math.clamp((deltaV or DELTA_V_REF) / DELTA_V_REF, 0.35, 1.25)
+		-- Lo que había de la carga desaparece en el mismo instante.
+		carga.objetivo = 0
+		carga.alfa = 0
+		OcultarAnillos(anillosCarga)
 
+		-- Onda desde los pies
+		onda.activa = true
+		onda.t = 0
+		onda.s = s
+		onda.pos = pies
+
+		-- Chorro hacia abajo
 		cono.activo = true
 		cono.t = 0
 		cono.s = s
@@ -766,7 +602,7 @@ do
 		end
 
 		parteAire.CFrame = CFrame.new(pies)
-		emisorAire:Emit(math.floor(14 * s + 0.5))
+		emisorAire:Emit(math.floor(12 * s + 0.5))
 
 		-- ¿Llega el chorro al suelo? Con arrastre exponencial el alcance máximo es v/c.
 		rayParams.FilterDescendantsInstances = { character, carpeta }
@@ -788,14 +624,54 @@ do
 		end
 	end
 
+	-- ---------- API ----------
+	function FX.Iniciar()
+		Preparar()
+	end
+
+	function FX.Render(dt)
+		if not carpeta then return end
+
+		RenderCarga(dt)
+		RenderOnda(dt)
+		RenderCono(dt)
+	end
+
+	-- Llamar cada cuadro mientras se mantiene el salto: p va de 0 a 1.
+	function FX.Cargar(p)
+		if not Preparar() then return end
+
+		carga.objetivo = math.clamp(p, 0, 1)
+	end
+
+	-- Soltaste antes de tiempo (o algo lo interrumpió): los anillos se apagan rápido.
+	function FX.Cancelar()
+		carga.objetivo = 0
+	end
+
+	-- Despegue (pierdes la gravedad): impulso desde los pies. Después no queda nada pegado al cuerpo.
+	function FX.Liberar()
+		if not Preparar() then return end
+
+		Impulsar(1)
+	end
+
+	-- Salto en pleno vuelo: el mismo impulso, escalado por cuánta velocidad ganas.
+	function FX.RafagaAbajo(deltaV)
+		if not Preparar() then return end
+
+		Impulsar(math.clamp((deltaV or DELTA_V_REF) / DELTA_V_REF, 0.35, 1.25))
+	end
+
 	function FX.Destruir()
 		if carpeta then
 			carpeta:Destroy()
 		end
 
 		carpeta = nil
-		filamentos, anillosCono = {}, {}
-		estado.modo = "idle"
+		anillosCono, anillosCarga = {}, {}
+		carga.objetivo, carga.alfa = 0, 0
+		onda.activa = false
 		cono.activo = false
 		cono.impacto = nil
 	end
