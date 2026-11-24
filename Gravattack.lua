@@ -2,17 +2,19 @@
 	Gravattack.lua  (v2)
 
 	Space (mantener)  -> la gravedad pierde: salto enorme + planeo antigravitacional
-	Ctrl              -> slam (ZAAASH) contra el suelo / la cabeza de un objetivo
+	Ctrl              -> slam (ZAAASH) a la cabeza de un objetivo, o caída épica al suelo según la altura
 	Space en vuelo    -> impulso desde los pies (chorro de aire hacia abajo) + re-salto
+	Shift / Q en vuelo -> boost de velocidad / dash aéreo
 
 	La suspensión aérea (tecla C) vive ahora en Suspension.lua (menú con F8).
 	Los dos módulos se hablan por ENV.AFO_GRAVATTACK_API / ENV.AFO_SUSPENSION_API.
 
 	Cambios de esta versión:
-	  1) Efectos con estética All For One: aire comprimido, humo negro-violeta y chispas oscuras.
-	  2) Despegue y salto en el aire: onda + chorro desde los pies, misma paleta (COLOR_AFO).
-	  3) Caída rápida (slam o caída libre fuera de la antigravedad): rayas de aire leves + impacto al aterrizar.
-	  4) Todo es transparente (ALFA_MAX) y NO queda nada pegado al cuerpo en modo antigravedad.
+	  1) Efectos con estética All For One: aire comprimido, humo negro-violeta y chispas oscuras (una sola paleta).
+	  2) Efecto de caída: rayas de aire al caer rápido + impacto al aterrizar según lo que hayas caído.
+	  3) Ctrl = caída épica copiada de Fly.lua: mide la altura al suelo y, desde 45 studs, cae de golpe con
+	     ondas, polvo, cráter, sonido, sacudida de cámara y animación; escala con la altura.
+	  4) Movilidad en vuelo: mirar arriba/abajo con W sube/pica, Shift = boost, Q = dash aéreo.
 	  5) Planeo tipo Genshin con fuerzas reales (LinearVelocity + VectorForce), sin tocar workspace.Gravity.
 	  6) La suspensión aérea vive en Suspension.lua.
 ]]
@@ -22,6 +24,7 @@ local M = {}
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 
@@ -90,7 +93,7 @@ local VIDA_PARCELA = 0.4
 local DURACION_SALPICADURA = 0.28
 local DELTA_V_REF = IMPULSO_EXPLOSIVO_Y - VELOCIDAD_CAIDA_PLANEO
 
--- Caída (leve): rayas de aire oscuro al caer rápido FUERA de la antigravedad + impacto al aterrizar.
+-- Caída (leve): rayas de aire oscuro cuando caes rápido (slam, picada o caída libre) + impacto al aterrizar.
 -- Una caída normal de salto (~50 studs/s) no lo activa.
 local VELOCIDAD_MIN_CAIDA = 65       -- por debajo de esto no hay efecto
 local VELOCIDAD_MAX_CAIDA = 140      -- a esta velocidad (slam) el efecto llega a su máximo
@@ -98,6 +101,27 @@ local RAYAS_CAIDA = 4
 local VIDA_RAYA = 0.22
 local DURACION_IMPACTO = 0.3
 local RADIO_IMPACTO = 6
+
+-- Caída épica (copiada de Fly.lua). Se activa con Ctrl y depende de la altura medida bajo el personaje.
+local ALTURA_CAIDA_EPICA = 45        -- altura mínima (studs) para la caída épica; por debajo, slam normal
+local ALTURA_CAIDA_MAX = 1500        -- a esta altura el nivel de caída llega a su máximo
+local ALTURA_IMPACTO_MIN = 12        -- aterrizajes naturales más bajos que esto no hacen efecto
+local ANIMAR_ATERRIZAJE_NATURAL = true -- animación de agachado también al aterrizar volando (no solo con Ctrl)
+
+-- Movilidad en vuelo
+local CONTROL_VERTICAL_CON_CAMARA = true -- mirar arriba/abajo con W sube/baja (estilo planeador)
+local ZONA_MUERTA_PITCH = 0.12           -- inclinación de cámara (0-1) por debajo de la cual no sube ni baja
+local VELOCIDAD_ASCENSO_MAX = 70         -- studs/s al mirar casi recto hacia arriba
+local VELOCIDAD_PICADA_MAX = 110         -- studs/s al mirar casi recto hacia abajo
+local REDUCCION_H_ASCENSO = 0.3          -- cuánto se frena el avance horizontal al trepar fuerte
+local ACEL_ASCENSO = 110
+local ACEL_PICADA = 140
+local VELOCIDAD_BOOST = 1.7              -- multiplicador de velocidad mientras mantienes Shift
+local TECLA_DASH = Enum.KeyCode.Q        -- dash aéreo (cambia la tecla aquí)
+local VELOCIDAD_DASH = 150
+local DURACION_DASH = 0.2
+local ENFRIAMIENTO_DASH = 0.9
+local ACEL_DASH = 700
 
 -- ==========================================
 -- ESTADO
@@ -120,6 +144,7 @@ local character, humanoid, rootPart, animator
 local animVuelo, animReSalto, animImpacto, animDespertar
 
 local fuerzaAttach, fuerzaVel, antiGravedad = nil, nil, nil
+local dash = { fin = 0, listo = 0, dir = Vector3.zero }
 
 -- ==========================================
 -- ANIMACIONES
@@ -237,10 +262,48 @@ local function ActualizarFuerzas()
 	local conInput = moveDir.Magnitude > 0.05
 	local velActual = rootPart.AssemblyLinearVelocity
 
-	-- Quieto -> solo hacia abajo. Avanzando -> hacia adelante. Nada más.
+	-- Dash aéreo: durante unos instantes manda sobre todo lo demás.
+	if tick() < dash.fin then
+		fuerzaVel.VectorVelocity = dash.dir * VELOCIDAD_DASH
+		fuerzaVel.MaxAxesForce = Vector3.new(masa * ACEL_DASH, masa * ACEL_DASH, masa * ACEL_DASH)
+		return
+	end
+
+	local escribiendo = UserInputService:GetFocusedTextBox() ~= nil
+	local boost = not escribiendo and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	local mult = boost and VELOCIDAD_BOOST or 1
+
+	-- Avance horizontal + control vertical con la cámara (mirar arriba/abajo mientras avanzas).
 	local objetivoXZ = Vector3.zero
+	local vertical = 0
+
 	if conInput then
-		objetivoXZ = moveDir * VELOCIDAD_VUELO
+		local factorH = 1
+		local cam = workspace.CurrentCamera
+
+		if CONTROL_VERTICAL_CON_CAMARA and cam then
+			local look = cam.CFrame.LookVector
+			local plano = Vector3.new(look.X, 0, look.Z)
+
+			if plano.Magnitude > 0.01 then
+				local avance = moveDir:Dot(plano.Unit)
+
+				if avance > 0.3 then
+					local mag = (math.abs(look.Y) - ZONA_MUERTA_PITCH) / (1 - ZONA_MUERTA_PITCH)
+
+					if mag > 0 then
+						if look.Y > 0 then
+							vertical = mag * avance * VELOCIDAD_ASCENSO_MAX * mult
+							factorH = 1 - REDUCCION_H_ASCENSO * mag
+						else
+							vertical = -mag * avance * VELOCIDAD_PICADA_MAX * mult
+						end
+					end
+				end
+			end
+		end
+
+		objetivoXZ = moveDir * VELOCIDAD_VUELO * mult * factorH
 	end
 
 	local objetivoY
@@ -252,13 +315,24 @@ local function ActualizarFuerzas()
 		objetivoY = VELOCIDAD_CAIDA_PLANEO
 	end
 
-	local aXZ = conInput and ACEL_HORIZONTAL or ACEL_FRENADO
+	-- Subir/picar con la cámara reemplaza el planeo solo cuando va más allá de él.
+	if vertical > 0 then
+		objetivoY = math.max(objetivoY, vertical)
+	elseif vertical < 0 then
+		objetivoY = math.min(objetivoY, vertical)
+	end
+
+	local aXZ = (conInput and ACEL_HORIZONTAL or ACEL_FRENADO) * (boost and 1.3 or 1)
 
 	local aY
 	if velActual.Y > objetivoY then
-		aY = isHoldingSpace and ACEL_VERTICAL_FRENAR_SOSTENIENDO or ACEL_VERTICAL_FRENAR_SUELTO
+		if vertical < 0 then
+			aY = ACEL_PICADA
+		else
+			aY = isHoldingSpace and ACEL_VERTICAL_FRENAR_SOSTENIENDO or ACEL_VERTICAL_FRENAR_SUELTO
+		end
 	else
-		aY = ACEL_VERTICAL_EMPUJAR
+		aY = vertical > 0 and ACEL_ASCENSO or ACEL_VERTICAL_EMPUJAR
 	end
 
 	fuerzaVel.VectorVelocity = Vector3.new(objetivoXZ.X, objetivoY, objetivoXZ.Z)
@@ -279,6 +353,7 @@ do
 	local parteAire, emisorAire, emisorChispasAire
 	local parteCarga, emisorChispasCarga
 	local parteImpacto, emisorHumoImpacto, emisorChispasImpacto
+	local parteDash, emisorHumoDash, emisorChispasDash
 
 	-- Carga: anillos de aire que se cierran sobre tus pies mientras mantienes Space.
 	local carga = { objetivo = 0, alfa = 0, t = 0 }
@@ -288,9 +363,6 @@ do
 
 	-- Impacto al aterrizar de una caída rápida (o del slam).
 	local impacto = { activo = false, t = 0, s = 1, pos = Vector3.zero }
-
-	-- Caída rápida: rayas de aire + detección del aterrizaje.
-	local caida = { rapida = false, vMax = 0, espera = 0 }
 
 	local cono = {
 		activo = false,
@@ -566,6 +638,11 @@ do
 		emisorHumoImpacto = CrearHumo(parteImpacto, Enum.NormalId.Top, 8, 16, 75)
 		emisorChispasImpacto = CrearChispas(parteImpacto, Enum.NormalId.Top, 14, 28, 65)
 
+		-- Dash aéreo: humo y chispas que quedan detrás de ti
+		parteDash = NuevaParte("DashAereo")
+		emisorHumoDash = CrearHumo(parteDash, Enum.NormalId.Front, 12, 30, 25)
+		emisorChispasDash = CrearChispas(parteDash, Enum.NormalId.Front, 25, 55, 20)
+
 		return true
 	end
 
@@ -726,7 +803,7 @@ do
 		)
 	end
 
-	-- ---------- caída rápida (solo fuera de la antigravedad) ----------
+	-- ---------- caída rápida (rayas de aire; el aterrizaje lo gestiona RastrearAterrizaje) ----------
 	local function ApagarRayas()
 		for _, r in ipairs(rayas) do
 			if r.activo then
@@ -736,57 +813,30 @@ do
 		end
 	end
 
-	local function RenderCaida(dt)
-		local vy = 0
+	local function RenderCaida()
 		local viva = rootPart and rootPart.Parent and humanoid and humanoid.Parent
+		local vy = viva and rootPart.AssemblyLinearVelocity.Y or 0
 
-		if viva then
-			vy = rootPart.AssemblyLinearVelocity.Y
+		if not (viva and vy < -VELOCIDAD_MIN_CAIDA) then
+			ApagarRayas()
+			return
 		end
 
-		local cae = viva and not isFloating and vy < -VELOCIDAD_MIN_CAIDA
+		local k = math.clamp((-vy - VELOCIDAD_MIN_CAIDA) / (VELOCIDAD_MAX_CAIDA - VELOCIDAD_MIN_CAIDA), 0, 1)
+		local opacidad = 0.88 - 0.3 * k
+		local base = rootPart.Position
 
-		if cae then
-			local k = math.clamp((-vy - VELOCIDAD_MIN_CAIDA) / (VELOCIDAD_MAX_CAIDA - VELOCIDAD_MIN_CAIDA), 0, 1)
-			local opacidad = 0.88 - 0.3 * k
-			local base = rootPart.Position
+		for _, r in ipairs(rayas) do
+			r.parte.CFrame = CFrame.new(base + r.offset)
 
-			for _, r in ipairs(rayas) do
-				r.parte.CFrame = CFrame.new(base + r.offset)
-
-				if not r.activo then
-					r.estela.Enabled = true
-					r.activo = true
-				end
-
-				if math.abs(r.opacidad - opacidad) > 0.03 then
-					r.opacidad = opacidad
-					r.estela.Transparency = NumberSequence.new(opacidad, 1)
-				end
+			if not r.activo then
+				r.estela.Enabled = true
+				r.activo = true
 			end
 
-			caida.rapida = true
-			caida.espera = 0
-			caida.vMax = math.min(caida.vMax, vy)
-		else
-			ApagarRayas()
-
-			-- Dejó de caer rápido: si toca suelo en un instante, hay impacto (el slam, un aterrizaje).
-			-- Si fue porque empezó a volar o murió, no hay impacto.
-			if caida.rapida then
-				caida.espera += dt
-
-				local pies = PiesActuales()
-				local enSuelo = viva and not isFloating and humanoid.FloorMaterial ~= Enum.Material.Air
-
-				if enSuelo and pies then
-					Aterrizar(pies, math.clamp(-caida.vMax / VELOCIDAD_MAX_CAIDA, 0.4, 1))
-					caida.rapida = false
-					caida.vMax = 0
-				elseif caida.espera > 0.25 or not viva or isFloating then
-					caida.rapida = false
-					caida.vMax = 0
-				end
+			if math.abs(r.opacidad - opacidad) > 0.03 then
+				r.opacidad = opacidad
+				r.estela.Transparency = NumberSequence.new(opacidad, 1)
 			end
 		end
 	end
@@ -857,7 +907,7 @@ do
 		RenderCarga(dt)
 		RenderOnda(dt)
 		RenderCono(dt)
-		RenderCaida(dt)
+		RenderCaida()
 		RenderImpacto(dt)
 	end
 
@@ -891,9 +941,19 @@ do
 	function FX.Impacto(pos, s)
 		if not Preparar() or not pos then return end
 
-		caida.rapida = false
-		caida.vMax = 0
 		Aterrizar(pos, s or 1)
+	end
+
+	-- Dash aéreo: humo y chispas hacia atrás respecto a la dirección del dash.
+	function FX.Dash(dir)
+		if not Preparar() or not rootPart or not dir then return end
+
+		local pos = rootPart.Position
+		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
+
+		parteDash.CFrame = CFrame.lookAt(pos, pos - dir, arriba)
+		emisorHumoDash:Emit(7)
+		emisorChispasDash:Emit(10)
 	end
 
 	function FX.Destruir()
@@ -906,7 +966,6 @@ do
 		carga.objetivo, carga.alfa = 0, 0
 		onda.activa = false
 		impacto.activo = false
-		caida.rapida, caida.vMax = false, 0
 		cono.activo = false
 		cono.impacto = nil
 	end
@@ -1002,6 +1061,981 @@ local function BuscarObjetivoDebajo()
 	end
 
 	return objetivo
+end
+
+-- ==========================================
+-- CAÍDA ÉPICA (copia del sistema de Fly.lua)
+-- ==========================================
+-- Ctrl sin objetivo debajo: se mide la altura al suelo con un raycast hacia abajo (como
+-- measureGround de Fly). Con altura >= ALTURA_CAIDA_EPICA caes de golpe al suelo y se dispara
+-- el aterrizaje épico: ondas, polvo del color del suelo, cráter de rocas, luz, sonido, sacudida
+-- de cámara y la animación de agachado. Todo escala con la altura (nivel 1 a 4).
+-- Los aterrizajes naturales (planeando) usan el mismo aterrizaje según lo que hayas caído.
+local ID_CAIDA_BASE = "rbxassetid://287325678"
+local ID_CAIDA_OVERLAY = "rbxassetid://70439247"
+local ID_AIRE_ONDA = "rbxassetid://112096280571499"
+local ID_PARTICULA = "rbxassetid://106822944701902"
+local ID_ONDA_CIRCULO = "rbxassetid://5457833933"
+local ID_SFX_ATERRIZAJE = "rbxassetid://135226467234227"
+local ID_SFX_ATERRIZAJE_CRISTAL = "rbxassetid://132535085898211"
+
+local seguimiento = { enAire = false, pico = 0, ultimo = 0 }
+local tokenAterrizaje = 0
+
+-- Evita que un aterrizaje se cuente dos veces (slam + detección natural).
+local function MarcarAterrizaje()
+	seguimiento.ultimo = tick()
+	seguimiento.enAire = false
+
+	if rootPart then
+		seguimiento.pico = rootPart.Position.Y
+	end
+end
+
+local function Finito(v)
+	return v.X == v.X and v.Y == v.Y and v.Z == v.Z
+		and math.abs(v.X) < 1e9 and math.abs(v.Y) < 1e9 and math.abs(v.Z) < 1e9
+end
+
+-- ---------- sacudida de cámara ----------
+local sacudidaConn, sacudidaBase, sacudidaAplicada
+
+local function CfIgual(a, b)
+	return (a.Position - b.Position).Magnitude < 1e-3
+		and a.LookVector:Dot(b.LookVector) > 0.99999
+		and a.UpVector:Dot(b.UpVector) > 0.99999
+end
+
+local function DetenerSacudida()
+	if sacudidaConn then
+		pcall(function()
+			sacudidaConn:Disconnect()
+		end)
+		sacudidaConn = nil
+	end
+
+	local cam = workspace.CurrentCamera
+
+	if cam and sacudidaBase and sacudidaAplicada
+		and Finito(sacudidaBase.Position) and Finito(sacudidaBase.LookVector) then
+
+		local ok, igual = pcall(function()
+			return CfIgual(cam.CFrame, sacudidaAplicada)
+		end)
+
+		if ok and igual then
+			pcall(function()
+				cam.CFrame = sacudidaBase
+			end)
+		end
+	end
+
+	sacudidaBase = nil
+	sacudidaAplicada = nil
+end
+
+local function SacudirCamara(intensidad, duracion)
+	DetenerSacudida()
+
+	if not workspace.CurrentCamera then return end
+	if not intensidad or intensidad ~= intensidad or intensidad <= 0 then return end
+	if not duracion or duracion ~= duracion or duracion <= 0 then return end
+
+	local inicio = tick()
+
+	sacudidaConn = RunService.RenderStepped:Connect(function()
+		local cam = workspace.CurrentCamera
+
+		if not cam then
+			DetenerSacudida()
+			return
+		end
+
+		local t = tick() - inicio
+
+		if t >= duracion then
+			DetenerSacudida()
+			return
+		end
+
+		local base = cam.CFrame
+
+		if sacudidaBase and sacudidaAplicada and CfIgual(base, sacudidaAplicada) then
+			base = sacudidaBase
+		end
+
+		if not Finito(base.Position) or not Finito(base.LookVector) or not Finito(base.UpVector) then
+			DetenerSacudida()
+			return
+		end
+
+		local decaimiento = 1 - (t / duracion)
+		local t2 = t * math.pi
+		local ax = math.sin(t2 * 30) * intensidad * decaimiento
+		local ay = math.sin(t2 * 25) * intensidad * decaimiento * 0.8
+		local az = math.sin(t2 * 35) * intensidad * decaimiento * 0.6
+		local aplicada = base * CFrame.Angles(math.rad(ax), math.rad(ay), math.rad(az))
+
+		if not Finito(aplicada.Position) or not Finito(aplicada.LookVector) then
+			DetenerSacudida()
+			return
+		end
+
+		sacudidaBase = base
+		sacudidaAplicada = aplicada
+
+		pcall(function()
+			cam.CFrame = aplicada
+		end)
+	end)
+end
+
+-- ---------- medición de altura (igual que measureGround de Fly) ----------
+local function MedirAltura(raiz, char)
+	if not raiz then return nil end
+
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = { char }
+	rp.IgnoreWater = true
+	pcall(function()
+		rp.RespectCanCollide = true
+	end)
+
+	local origen = raiz.Position
+	local res = workspace:Raycast(origen, Vector3.new(0, -5000, 0), rp)
+
+	if not res then return nil end
+
+	return math.max(0, origen.Y - res.Position.Y)
+end
+
+-- Suelo plano debajo (9 rayos): devuelve el punto del suelo, no la posición del torso.
+local function BuscarSueloSeguro(raiz, char)
+	if not raiz then return nil end
+
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = { char }
+
+	local desfases = {
+		Vector3.new(0, 0, 0),
+		Vector3.new(1.5, 0, 0), Vector3.new(-1.5, 0, 0),
+		Vector3.new(0, 0, 1.5), Vector3.new(0, 0, -1.5),
+		Vector3.new(1, 0, 1), Vector3.new(-1, 0, 1),
+		Vector3.new(1, 0, -1), Vector3.new(-1, 0, -1),
+	}
+
+	local mejorY = nil
+
+	for _, d in ipairs(desfases) do
+		local res = workspace:Raycast(raiz.Position + d, Vector3.new(0, -3000, 0), rp)
+
+		if res and res.Normal.Y > 0.5 then
+			if mejorY == nil or res.Position.Y > mejorY then
+				mejorY = res.Position.Y
+			end
+		end
+	end
+
+	if mejorY == nil then return nil end
+
+	return Vector3.new(raiz.Position.X, mejorY, raiz.Position.Z)
+end
+
+local function NivelCaida(altura)
+	if altura < ALTURA_CAIDA_EPICA then
+		return 0
+	end
+
+	local t = math.clamp((altura - ALTURA_CAIDA_EPICA) / (ALTURA_CAIDA_MAX - ALTURA_CAIDA_EPICA), 0, 1)
+
+	return 1 + t * 3
+end
+
+-- ---------- efectos del aterrizaje ----------
+local function EfectosAterrizaje(posicion, velocidad)
+	if not posicion then return end
+
+	task.spawn(function()
+		local intensidad = math.clamp(velocidad / 150, 0, 1)
+
+		if intensidad < 0.05 then return end
+
+		local nivel = math.clamp(math.floor(1 + intensidad * 3 + 0.5), 1, 4)
+		local multEscala = 0.4 + intensidad * 1.2
+		local multEmision = multEscala
+
+		local parteFX = Instance.new("Part")
+		parteFX.Name = "AFO_AterrizajeFX"
+		parteFX.Size = Vector3.new(1, 1, 1)
+		parteFX.Position = posicion + Vector3.new(0, 0.5, 0)
+		parteFX.Anchored = true
+		parteFX.CanCollide = false
+		parteFX.CanQuery = false
+		parteFX.CanTouch = false
+		parteFX.Transparency = 1
+		parteFX.Parent = workspace
+
+		-- Destello de luz (mismo violeta de toda la paleta)
+		local destello = Instance.new("PointLight")
+		destello.Color = COLOR_AFO_CLARO
+		destello.Range = 40 * multEscala
+		destello.Brightness = 15 * multEscala
+		destello.Shadows = true
+		destello.Parent = parteFX
+
+		TweenService:Create(
+			destello,
+			TweenInfo.new(0.15 * multEscala, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+			{ Brightness = 0, Range = 0 }
+		):Play()
+
+		local excluirExtra = {}
+
+		local function LanzarAlSuelo(origen, largo)
+			local rp = RaycastParams.new()
+			rp.FilterType = Enum.RaycastFilterType.Exclude
+			rp.IgnoreWater = true
+			pcall(function()
+				rp.RespectCanCollide = true
+			end)
+
+			local lista = { parteFX }
+
+			if character then
+				table.insert(lista, character)
+			end
+
+			for _, e in ipairs(excluirExtra) do
+				table.insert(lista, e)
+			end
+
+			for _ = 1, 5 do
+				rp.FilterDescendantsInstances = lista
+
+				local hit = workspace:Raycast(origen, Vector3.new(0, -largo, 0), rp)
+
+				if not hit then return nil end
+
+				local inst = hit.Instance
+
+				-- Atraviesa partes casi invisibles (cristales, triggers)
+				if inst:IsA("BasePart") and not inst:IsA("Terrain") and inst.Transparency >= 0.95 then
+					table.insert(lista, inst)
+				else
+					return hit
+				end
+			end
+
+			return nil
+		end
+
+		local function InfoSuelo(hit)
+			local color = Color3.fromRGB(120, 115, 110)
+			local material = Enum.Material.Rock
+			local variante = ""
+
+			if hit then
+				material = hit.Material
+				local inst = hit.Instance
+
+				if inst:IsA("Terrain") then
+					pcall(function()
+						color = workspace.Terrain:GetMaterialColor(hit.Material)
+					end)
+				elseif inst:IsA("BasePart") then
+					color = inst.Color
+					pcall(function()
+						variante = inst.MaterialVariant or ""
+					end)
+				end
+			end
+
+			return color, material, variante
+		end
+
+		local materialImpacto = Enum.Material.Grass
+		local polvoBase = Color3.fromRGB(200, 200, 205)
+
+		do
+			local temprano = LanzarAlSuelo(posicion + Vector3.new(0, 3, 0), 12)
+				or LanzarAlSuelo(posicion + Vector3.new(0, 6, 0), 30)
+				or LanzarAlSuelo(posicion + Vector3.new(0, 10, 0), 80)
+
+			if temprano then
+				materialImpacto = temprano.Material
+				local c = InfoSuelo(temprano)
+				polvoBase = c:Lerp(Color3.new(1, 1, 1), 0.18)
+			end
+		end
+
+		local polvoClaro = polvoBase:Lerp(Color3.new(1, 1, 1), 0.2)
+		local polvoOscuro = polvoBase:Lerp(Color3.new(0, 0, 0), 0.25)
+
+		local esCristal = materialImpacto == Enum.Material.Glass
+			or materialImpacto == Enum.Material.ForceField
+			or materialImpacto == Enum.Material.Ice
+
+		-- Sonido (más grave y fuerte cuanto más alto caes)
+		local volumen = { 1.0, 2.5, 4.5, 7.0 }
+		local tono = { 1.1, 0.85, 0.65, 0.5 }
+
+		local sfx = Instance.new("Sound")
+		sfx.SoundId = esCristal and ID_SFX_ATERRIZAJE_CRISTAL or ID_SFX_ATERRIZAJE
+		sfx.Volume = volumen[nivel]
+		sfx.PlaybackSpeed = tono[nivel]
+		sfx.RollOffMaxDistance = 300 * multEscala
+		sfx.Parent = parteFX
+		sfx:Play()
+
+		task.delay(8, function()
+			pcall(function()
+				sfx:Destroy()
+			end)
+		end)
+
+		local adjunto = Instance.new("Attachment", parteFX)
+
+		local adjPlano = Instance.new("Attachment", parteFX)
+		adjPlano.Orientation = Vector3.new(0, 0, 0)
+
+		local adjInclinado1 = Instance.new("Attachment", parteFX)
+		adjInclinado1.Orientation = Vector3.new(35, 45, 0)
+
+		local adjInclinado2 = Instance.new("Attachment", parteFX)
+		adjInclinado2.Orientation = Vector3.new(-25, -60, 15)
+
+		local function EscalarNS(ns, escala)
+			local kps = {}
+
+			for _, kp in ipairs(ns.Keypoints) do
+				table.insert(kps, NumberSequenceKeypoint.new(kp.Time, kp.Value * escala, kp.Envelope * escala))
+			end
+
+			return NumberSequence.new(kps)
+		end
+
+		local function EscalarNR(nr, escala)
+			return NumberRange.new(nr.Min * escala, nr.Max * escala)
+		end
+
+		local function EmitirAnillo(textura, adj, mult, color)
+			local anillo = Instance.new("ParticleEmitter")
+			anillo.Texture = textura
+			anillo.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+			anillo.EmissionDirection = Enum.NormalId.Top
+			anillo.Speed = NumberRange.new(0.01)
+			anillo.Size = EscalarNS(NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(0.1, 20 * mult),
+				NumberSequenceKeypoint.new(1, 60 * mult),
+			}), multEscala)
+			anillo.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.4),
+				NumberSequenceKeypoint.new(0.2, 0.7),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			anillo.Color = ColorSequence.new(color)
+			anillo.Lifetime = NumberRange.new(0.35 + nivel * 0.05)
+			anillo.LightEmission = 0.8
+			anillo.Rate = 0
+			anillo.Parent = adj
+			anillo:Emit(2)
+
+			task.delay(2, function()
+				pcall(function()
+					anillo:Destroy()
+				end)
+			end)
+		end
+
+		-- Ondas de choque: mismas texturas y tamaños que Fly, teñidas con la paleta violeta.
+		EmitirAnillo(ID_ONDA_CIRCULO, adjPlano, 1.2, COLOR_AFO_CLARO)
+
+		if nivel > 1 then
+			EmitirAnillo(ID_PARTICULA, adjPlano, 1.4, COLOR_AFO_CLARO:Lerp(COLOR_AFO, 0.15))
+			EmitirAnillo(ID_ONDA_CIRCULO, adjInclinado1, 0.9, COLOR_AFO_CLARO:Lerp(COLOR_AFO, 0.35))
+			EmitirAnillo(ID_PARTICULA, adjInclinado2, 1.1, COLOR_AFO_CLARO:Lerp(COLOR_AFO, 0.25))
+		end
+
+		-- Polvo rodante, onda de aire y polvo vertical (color del suelo, como en Fly)
+		local polvo1 = Instance.new("ParticleEmitter")
+		polvo1.Texture = ID_CAIDA_BASE
+		polvo1.Size = EscalarNS(NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 5),
+			NumberSequenceKeypoint.new(0.2, 14),
+			NumberSequenceKeypoint.new(1, 22),
+		}), multEscala)
+		polvo1.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.1, 0.1),
+			NumberSequenceKeypoint.new(0.8, 0.7),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		polvo1.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, polvoClaro),
+			ColorSequenceKeypoint.new(0.6, polvoBase),
+			ColorSequenceKeypoint.new(1, polvoOscuro),
+		})
+		polvo1.Lifetime = EscalarNR(NumberRange.new(1.2, 1.8), 1 + nivel * 0.1)
+		polvo1.Speed = EscalarNR(NumberRange.new(55, 90), multEscala)
+		polvo1.SpreadAngle = Vector2.new(180, 180)
+		polvo1.RotSpeed = NumberRange.new(-250, 250)
+		polvo1.Drag = 14
+		polvo1.Acceleration = Vector3.new(0, -40 * multEscala, 0)
+		polvo1.ZOffset = 2
+		polvo1.Rate = 0
+		polvo1.Parent = adjunto
+
+		local polvo2 = Instance.new("ParticleEmitter")
+		polvo2.Texture = ID_AIRE_ONDA
+		polvo2.Size = polvo1.Size
+		polvo2.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.3),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		polvo2.Color = polvo1.Color
+		polvo2.Lifetime = polvo1.Lifetime
+		polvo2.Speed = polvo1.Speed
+		polvo2.SpreadAngle = polvo1.SpreadAngle
+		polvo2.RotSpeed = NumberRange.new(-50, 50)
+		polvo2.Drag = polvo1.Drag
+		polvo2.Acceleration = polvo1.Acceleration
+		polvo2.ZOffset = 1
+		polvo2.Rate = 0
+		polvo2.Parent = adjunto
+
+		local polvoVertical = Instance.new("ParticleEmitter")
+		polvoVertical.Texture = ID_CAIDA_OVERLAY
+		polvoVertical.EmissionDirection = Enum.NormalId.Top
+		polvoVertical.Size = EscalarNS(NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 4),
+			NumberSequenceKeypoint.new(1, 18),
+		}), multEscala)
+		polvoVertical.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.1),
+			NumberSequenceKeypoint.new(0.7, 0.8),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		polvoVertical.Color = ColorSequence.new(polvoBase)
+		polvoVertical.Lifetime = EscalarNR(NumberRange.new(1.5, 2.5), 1 + nivel * 0.1)
+		polvoVertical.Speed = EscalarNR(NumberRange.new(25, 55), multEscala)
+		polvoVertical.SpreadAngle = Vector2.new(35, 35)
+		polvoVertical.RotSpeed = NumberRange.new(-40, 40)
+		polvoVertical.Drag = 7
+		polvoVertical.Acceleration = Vector3.new(0, -10 * multEscala, 0)
+		polvoVertical.ZOffset = 0
+		polvoVertical.Rate = 0
+		polvoVertical.Parent = adjunto
+
+		polvo1:Emit(math.floor(50 * multEmision))
+		polvo2:Emit(math.floor(40 * multEmision))
+		polvoVertical:Emit(math.floor((nivel == 1 and 10 or 25) * multEmision))
+
+		task.delay(8, function()
+			pcall(function()
+				parteFX:Destroy()
+			end)
+		end)
+
+		-- Cráter de rocas con el material y color del suelo
+		if intensidad >= 0.15 then
+			local escalaTam = multEscala * 0.7
+			local escalaCant = multEmision * 0.7
+
+			local carpetaCrater = Instance.new("Folder")
+			carpetaCrater.Name = "AFO_CraterAterrizaje"
+			carpetaCrater.Parent = workspace
+			table.insert(excluirExtra, carpetaCrater)
+
+			local colorSuelo, materialSuelo, varianteSuelo
+
+			task.wait(0.15)
+
+			local function GolpeSuelo(pos)
+				return LanzarAlSuelo(pos + Vector3.new(0, 4, 0), 12)
+					or LanzarAlSuelo(pos + Vector3.new(0, 4, 0), 30)
+			end
+
+			local function PosRaizActual()
+				local pos = posicion
+
+				if rootPart and rootPart.Parent then
+					pos = rootPart.Position
+				end
+
+				return pos
+			end
+
+			local function IntentarSuelo()
+				local cur = PosRaizActual()
+
+				return LanzarAlSuelo(cur + Vector3.new(0, 5, 0), 25)
+					or LanzarAlSuelo(cur + Vector3.new(0, 5, 0), 60)
+					or LanzarAlSuelo(posicion + Vector3.new(0, 5, 0), 25)
+					or LanzarAlSuelo(posicion + Vector3.new(0, 5, 0), 60)
+			end
+
+			local golpeSuelo = IntentarSuelo()
+
+			if not golpeSuelo then
+				task.wait(0.1)
+				golpeSuelo = IntentarSuelo()
+			end
+
+			colorSuelo, materialSuelo, varianteSuelo = InfoSuelo(golpeSuelo)
+
+			task.wait(0.05)
+
+			local anillosRoca = {
+				{
+					piezas = math.max(4, math.floor(8 * escalaCant)),
+					radio = 5 * escalaTam,
+					mult = 1.0 * escalaTam,
+				},
+				{
+					piezas = math.max(6, math.floor(12 * escalaCant)),
+					radio = 10 * escalaTam,
+					mult = 1.3 * escalaTam,
+				},
+				{
+					piezas = math.max(8, math.floor(18 * escalaCant)),
+					radio = 16 * escalaTam,
+					mult = 1.6 * escalaTam,
+				},
+			}
+
+			local rocas = {}
+
+			for _, anillo in ipairs(anillosRoca) do
+				for i = 1, anillo.piezas do
+					local angulo = math.rad((360 / anillo.piezas) * i + math.random(-8, 8))
+					local desfase = Vector3.new(math.cos(angulo) * anillo.radio, 0, math.sin(angulo) * anillo.radio)
+
+					local roca = Instance.new("Part")
+					roca.Size = Vector3.new(
+						math.random(25, 45) / 10 * anillo.mult,
+						math.random(15, 25) / 10 * (escalaTam ^ 0.5),
+						math.random(35, 65) / 10 * anillo.mult
+					)
+
+					local posLateral = Vector3.new(posicion.X + desfase.X, posicion.Y, posicion.Z + desfase.Z)
+					local golpeRoca = GolpeSuelo(posLateral)
+					local sueloY = golpeRoca and golpeRoca.Position.Y or posicion.Y
+					local cColor, cMaterial, cVariante = colorSuelo, materialSuelo, varianteSuelo
+
+					if golpeRoca then
+						cColor, cMaterial, cVariante = InfoSuelo(golpeRoca)
+					end
+
+					roca.Position = Vector3.new(
+						posicion.X + desfase.X,
+						sueloY - roca.Size.Y * 0.5,
+						posicion.Z + desfase.Z
+					)
+					roca.Anchored = true
+					roca.CanCollide = false
+					roca.CanQuery = false
+					roca.CanTouch = false
+
+					pcall(function()
+						roca.Material = cMaterial
+					end)
+
+					roca.Color = cColor
+
+					if cVariante and cVariante ~= "" then
+						pcall(function()
+							roca.MaterialVariant = cVariante
+						end)
+					end
+
+					if golpeRoca and golpeRoca.Instance:IsA("BasePart") and not golpeRoca.Instance:IsA("Terrain") then
+						for _, hijo in ipairs(golpeRoca.Instance:GetChildren()) do
+							if hijo:IsA("SurfaceAppearance") or hijo:IsA("Texture") then
+								pcall(function()
+									hijo:Clone().Parent = roca
+								end)
+							end
+						end
+					end
+
+					local mira = CFrame.lookAt(roca.Position, Vector3.new(posicion.X, roca.Position.Y, posicion.Z))
+					local inclinacion = math.rad(-math.random(30, 55) + (anillo.radio * 1.5 / escalaTam))
+					local giro = math.rad(math.random(-15, 15))
+
+					roca.CFrame = mira * CFrame.Angles(inclinacion, 0, giro)
+					roca.Parent = carpetaCrater
+					table.insert(rocas, roca)
+
+					if esCristal then
+						-- Sobre cristal/hielo las piezas salen disparadas y se desvanecen
+						local dir = (desfase.Magnitude > 0.01 and desfase.Unit)
+							or Vector3.new(math.random(-10, 10) / 10, 0, math.random(-10, 10) / 10)
+						local distancia = (8 + math.random() * 14) * escalaTam
+						local subida = (6 + math.random() * 10) * escalaTam
+						local giroFuerte = math.rad(math.random(180, 720)) * (math.random() < 0.5 and -1 or 1)
+						local destino = roca.CFrame + (dir * distancia) + Vector3.new(0, subida, 0)
+
+						destino = destino * CFrame.Angles(giroFuerte, giroFuerte * 0.6, giroFuerte * 0.3)
+
+						local tiempo = 0.5 + math.random() * 0.4
+
+						TweenService:Create(
+							roca,
+							TweenInfo.new(tiempo, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+							{ CFrame = destino, Transparency = 1 }
+						):Play()
+
+						task.delay(tiempo + 0.05, function()
+							pcall(function()
+								roca:Destroy()
+							end)
+						end)
+					else
+						local arriba = roca.CFrame + Vector3.new(0, roca.Size.Y * 0.9, 0)
+
+						TweenService:Create(
+							roca,
+							TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+							{ CFrame = arriba }
+						):Play()
+					end
+				end
+			end
+
+			-- Las rocas se hunden y el cráter desaparece
+			task.delay(3.5 + nivel * 0.5, function()
+				for _, roca in ipairs(rocas) do
+					if roca and roca.Parent then
+						TweenService:Create(
+							roca,
+							TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+							{ CFrame = roca.CFrame - Vector3.new(0, roca.Size.Y * 2, 0) }
+						):Play()
+					end
+				end
+
+				task.delay(2, function()
+					pcall(function()
+						carpetaCrater:Destroy()
+					end)
+				end)
+			end)
+		end
+
+		if intensidad >= 0.33 then
+			SacudirCamara(2.0 + intensidad * 1.5, 0.30)
+		else
+			SacudirCamara(0.8 + intensidad * 3.6, 0.18)
+		end
+	end)
+end
+
+-- ---------- aterrizaje (efectos + animación de agachado) ----------
+local function PiesDe(raiz, hum)
+	return raiz.Position - Vector3.new(0, hum.HipHeight + raiz.Size.Y / 2, 0)
+end
+
+local function AterrizajeEpico(char, altura, conAnimacion)
+	if not char or not char.Parent then return end
+
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return end
+
+	if NivelCaida(altura) <= 0 then return end
+
+	local raiz = char:FindFirstChild("HumanoidRootPart")
+	local anim = hum:FindFirstChildOfClass("Animator")
+
+	tokenAterrizaje += 1
+	local miToken = tokenAterrizaje
+
+	DetenerAnimacionesCustom(0)
+
+	local posicion = (raiz and Finito(raiz.Position)) and (PiesDe(raiz, hum) + Vector3.new(0, 0.2, 0))
+		or Vector3.new(0, 0, 0)
+
+	EfectosAterrizaje(posicion, altura * 0.5)
+
+	if not conAnimacion or not anim then return end
+
+	-- Igual que Fly: durante el agachado se apaga el Animate y solo suenan estas dos animaciones.
+	local scriptAnimate = char:FindFirstChild("Animate")
+
+	if scriptAnimate then
+		pcall(function()
+			scriptAnimate.Disabled = true
+		end)
+	end
+
+	local ok, tocando = pcall(function()
+		return anim:GetPlayingAnimationTracks()
+	end)
+
+	if ok and tocando then
+		for _, pista in ipairs(tocando) do
+			pcall(function()
+				pista:Stop(0)
+			end)
+		end
+	end
+
+	local idsAterrizaje = { [ID_CAIDA_BASE] = true, [ID_CAIDA_OVERLAY] = true }
+
+	local connReproducida = anim.AnimationPlayed:Connect(function(pista)
+		if pista.Animation and not idsAterrizaje[pista.Animation.AnimationId] then
+			pcall(function()
+				pista:Stop(0)
+			end)
+		end
+	end)
+
+	local function CargarPista(id, prioridad)
+		local a = Instance.new("Animation")
+		a.AnimationId = id
+
+		local pista = anim:LoadAnimation(a)
+
+		pcall(function()
+			a:Destroy()
+		end)
+
+		pista.Priority = prioridad
+		pista.Looped = true
+
+		return pista
+	end
+
+	local pistaBase = CargarPista(ID_CAIDA_BASE, Enum.AnimationPriority.Action3)
+	local pistaOverlay = CargarPista(ID_CAIDA_OVERLAY, Enum.AnimationPriority.Action4)
+
+	pcall(function()
+		pistaBase:Play(0.0, 1, 1)
+		pistaOverlay:Play(0.0, 1, 1)
+	end)
+
+	local inicio = tick()
+	local cancelado = false
+
+	local connInput = UserInputService.InputBegan:Connect(function(input)
+		if UserInputService:GetFocusedTextBox() then return end
+
+		local kc = input.KeyCode
+
+		if kc == Enum.KeyCode.W or kc == Enum.KeyCode.A or kc == Enum.KeyCode.S or kc == Enum.KeyCode.D
+			or kc == Enum.KeyCode.Space or kc == Enum.KeyCode.Q or kc == Enum.KeyCode.F
+			or kc == Enum.KeyCode.LeftShift or kc == Enum.KeyCode.LeftControl
+			or input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+
+			cancelado = true
+		end
+	end)
+
+	local function Esperar(d)
+		local t0 = tick()
+
+		while tick() - t0 < d do
+			if tokenAterrizaje ~= miToken then return "token" end
+			if cancelado then return "cancel" end
+
+			if tick() - inicio > 0.25 and hum.MoveDirection.Magnitude > 0.1 then
+				cancelado = true
+				return "cancel"
+			end
+
+			task.wait()
+		end
+
+		return nil
+	end
+
+	local function Terminar()
+		connInput:Disconnect()
+		connReproducida:Disconnect()
+	end
+
+	-- Fases como en Fly: golpe rápido, pausa, recuperación lenta, salida
+	local fases = { { 0.06, 8.0 }, { 0.30, 0 }, { 0.45, 0.3 }, { 0.30, 1.0 } }
+	local interrumpido = false
+
+	for _, fase in ipairs(fases) do
+		pcall(function()
+			pistaBase:AdjustSpeed(fase[2])
+			pistaOverlay:AdjustSpeed(fase[2])
+		end)
+
+		local r = Esperar(fase[1])
+
+		if r == "token" then
+			Terminar()
+			return
+		end
+
+		if r == "cancel" then
+			interrumpido = true
+			break
+		end
+	end
+
+	local desvanecer = interrumpido and 0.08 or 0.5
+
+	pcall(function()
+		pistaBase:Stop(desvanecer)
+		pistaOverlay:Stop(desvanecer)
+	end)
+
+	if interrumpido then
+		task.wait(0.08)
+	elseif Esperar(0.5) == "token" then
+		Terminar()
+		return
+	end
+
+	Terminar()
+
+	if tokenAterrizaje ~= miToken then return end
+
+	pcall(function()
+		pistaBase:Destroy()
+		pistaOverlay:Destroy()
+	end)
+
+	if scriptAnimate then
+		pcall(function()
+			scriptAnimate.Disabled = false
+		end)
+	end
+
+	-- Si ya volviste a volar no se toca el estado del Humanoid.
+	if hum.Parent and hum.Health > 0 and not isFloating then
+		pcall(function()
+			hum:ChangeState(Enum.HumanoidStateType.Running)
+		end)
+	end
+end
+
+-- Ctrl: cae de golpe al suelo y dispara el aterrizaje según la altura medida.
+local function CaidaEpica(altura)
+	local suelo = BuscarSueloSeguro(rootPart, character)
+
+	if not suelo then return false end
+
+	local alturaPiernas = humanoid.HipHeight + (rootPart.Size.Y / 2)
+	local _, ry, _ = rootPart.CFrame:ToOrientation()
+
+	if ry ~= ry then
+		ry = 0
+	end
+
+	rootPart.CFrame = CFrame.new(suelo.X, suelo.Y + alturaPiernas, suelo.Z) * CFrame.Angles(0, ry, 0)
+	rootPart.AssemblyLinearVelocity = Vector3.zero
+	rootPart.AssemblyAngularVelocity = Vector3.zero
+
+	humanoid.PlatformStand = false
+	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+
+	MarcarAterrizaje()
+
+	local char = character
+
+	task.spawn(AterrizajeEpico, char, altura, true)
+
+	task.delay(0.1, function()
+		if not _isActive then return end
+
+		isSlamming = false
+		lastSlamEndTime = tick()
+	end)
+
+	return true
+end
+
+-- Aterrizaje al terminar de caer/planear: efecto según lo que hayas caído (pico - altura actual).
+local function AterrizajeNatural(altura)
+	if not (character and rootPart and humanoid) then return end
+
+	if altura >= ALTURA_CAIDA_EPICA then
+		task.spawn(AterrizajeEpico, character, altura, ANIMAR_ATERRIZAJE_NATURAL)
+	else
+		FX.Impacto(PiesDe(rootPart, humanoid), math.clamp(altura / ALTURA_CAIDA_EPICA, 0.3, 0.8))
+	end
+end
+
+-- Se llama cada cuadro: sigue el punto más alto del salto/vuelo y detecta cuándo tocas el suelo.
+local function RastrearAterrizaje()
+	if not (humanoid and rootPart and humanoid.Parent and rootPart.Parent) or humanoid.Health <= 0 then
+		seguimiento.enAire = false
+		return
+	end
+
+	local py = rootPart.Position.Y
+
+	if humanoid.FloorMaterial == Enum.Material.Air then
+		if not seguimiento.enAire then
+			seguimiento.enAire = true
+			seguimiento.pico = py
+		end
+
+		seguimiento.pico = math.max(seguimiento.pico, py)
+		return
+	end
+
+	if seguimiento.enAire then
+		seguimiento.enAire = false
+
+		local altura = seguimiento.pico - py
+
+		if tick() - seguimiento.ultimo > 0.6 and altura >= ALTURA_IMPACTO_MIN then
+			seguimiento.ultimo = tick()
+			AterrizajeNatural(altura)
+		end
+	end
+
+	seguimiento.pico = py
+end
+
+-- ==========================================
+-- DASH AÉREO
+-- ==========================================
+local function IniciarDash()
+	if not (rootPart and humanoid and isFloating) then return end
+
+	local ahora = tick()
+
+	if ahora < dash.listo then return end
+
+	local cam = workspace.CurrentCamera
+	local moveDir = humanoid.MoveDirection
+	local dir
+
+	if moveDir.Magnitude > 0.05 then
+		dir = moveDir.Unit
+
+		-- Avanzando hacia donde miras: el dash sigue también la inclinación de la cámara.
+		if cam then
+			local look = cam.CFrame.LookVector
+			local plano = Vector3.new(look.X, 0, look.Z)
+
+			if plano.Magnitude > 0.01 and moveDir:Dot(plano.Unit) > 0.3 then
+				dir = Vector3.new(moveDir.X, look.Y, moveDir.Z).Unit
+			end
+		end
+	elseif cam then
+		dir = cam.CFrame.LookVector
+	else
+		return
+	end
+
+	dash.dir = dir
+	dash.fin = ahora + DURACION_DASH
+	dash.listo = ahora + ENFRIAMIENTO_DASH
+
+	rootPart.AssemblyLinearVelocity = dir * VELOCIDAD_DASH
+
+	FX.Dash(dir)
 end
 
 -- ==========================================
@@ -1129,6 +2163,14 @@ local function AplastarContraElSuelo()
 		return
 	end
 
+	-- Caída épica (copiada de Fly): la altura se mide con un raycast hacia abajo y el aterrizaje
+	-- escala con ella. Por debajo de ALTURA_CAIDA_EPICA se queda el slam normal de siempre.
+	local altura = MedirAltura(rootPart, character)
+
+	if altura and altura >= ALTURA_CAIDA_EPICA and CaidaEpica(altura) then
+		return
+	end
+
 	local rayResult = BuscarSueloDebajo()
 
 	if not rayResult then
@@ -1153,7 +2195,11 @@ local function AplastarContraElSuelo()
 
 	rootPart.AssemblyLinearVelocity = Vector3.zero
 	humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-	FX.Impacto(rayResult.Position, 1)
+	MarcarAterrizaje()
+
+	if (altura or 0) >= ALTURA_IMPACTO_MIN then
+		FX.Impacto(rayResult.Position, math.clamp(altura / ALTURA_CAIDA_EPICA, 0.35, 0.8))
+	end
 
 	task.delay(0.1, function()
 		if not _isActive then return end
@@ -1205,6 +2251,9 @@ local function SetupCharacter(newCharacter)
 	holdTimer = 0
 	tSuelo = 0
 	estabaSuspendido = false
+	tokenAterrizaje += 1
+	seguimiento.enAire = false
+	dash.fin = 0
 
 	local lastHealth = humanoid.Health
 
@@ -1388,6 +2437,11 @@ function M.Start(Keys)
 			or input.KeyCode == Enum.KeyCode.RightControl then
 
 			AplastarContraElSuelo()
+
+		elseif input.KeyCode == TECLA_DASH then
+			if not EstaSuspendido() then
+				IniciarDash()
+			end
 		end
 	end)
 
@@ -1407,6 +2461,10 @@ function M.Start(Keys)
 	local renderConn = RunService.RenderStepped:Connect(function(dt)
 		-- Los efectos se dibujan siempre, para que el desvanecimiento termine bien.
 		FX.Render(dt)
+
+		if _isActive then
+			RastrearAterrizaje()
+		end
 
 		if not _isActive
 			or isSlamming
@@ -1516,6 +2574,8 @@ function M.Stop()
 	DetenerAnimacionesCustom(0)
 	DestruirFuerzas()
 	FX.Destruir()
+	tokenAterrizaje += 1
+	DetenerSacudida()
 
 	isHoldingSpace = false
 	isFloating = false
