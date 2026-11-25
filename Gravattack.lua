@@ -1,6 +1,9 @@
 --[[
 	Gravattack.lua  (v3)
 
+	Cambios de la v3.1: salto aéreo más fuerte, impulso mucho más potente y sin bugs (ya no te manda al suelo ni te
+	deja clavado: dirección horizontal con zona muerta + inercia), anillos eléctricos amarillos con distorsión.
+
 	Cambios de la v3:
 	  1) Despegue (el salto que activa el Gravattack): ahora sube SIEMPRE ALTURA_DESPEGUE studs (60 por defecto).
 	  2) Salto en el aire mucho más bajo: ALTURA_SALTO_AEREO (12) y ALTURA_MEGA_AEREO (30). Antes se acumulaba sin freno.
@@ -57,9 +60,9 @@ local ACEL_ASCENSO_BURST = 900         -- fuerza del ascenso (studs/s²): alta p
 local IMPULSO_EXPLOSIVO_XZ = 120
 
 -- Saltos en el aire (Space estando en vuelo)
-local ALTURA_SALTO_AEREO = 12          -- altura de cada salto aéreo (antes subía cientos de studs)
+local ALTURA_SALTO_AEREO = 28          -- altura de cada salto aéreo (v3 tenía 12)
 local TIEMPO_SALTO_AEREO = 0.25
-local ALTURA_MEGA_AEREO = 30           -- altura del mega salto aéreo
+local ALTURA_MEGA_AEREO = 60           -- altura del mega salto aéreo (v3 tenía 30)
 local TIEMPO_ASCENSO_MEGA_AEREO = 0.35
 local TIEMPO_MEGA_AEREO = 0.4           -- s que hay que mantener Space para que sea mega salto
 local MEGA_AEREO_REPETIBLE = true       -- true: seguir manteniendo Space encadena OTRO mega salto cada TIEMPO_MEGA_AEREO
@@ -156,12 +159,15 @@ local ACEL_ASCENSO = 110
 local ACEL_PICADA = 140
 local VELOCIDAD_BOOST = 1.7              -- multiplicador de velocidad mientras mantienes Shift
 local TECLA_DASH = Enum.KeyCode.Q        -- MEGA IMPULSO (reinterpretación del Mega Turbo de Fly; cambia la tecla aquí)
-local VELOCIDAD_DASH = 420               -- velocidad del mega impulso (Fly usa 607)
-local DURACION_DASH = 0.45               -- duración máxima del mega impulso
-local FRENADO_FINAL_DASH = 0.4           -- la velocidad cae a este factor al final del impulso
+local VELOCIDAD_DASH = 700               -- velocidad del mega impulso (Fly usa 607)
+local DURACION_DASH = 0.55               -- duración máxima del mega impulso
+local FRENADO_FINAL_DASH = 0.35          -- la velocidad cae a este factor al final del impulso
+local INERCIA_DASH = 1.2                 -- s tras el impulso en que conservas inercia (frenado suave)
+local ACEL_INERCIA_DASH = 220            -- frenado (studs/s²) durante esa inercia: ya no te quedas clavado en el aire
+local ZONA_MUERTA_Y_DASH = 0.4           -- si la cámara mira menos inclinada que esto, el impulso va HORIZONTAL
 local ESCALA_ONDA_MEGA = 0.55            -- tamaño de las ondas sónicas (Fly: 0.7)
 local ENFRIAMIENTO_DASH = 0.9
-local ACEL_DASH = 1400
+local ACEL_DASH = 4000
 
 -- Mega impulso: animación de CAMINAR HACIA ADELANTE de Fly con el vuelo activo (IDS_MEGA.caminar, Action3)
 local VEL_ANIM_CAMINAR = 1.5                   -- velocidad de reproducción durante el impulso
@@ -177,7 +183,7 @@ local AGARRE_RIGIDEZ = 60               -- fuerza del resorte hacia la espalda
 local AGARRE_MARGEN_VACIO = 80          -- como Fly: sobre FallenPartsDestroyHeight se considera vacío
 
 -- Mega impulso: si te quedas quieto se cancela (con su set de partículas de frenado)
-local CANCELAR_SI_QUIETO = true
+local CANCELAR_SI_QUIETO = false  -- (era true: cortaba el impulso y te dejaba clavado en el aire)
 local GRACIA_QUIETO = 0.3               -- s de gracia desde que empieza antes de poder cancelar
 
 -- TPs forzados solo en Y (el juego detecta mal tras movimientos bruscos): X/Z no se tocan
@@ -459,6 +465,11 @@ local function ActualizarFuerzas()
 	end
 
 	local aXZ = (conInput and ACEL_HORIZONTAL or ACEL_FRENADO) * (boost and 1.3 or 1)
+
+	-- Tras el impulso conservas la inercia (frenado suave) en vez de quedarte parado de golpe.
+	if not conInput and tick() < (dash.inerciaFin or 0) then
+		aXZ = ACEL_INERCIA_DASH
+	end
 
 	local aY
 	if velActual.Y > objetivoY then
@@ -1261,138 +1272,206 @@ do
 		end)
 	end
 
-	-- Igual que sonicBoomEffect(2) de Fly: tres anillos sónicos que miran a la cámara + onda de choque.
-	function E.OndaSonicaFly()
-		local raiz = rootPart
+	-- ---------- Anillos eléctricos amarillos (como la referencia) ----------
+	-- Cada anillo son segmentos neón en círculo, perpendicular a la dirección del impulso, que se
+	-- expande y se apaga; el borde vibra y suelta chispas/espinas. Un halo translúcido más grueso da el brillo.
+	E.NSEG = 24
+	E.NESPINAS = 9
+	E.anillosElec = {}
 
-		if not raiz or not raiz.Parent or not carpeta then return end
+	function E.ParteNeon(color, transp)
+		local p = Instance.new("Part")
+		p.Name = "SegmentoAnillo"
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Material = Enum.Material.Neon
+		p.Color = color
+		p.Transparency = transp
+		p.Size = Vector3.new(0.2, 0.2, 0.2)
+		return p
+	end
 
-		local e = ESCALA_ONDA_MEGA
-		local anillos = {
-			{ ini = 5 * e, pico = 140 * e, exp = 0.32, retraso = 0.14, fade = 0.26 },
-			{ ini = 4 * e, pico = 90 * e, exp = 0.20, retraso = 0.06, fade = 0.18 },
-			{ ini = 3 * e, pico = 55 * e, exp = 0.12, retraso = 0, fade = 0.10 },
-		}
+	function E.NuevoAnillo(pos, dir, r0, r1, dur, grosor, retraso)
+		if not carpeta then return end
 
-		for i, r in ipairs(anillos) do
-			task.spawn(function()
-				task.wait(i == 1 and 0 or (i == 2 and 0.02 or 0.04))
+		-- limite de seguridad para no saturar de partes
+		if #E.anillosElec > 14 then return end
 
-				if not raiz.Parent or not carpeta then return end
+		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
+		local base = CFrame.lookAt(pos, pos + dir, arriba) -- el anillo vive en el plano XY, mirando a "dir"
 
-				local p = Instance.new("Part")
-				p.Name = "AnilloSonico"
-				p.Anchored = true
-				p.CanCollide = false
-				p.CanQuery = false
-				p.CanTouch = false
-				p.CastShadow = false
-				p.Transparency = 1
-				p.Size = Vector3.new(r.ini * 2, r.ini * 2, 0.01)
-				p.CFrame = raiz.CFrame
+		local carp = Instance.new("Folder")
+		carp.Name = "AnilloElectrico"
+		carp.Parent = carpeta
 
-				local cam = workspace.CurrentCamera
+		local segs, espinas = {}, {}
 
-				if cam then
-					local d = cam.CFrame.Position - raiz.Position
+		for i = 1, E.NSEG do
+			local nucleo = E.ParteNeon(COLOR_RAYO, 1)
+			local halo = E.ParteNeon(COLOR_AFO, 1)
+			nucleo.Parent = carp
+			halo.Parent = carp
+			segs[i] = { nucleo, halo }
+		end
 
-					if d.Magnitude > 0.1 then
-						p.CFrame = CFrame.lookAt(raiz.Position, raiz.Position + d.Unit)
-					end
+		for j = 1, E.NESPINAS do
+			local sp = E.ParteNeon(COLOR_AFO_CLARO, 1)
+			sp.Parent = carp
+			espinas[j] = sp
+		end
+
+		table.insert(E.anillosElec, {
+			t = -(retraso or 0), dur = dur, r0 = r0, r1 = r1, pos = pos, base = base,
+			segs = segs, espinas = espinas, folder = carp, grosor = grosor,
+		})
+	end
+
+	function E.RenderAnillos(dt)
+		for idx = #E.anillosElec, 1, -1 do
+			local a = E.anillosElec[idx]
+
+			a.t += dt
+
+			if not a.folder.Parent or a.t >= a.dur then
+				pcall(function()
+					a.folder:Destroy()
+				end)
+				table.remove(E.anillosElec, idx)
+			elseif a.t >= 0 then
+				local k = a.t / a.dur
+				local e = 1 - (1 - k) ^ 3
+				local r = a.r0 + (a.r1 - a.r0) * e
+				local alfa = math.clamp(k ^ 1.6, 0, 1)
+				local grosor = a.grosor * (1 - 0.55 * k)
+				local puntos = {}
+
+				for i = 1, E.NSEG do
+					local ang = (i - 1) / E.NSEG * math.pi * 2
+					local rr = r * (1 + E.Az(-0.04, 0.04)) -- el borde vibra como electricidad
+
+					puntos[i] = a.base * Vector3.new(math.cos(ang) * rr, math.sin(ang) * rr, 0)
 				end
 
-				p.Parent = carpeta
+				for i = 1, E.NSEG do
+					local p1 = puntos[i]
+					local p2 = puntos[i % E.NSEG + 1]
+					local len = (p2 - p1).Magnitude + 0.06
+					local cf = CFrame.lookAt((p1 + p2) / 2, p2)
+					local s = a.segs[i]
 
-				local sg = Instance.new("SurfaceGui")
-				sg.Adornee = p
-				sg.Face = Enum.NormalId.Front
-				sg.AlwaysOnTop = false
-				sg.LightInfluence = 0
-				sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
-				sg.CanvasSize = Vector2.new(256, 256)
-				sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+					s[1].Size = Vector3.new(grosor, grosor, len)
+					s[1].CFrame = cf
+					s[1].Transparency = alfa * 0.9
+
+					s[2].Size = Vector3.new(grosor * 3.2, grosor * 3.2, len)
+					s[2].CFrame = cf
+					s[2].Transparency = 0.7 + 0.3 * alfa
+				end
+
+				-- chispas que saltan del borde y cambian de sitio cada cuadro
+				for j, sp in ipairs(a.espinas) do
+					local p = puntos[math.random(1, E.NSEG)]
+					local radial = p - a.pos
+
+					if radial.Magnitude > 0.1 then
+						local d = (radial.Unit + Vector3.new(E.Az(-0.7, 0.7), E.Az(-0.7, 0.7), E.Az(-0.7, 0.7))).Unit
+						local largo = E.Az(0.9, 2.6) * (0.6 + r / 14)
+
+						sp.Size = Vector3.new(grosor * 0.55, grosor * 0.55, largo)
+						sp.CFrame = CFrame.lookAt(p + d * largo / 2, p + d * largo)
+						sp.Transparency = math.clamp(alfa + E.Az(0, 0.35), 0, 1)
+					end
+				end
+			end
+		end
+	end
+
+	-- Distorsión: Roblox no deja deformar la pantalla de verdad, así que se combina (1) golpe de FOV,
+	-- (2) desenfoque radial breve, (3) cambio de color y (4) una esfera de cristal que se expande
+	-- (refracta el fondo con iluminación Future).
+	function E.Distorsion()
+		local cam = workspace.CurrentCamera
+
+		if not cam then return end
+
+		if not E.fovBase then
+			E.fovBase = cam.FieldOfView
+		end
+
+		local base = E.fovBase
+
+		pcall(function()
+			TweenService:Create(cam, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ FieldOfView = math.min(base + 22, 120) }):Play()
+		end)
+
+		task.delay(0.08, function()
+			pcall(function()
+				TweenService:Create(cam, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+					{ FieldOfView = base }):Play()
+			end)
+		end)
+
+		task.delay(0.7, function()
+			pcall(function()
+				cam.FieldOfView = base
+			end)
+			E.fovBase = nil
+		end)
+
+		pcall(function()
+			local blur = Instance.new("BlurEffect")
+			blur.Size = 20
+			blur.Parent = cam
+			TweenService:Create(blur, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = 0 }):Play()
+			task.delay(0.5, function()
 				pcall(function()
-					sg.Brightness = 1.5
+					blur:Destroy()
 				end)
-				sg.Parent = p
+			end)
 
-				local exterior = Instance.new("ImageLabel")
-				exterior.Image = FLY_RING
-				exterior.Size = UDim2.new(1, 0, 1, 0)
-				exterior.BackgroundTransparency = 1
-				exterior.ImageColor3 = COLOR_AFO
-				exterior.ImageTransparency = 0.25
-				exterior.ZIndex = 3
-				exterior.Parent = sg
-
-				local escalaInterior = 0.72 - (i - 1) * 0.08
-				local interior = Instance.new("ImageLabel")
-				interior.Image = FLY_RING
-				interior.Size = UDim2.new(escalaInterior, 0, escalaInterior, 0)
-				interior.Position = UDim2.new((1 - escalaInterior) / 2, 0, (1 - escalaInterior) / 2, 0)
-				interior.BackgroundTransparency = 1
-				interior.ImageColor3 = COLOR_AFO_CLARO
-				interior.ImageTransparency = 0.35
-				interior.ZIndex = 2
-				interior.Parent = sg
-
-				TweenService:Create(p, TweenInfo.new(r.exp, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-					{ Size = Vector3.new(r.pico * 2, r.pico * 2, 0.01) }):Play()
-
-				task.delay(r.retraso, function()
-					if not p.Parent then return end
-
-					TweenService:Create(exterior, TweenInfo.new(r.fade, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-						{ ImageTransparency = 1 }):Play()
-					TweenService:Create(interior, TweenInfo.new(r.fade * 0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-						{ ImageTransparency = 1 }):Play()
+			local cc = Instance.new("ColorCorrectionEffect")
+			cc.TintColor = Color3.fromRGB(255, 236, 170)
+			cc.Contrast = 0.3
+			cc.Saturation = 0.25
+			cc.Parent = cam
+			TweenService:Create(cc, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+				{ TintColor = Color3.new(1, 1, 1), Contrast = 0, Saturation = 0 }):Play()
+			task.delay(0.6, function()
+				pcall(function()
+					cc:Destroy()
 				end)
+			end)
+		end)
 
-				task.delay(r.retraso + r.fade + 0.08, function()
-					pcall(function()
-						p:Destroy()
-					end)
+		if rootPart and rootPart.Parent and carpeta then
+			local esfera = Instance.new("Part")
+			esfera.Name = "EsferaDistorsion"
+			esfera.Shape = Enum.PartType.Ball
+			esfera.Anchored = true
+			esfera.CanCollide = false
+			esfera.CanQuery = false
+			esfera.CanTouch = false
+			esfera.CastShadow = false
+			esfera.Material = Enum.Material.Glass
+			esfera.Color = Color3.fromRGB(255, 244, 200)
+			esfera.Transparency = 0.8
+			esfera.Size = Vector3.new(6, 6, 6)
+			esfera.CFrame = rootPart.CFrame
+			esfera.Parent = carpeta
+
+			TweenService:Create(esfera, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+				{ Size = Vector3.new(70, 70, 70), Transparency = 1 }):Play()
+
+			task.delay(0.4, function()
+				pcall(function()
+					esfera:Destroy()
 				end)
 			end)
 		end
-
-		-- Onda de choque (SHOCKWAVE de Fly): imagen grande que se abre alrededor del personaje
-		task.spawn(function()
-			local inicio, pico = 60 * 0.85, 380 * 0.85
-
-			local bb = Instance.new("BillboardGui")
-			bb.Adornee = raiz
-			bb.AlwaysOnTop = true
-			bb.LightInfluence = 0
-			bb.Size = UDim2.new(0, inicio, 0, inicio)
-			bb.ResetOnSpawn = false
-			bb.Parent = carpeta
-
-			local img = Instance.new("ImageLabel")
-			img.Image = IDS_MEGA.shock
-			img.Size = UDim2.new(1, 0, 1, 0)
-			img.BackgroundTransparency = 1
-			img.ImageColor3 = COLOR_AFO
-			img.ImageTransparency = 0.5
-			img.ScaleType = Enum.ScaleType.Fit
-			img.Parent = bb
-
-			TweenService:Create(bb, TweenInfo.new(0.10, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-				{ Size = UDim2.new(0, pico, 0, pico) }):Play()
-
-			task.delay(0.25, function()
-				pcall(function()
-					bb:Destroy()
-				end)
-			end)
-
-			task.wait(0.04)
-
-			if not img.Parent then return end
-
-			TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),
-				{ ImageTransparency = 1 }):Play()
-		end)
 	end
 
 	-- Igual que speedWhiteFlash de Fly pero con destello dorado.
@@ -1643,6 +1722,13 @@ do
 
 		E.impulso.acc += dt
 		E.impulso.accRayo += dt
+		E.impulso.accAnillo = (E.impulso.accAnillo or 0) + dt
+
+		while E.impulso.accAnillo >= 0.07 do
+			E.impulso.accAnillo -= 0.07
+
+			E.NuevoAnillo(rootPart.Position - E.impulso.dir * 1.5, E.impulso.dir, 2.5, 14 * ESCALA_ONDA_MEGA / 0.55, 0.42, 0.5, 0)
+		end
 
 		while E.impulso.acc >= 0.04 do
 			E.impulso.acc -= 0.04
@@ -1674,6 +1760,7 @@ do
 		if not carpeta then return end
 
 		E.RenderEstela(dt)
+		E.RenderAnillos(dt)
 		RenderMega(dt)
 		RenderCarga(dt)
 		RenderOnda(dt)
@@ -1724,7 +1811,12 @@ do
 		local arriba = math.abs(dir.Y) > 0.95 and Vector3.xAxis or Vector3.yAxis
 
 		E.SonidoLocal(IDS_MEGA.sfx, 0.88)
-		E.OndaSonicaFly()
+		local esc = ESCALA_ONDA_MEGA / 0.55
+
+		E.NuevoAnillo(pos, dir, 2, 16 * esc, 0.5, 0.55, 0)
+		E.NuevoAnillo(pos, dir, 2, 26 * esc, 0.55, 0.5, 0.05)
+		E.NuevoAnillo(pos, dir, 2, 38 * esc, 0.6, 0.45, 0.10)
+		E.Distorsion()
 		E.AuraFly()
 		E.DestelloPantalla()
 		E.IniciarAura()
@@ -1774,6 +1866,7 @@ do
 	function FX.Destruir()
 		E.QuitarAura(true)
 		E.impulso.activo = false
+		E.anillosElec = {}
 
 		if carpeta then
 			carpeta:Destroy()
@@ -2970,6 +3063,10 @@ local function TerminarMega(motivo)
 	mega.jugador = nil
 	dash.fin = 0
 
+	if motivo ~= "quieto" then
+		dash.inerciaFin = tick() + INERCIA_DASH
+	end
+
 	PonerPoseBrazos(false)
 	FX.FinDash()
 	SoltarAgarre()
@@ -3149,6 +3246,12 @@ local function IniciarDash()
 
 	-- Igual que triggerDash("forward") de Fly: el impulso va hacia donde apunta la cámara (con su inclinación).
 	local dir = cam.CFrame.LookVector
+
+	-- La cámara normal mira un poco hacia abajo: antes eso te mandaba al suelo al impulsarte quieto.
+	-- Con inclinación pequeña el impulso es horizontal; si inclinas la cámara de verdad, sube o pica.
+	if math.abs(dir.Y) < ZONA_MUERTA_Y_DASH then
+		dir = Vector3.new(dir.X, 0, dir.Z)
+	end
 
 	if dir.Magnitude < 0.01 then return end
 
