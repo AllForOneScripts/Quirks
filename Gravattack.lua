@@ -2,7 +2,7 @@
 	Gravattack.lua  (v3)
 
 	Cambios de la v3.1: salto aéreo más fuerte, impulso mucho más potente y sin bugs (ya no te manda al suelo ni te
-	deja clavado: dirección horizontal con zona muerta + inercia), anillos eléctricos amarillos con distorsión.
+	deja clavado: dirección horizontal con zona muerta + inercia), anillos eléctricos amarillos finos con borde irregular, humo blanco.
 
 	Cambios de la v3:
 	  1) Despegue (el salto que activa el Gravattack): ahora sube SIEMPRE ALTURA_DESPEGUE studs (60 por defecto).
@@ -652,8 +652,8 @@ do
 	local function CrearHumo(padre, direccion, velMin, velMax, apertura)
 		local e = Instance.new("ParticleEmitter")
 		e.Texture = FLY_AIRSHOCK
-		e.Color = ColorSequence.new(COLOR_AFO, COLOR_AFO_OSCURO)
-		e.LightEmission = 0.25
+		e.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(215, 215, 220))
+		e.LightEmission = 0.1
 		e.LightInfluence = 0
 		e.Size = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.6),
@@ -1350,7 +1350,7 @@ do
 
 				for i = 1, E.NSEG do
 					local ang = (i - 1) / E.NSEG * math.pi * 2
-					local rr = r * (1 + E.Az(-0.04, 0.04)) -- el borde vibra como electricidad
+					local rr = r * (1 + E.Az(-0.07, 0.07)) -- borde irregular/distorsionado como electricidad
 
 					puntos[i] = a.base * Vector3.new(math.cos(ang) * rr, math.sin(ang) * rr, 0)
 				end
@@ -1366,9 +1366,9 @@ do
 					s[1].CFrame = cf
 					s[1].Transparency = alfa * 0.9
 
-					s[2].Size = Vector3.new(grosor * 3.2, grosor * 3.2, len)
+					s[2].Size = Vector3.new(grosor * 2.2, grosor * 2.2, len)
 					s[2].CFrame = cf
-					s[2].Transparency = 0.7 + 0.3 * alfa
+					s[2].Transparency = 0.78 + 0.22 * alfa
 				end
 
 				-- chispas que saltan del borde y cambian de sitio cada cuadro
@@ -1380,97 +1380,12 @@ do
 						local d = (radial.Unit + Vector3.new(E.Az(-0.7, 0.7), E.Az(-0.7, 0.7), E.Az(-0.7, 0.7))).Unit
 						local largo = E.Az(0.9, 2.6) * (0.6 + r / 14)
 
-						sp.Size = Vector3.new(grosor * 0.55, grosor * 0.55, largo)
+						sp.Size = Vector3.new(grosor * 0.7, grosor * 0.7, largo)
 						sp.CFrame = CFrame.lookAt(p + d * largo / 2, p + d * largo)
 						sp.Transparency = math.clamp(alfa + E.Az(0, 0.35), 0, 1)
 					end
 				end
 			end
-		end
-	end
-
-	-- Distorsión: Roblox no deja deformar la pantalla de verdad, así que se combina (1) golpe de FOV,
-	-- (2) desenfoque radial breve, (3) cambio de color y (4) una esfera de cristal que se expande
-	-- (refracta el fondo con iluminación Future).
-	function E.Distorsion()
-		local cam = workspace.CurrentCamera
-
-		if not cam then return end
-
-		if not E.fovBase then
-			E.fovBase = cam.FieldOfView
-		end
-
-		local base = E.fovBase
-
-		pcall(function()
-			TweenService:Create(cam, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ FieldOfView = math.min(base + 22, 120) }):Play()
-		end)
-
-		task.delay(0.08, function()
-			pcall(function()
-				TweenService:Create(cam, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-					{ FieldOfView = base }):Play()
-			end)
-		end)
-
-		task.delay(0.7, function()
-			pcall(function()
-				cam.FieldOfView = base
-			end)
-			E.fovBase = nil
-		end)
-
-		pcall(function()
-			local blur = Instance.new("BlurEffect")
-			blur.Size = 20
-			blur.Parent = cam
-			TweenService:Create(blur, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = 0 }):Play()
-			task.delay(0.5, function()
-				pcall(function()
-					blur:Destroy()
-				end)
-			end)
-
-			local cc = Instance.new("ColorCorrectionEffect")
-			cc.TintColor = Color3.fromRGB(255, 236, 170)
-			cc.Contrast = 0.3
-			cc.Saturation = 0.25
-			cc.Parent = cam
-			TweenService:Create(cc, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-				{ TintColor = Color3.new(1, 1, 1), Contrast = 0, Saturation = 0 }):Play()
-			task.delay(0.6, function()
-				pcall(function()
-					cc:Destroy()
-				end)
-			end)
-		end)
-
-		if rootPart and rootPart.Parent and carpeta then
-			local esfera = Instance.new("Part")
-			esfera.Name = "EsferaDistorsion"
-			esfera.Shape = Enum.PartType.Ball
-			esfera.Anchored = true
-			esfera.CanCollide = false
-			esfera.CanQuery = false
-			esfera.CanTouch = false
-			esfera.CastShadow = false
-			esfera.Material = Enum.Material.Glass
-			esfera.Color = Color3.fromRGB(255, 244, 200)
-			esfera.Transparency = 0.8
-			esfera.Size = Vector3.new(6, 6, 6)
-			esfera.CFrame = rootPart.CFrame
-			esfera.Parent = carpeta
-
-			TweenService:Create(esfera, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-				{ Size = Vector3.new(70, 70, 70), Transparency = 1 }):Play()
-
-			task.delay(0.4, function()
-				pcall(function()
-					esfera:Destroy()
-				end)
-			end)
 		end
 	end
 
@@ -1727,7 +1642,7 @@ do
 		while E.impulso.accAnillo >= 0.07 do
 			E.impulso.accAnillo -= 0.07
 
-			E.NuevoAnillo(rootPart.Position - E.impulso.dir * 1.5, E.impulso.dir, 2.5, 14 * ESCALA_ONDA_MEGA / 0.55, 0.42, 0.5, 0)
+			E.NuevoAnillo(rootPart.Position - E.impulso.dir * 1.5, E.impulso.dir, 2.5, 14 * ESCALA_ONDA_MEGA / 0.55, 0.42, 0.16, 0)
 		end
 
 		while E.impulso.acc >= 0.04 do
@@ -1813,10 +1728,9 @@ do
 		E.SonidoLocal(IDS_MEGA.sfx, 0.88)
 		local esc = ESCALA_ONDA_MEGA / 0.55
 
-		E.NuevoAnillo(pos, dir, 2, 16 * esc, 0.5, 0.55, 0)
-		E.NuevoAnillo(pos, dir, 2, 26 * esc, 0.55, 0.5, 0.05)
-		E.NuevoAnillo(pos, dir, 2, 38 * esc, 0.6, 0.45, 0.10)
-		E.Distorsion()
+		E.NuevoAnillo(pos, dir, 2, 16 * esc, 0.5, 0.2, 0)
+		E.NuevoAnillo(pos, dir, 2, 26 * esc, 0.55, 0.18, 0.05)
+		E.NuevoAnillo(pos, dir, 2, 38 * esc, 0.6, 0.16, 0.10)
 		E.AuraFly()
 		E.DestelloPantalla()
 		E.IniciarAura()
