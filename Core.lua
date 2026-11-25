@@ -1,3 +1,5 @@
+print("launch23")
+
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SECCIÓN 1: PROTECCIÓN Y PRIMER HILO 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1198,7 +1200,7 @@ local function phoenixStart()
     local m = _phoenixModule
     if type(m) ~= "table" then return end
     if m.Start and not (m.IsRunning and m.IsRunning()) then
-        pcall(m.Start, rejoinLang, { PhoenixMenu = Keys.PhoenixMenu })
+        pcall(m.Start, rejoinLang, { Menu = Keys.PhoenixMenu })
     end
 end
 local function phoenixStop()
@@ -1249,13 +1251,13 @@ Server:AddToggle("OperationPhoenixToggle", {
 })
 Server:AddKeybind("PhoenixMenuKeybind", {
     Title = T.lbl_phoenix_key or "Operation Phoenix Key",
-    Default = "F8",
+    Default = "F7",
     Callback = function(key)
-        applyKey("PhoenixMenu", key, Enum.KeyCode.F8)
+        applyKey("PhoenixMenu", key, Enum.KeyCode.F7)
         phoenixApplyKey()
     end,
     ChangedCallback = function(key)
-        applyKey("PhoenixMenu", key, Enum.KeyCode.F8)
+        applyKey("PhoenixMenu", key, Enum.KeyCode.F7)
         phoenixApplyKey()
     end
 })
