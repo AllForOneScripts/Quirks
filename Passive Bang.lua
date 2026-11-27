@@ -1,5 +1,3 @@
-print("Sabes que las cagaste")
-
 local M = {}
 
 local Players = game:GetService("Players")
@@ -8,6 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local _lplr
 local _mouse
+local _env
 local _camera = workspace.CurrentCamera
 local _conns = {}
 local _captureConn
@@ -21,6 +20,8 @@ local _targetPlayer
 local _leftDown = false
 local _rightDown = false
 local _rescore = 0
+local _pingValue = 0
+local _pingAt = 0
 
 local _dropTargetRoot
 local _dropStickUntil = 0
@@ -56,11 +57,16 @@ local PB = {
 }
 
 local function env()
+    if _env then return _env end
     if type(getgenv) == "function" then
         local ok, e = pcall(getgenv)
-        if ok and type(e) == "table" then return e end
+        if ok and type(e) == "table" then
+            _env = e
+            return _env
+        end
     end
-    return _G
+    _env = _G
+    return _env
 end
 
 local function isSafeVector(v)
@@ -108,7 +114,6 @@ local function scoreCandidate(player, myRoot, mouseX, mouseY)
 
     local proximity = PB.W_PROXIMITY * (1 - math.clamp(distance / PB.MAX_3D_DIST, 0, 1))
     local mouseScore = 0
-    _camera = workspace.CurrentCamera or _camera
     local screenPos, onScreen = _camera:WorldToViewportPoint(root.Position)
     if onScreen then
         local screenDistance = Vector2.new(mouseX - screenPos.X, mouseY - screenPos.Y).Magnitude
@@ -122,6 +127,7 @@ end
 
 local function selectPassiveTarget(myRoot)
     _mouse = _mouse or _lplr:GetMouse()
+    _camera = workspace.CurrentCamera or _camera
     local bestScore, bestRoot, bestPlayer = -math.huge, nil, nil
 
     for _, candidate in ipairs(Players:GetPlayers()) do
@@ -190,9 +196,15 @@ local function readLock()
 end
 
 local function getPing()
-    local ok, ping = pcall(function() return _lplr:GetNetworkPing() end)
-    if ok and type(ping) == "number" and ping == ping then return ping end
-    return 0
+    local now = os.clock()
+    if now - _pingAt >= 0.25 then
+        _pingAt = now
+        local ok, ping = pcall(_lplr.GetNetworkPing, _lplr)
+        if ok and type(ping) == "number" and ping == ping then
+            _pingValue = ping
+        end
+    end
+    return _pingValue
 end
 
 local function getPredictedPosition(targetRoot)
@@ -340,11 +352,13 @@ local function step()
     local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if not myRoot or not myHumanoid or not isSafeVector(myRoot.Position) then return end
 
-    if _targetPlayer and not getLiveRoot(_targetPlayer) then
+    local engagedRoot = _targetPlayer and getLiveRoot(_targetPlayer)
+    if _targetPlayer and not engagedRoot then
         _latched = true
         resetTarget()
         return
     end
+    if engagedRoot then _targetHRP = engagedRoot end
 
     local lockActive, lockTarget = readLock()
     local locked = false
@@ -372,18 +386,13 @@ local function step()
 
     _lockedMode = locked
 
-    local validRoot = _targetPlayer and getLiveRoot(_targetPlayer)
-    if not validRoot then
-        resetTarget()
-        return
-    end
-    _targetHRP = validRoot
+    if not _targetHRP then return end
 
     local predicted = getPredictedPosition(_targetHRP)
     if not isSafeVector(predicted) then return end
 
-    local flyOk, fly = pcall(function() return env()._AFO_FLY_MODULE end)
-    if flyOk and fly and type(fly.Bypass) == "function" then
+    local fly = env()._AFO_FLY_MODULE
+    if fly and type(fly.Bypass) == "function" then
         pcall(fly.Bypass, 0.1, "passivebang")
     end
 
