@@ -1,3 +1,5 @@
+print("Sabes que las cagaste")
+
 local M = {}
 
 local Players = game:GetService("Players")
