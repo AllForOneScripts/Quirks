@@ -852,20 +852,34 @@ local function UltraCreateDivineCloneVFX()
     end
 end
 
+-- Filtro de suelo del sistema de subida/bajada del clon: ignora a TODOS los jugadores
+-- y a los clones de Dodge Anims (carpeta AFO_DodgeGhosts). RaycastParams reutilizado:
+-- se refresca como mucho cada 0.1 s o cuando cambia el personaje / clon / sujeto de camara.
+local UltraGround = { Params = RaycastParams.new(), Stamp = 0 }
+UltraGround.Params.FilterType = Enum.RaycastFilterType.Exclude
+
 local function UltraMakeGroundParams(UltraCharacter)
-    local UltraParams = RaycastParams.new()
-    UltraParams.FilterType = Enum.RaycastFilterType.Exclude
-    local UltraExclude = {}
-    if UltraCharacter then table.insert(UltraExclude, UltraCharacter) end
-    if UltraCloneModel then table.insert(UltraExclude, UltraCloneModel) end
-    if UltraCameraSubject then table.insert(UltraExclude, UltraCameraSubject) end
-    for _, UltraOther in ipairs(UltraPlayers:GetPlayers()) do
-        if UltraOther.Character and UltraOther.Character ~= UltraCharacter then
-            table.insert(UltraExclude, UltraOther.Character)
+    local UltraNow = os.clock()
+    local UltraG = UltraGround
+    if UltraCharacter ~= UltraG.Char or UltraCloneModel ~= UltraG.Clone
+        or UltraCameraSubject ~= UltraG.Subject or UltraNow - UltraG.Stamp > 0.1 then
+        UltraG.Char, UltraG.Clone, UltraG.Subject, UltraG.Stamp =
+            UltraCharacter, UltraCloneModel, UltraCameraSubject, UltraNow
+        local UltraExclude = {}
+        if UltraCharacter then table.insert(UltraExclude, UltraCharacter) end
+        if UltraCloneModel then table.insert(UltraExclude, UltraCloneModel) end
+        if UltraCameraSubject then table.insert(UltraExclude, UltraCameraSubject) end
+        for _, UltraOther in ipairs(UltraPlayers:GetPlayers()) do
+            local UltraOtherChar = UltraOther.Character
+            if UltraOtherChar and UltraOtherChar ~= UltraCharacter then
+                table.insert(UltraExclude, UltraOtherChar)
+            end
         end
+        local UltraGhosts = workspace:FindFirstChild("AFO_DodgeGhosts")
+        if UltraGhosts then table.insert(UltraExclude, UltraGhosts) end
+        UltraG.Params.FilterDescendantsInstances = UltraExclude
     end
-    UltraParams.FilterDescendantsInstances = UltraExclude
-    return UltraParams
+    return UltraG.Params
 end
 
 local function UltraGetGroundHeight(UltraPosition, UltraCharacter)
@@ -1498,10 +1512,7 @@ local function UltraGetOmniGroundPosition()
         local UltraCharacter = UltraLocalPlayer and UltraLocalPlayer.Character
         local UltraRoot = UltraGetRoot(UltraCharacter)
         if not UltraRoot then return nil end
-        local UltraParams = RaycastParams.new()
-        UltraParams.FilterType = Enum.RaycastFilterType.Exclude
-        UltraParams.FilterDescendantsInstances = { UltraCharacter }
-        local UltraHit = workspace:Raycast(UltraRoot.Position, Vector3.new(0, -(M.Config.SkyAltitude + 600), 0), UltraParams)
+        local UltraHit = workspace:Raycast(UltraRoot.Position, Vector3.new(0, -(M.Config.SkyAltitude + 600), 0), UltraMakeGroundParams(UltraCharacter))
         if UltraHit then return UltraHit.Position + Vector3.new(0, 3, 0) end
         return nil
     end)
@@ -1744,9 +1755,7 @@ local function UltraEnforceFallSafety(UltraRoot, UltraCharacter)
         UltraFallPlatform:Destroy(); UltraFallPlatform = nil
     end
     if UltraRoot.Position.Y >= M.Config.FallSafetyY then return end
-    local UltraParams = RaycastParams.new()
-    UltraParams.FilterType = Enum.RaycastFilterType.Exclude
-    UltraParams.FilterDescendantsInstances = { UltraCharacter, UltraCloneModel, UltraCameraSubject }
+    local UltraParams = UltraMakeGroundParams(UltraCharacter)
     local UltraBestPosition = nil
     for UltraIndex = 0, 12 do
         local UltraAngle = (UltraIndex / 12) * math.pi * 2
@@ -2372,7 +2381,8 @@ local function UltraOpenTogaAlert(UltraDodge, UltraPlayer)
     TogaKeyConn = UltraUserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not isUIActive or isClosing or mySession ~= TogaSession then return end
         if UltraUserInputService:GetFocusedTextBox() then return end
-        if input.KeyCode == M.Config.DodgeKey or input.KeyCode == Enum.KeyCode.Five or input.KeyCode == Enum.KeyCode.KeypadFive then
+        local UltraKey = M.Config.DodgeKey or Enum.KeyCode.Five
+        if input.KeyCode == UltraKey or (UltraKey == Enum.KeyCode.Five and input.KeyCode == Enum.KeyCode.KeypadFive) then
             handleImpulse()
         end
     end)
@@ -2878,8 +2888,12 @@ function M.GetDodgeKey()
     return M.Config.DodgeKey or Enum.KeyCode.Five
 end
 
+local UltraStartToken = 0
+
 function M.Start(UltraOverrides)
     if UltraEnabled then M.Stop() end
+    UltraStartToken = UltraStartToken + 1
+    local UltraMyStart = UltraStartToken
     if typeof(UltraOverrides) == "Instance" and UltraOverrides:IsA("Player") then UltraOverrides = nil end
     if UltraOverrides then M.Configure(UltraOverrides) else UltraRebuildDodgeIndex() end
 
@@ -2902,6 +2916,9 @@ function M.Start(UltraOverrides)
     pcall(UltraSweepOrphanBeacons)
     pcall(UltraEnsureDodgeAnims)
     _reloadLocale()
+    -- Cargar Dodge Anims espera a la red: si mientras tanto se llamo a Stop o a otro Start,
+    -- este arranque se cancela para no duplicar conexiones (todo se pisaria dos veces)
+    if UltraMyStart ~= UltraStartToken or not UltraEnabled then return end
     for _, UltraPlayer in ipairs(UltraPlayers:GetPlayers()) do UltraWatchRemotePlayer(UltraPlayer) end
     UltraPlayerAddedConnection = UltraPlayers.PlayerAdded:Connect(UltraWatchRemotePlayer)
     UltraPlayerRemovingConnection = UltraPlayers.PlayerRemoving:Connect(UltraDisconnectWatch)
@@ -2923,6 +2940,7 @@ function M.Start(UltraOverrides)
 end
 
 function M.Stop()
+    UltraStartToken = UltraStartToken + 1
     UltraPendingToken = UltraPendingToken + 1
     UltraClearQueuedHits(nil)
     UltraCancelDodgeAnims()
