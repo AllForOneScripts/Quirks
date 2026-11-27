@@ -70,7 +70,7 @@ return {
     Dabi_Ultimate_Eruption = {
         AnimationId = "13644046903",
         Delay = 0,
-        Duration = 2.5,
+        Duration = 3.5,
         Distance = 50,
         DisplayName = "Dabi Ultimate Eruption",
 -- Dodge Anims
